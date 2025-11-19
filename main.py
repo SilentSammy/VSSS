@@ -1,7 +1,8 @@
 import cv2
 import numpy as np
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-from cam_est import CamEstimator
+from board_est import BoardEstimator
+from board_config import board_config
 
 def get_image(vision_sensor_handle):
     sim.handleVisionSensor(vision_sensor_handle)
@@ -15,21 +16,10 @@ client = RemoteAPIClient('localhost', 23000)
 sim = client.getObject('sim')
 cam_handle = sim.getObject(f"/visionSensor")
 
-de = CamEstimator(
-    K = np.array([[444,   0, 256], [  0, 444, 256], [  0,   0,   1]], dtype=np.float32),
-    D = np.zeros(5),  # [0, 0, 0, 0, 0]
-    # board = cv2.aruco.CharucoBoard(
-    #     size=(9, 24),
-    #     squareLength=0.1,
-    #     markerLength=0.08,
-    #     dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
-    # )
-    board = cv2.aruco.GridBoard(
-        size=(3, 4),
-        markerLength=0.075,
-        markerSeparation=(0.60 - 3 * 0.075) / 2,
-        dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-    )
+de = BoardEstimator(
+    board_config=board_config,
+    K=np.array([[444,   0, 256], [  0, 444, 256], [  0,   0,   1]], dtype=np.float32),
+    D=np.zeros(5)
 )
 
 while True:
@@ -41,7 +31,7 @@ while True:
     drawing_frame = frame.copy()
 
     # Estimate
-    res = de.get_camera_transform(frame, drawing_frame=drawing_frame)
+    res = de.get_board_transform(frame, drawing_frame=drawing_frame)
 
     if res is not None:
         cam_T, _ = res
@@ -49,5 +39,3 @@ while True:
     # Display
     cv2.imshow("Vision Sensor", drawing_frame)
     cv2.setWindowProperty("Vision Sensor", cv2.WND_PROP_TOPMOST, 1)
-
-

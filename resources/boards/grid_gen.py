@@ -7,7 +7,7 @@ def main():
     
     # 2) Calculate marker dimensions for 60×90 cm board with 3×3 markers
     # Total board dimensions in meters
-    board_width = 0.90   # 60 cm
+    board_width = 0.60
     
     # 3×3 grid: calculate marker size and separation
     # We'll use markers with spacing to fill the board evenly
