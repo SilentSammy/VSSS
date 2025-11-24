@@ -4,9 +4,6 @@ import cv2
 import math
 from matrix_help import ( reverse_xyz_to_zyx_4x4, extract_euler_zyx, Rx, Ry, Rz, vecs_to_matrix, matrix_to_vecs, Rx180 )
 
-
-# TODO: DRY up code, the process for CharucoBoard and GridBoard is very similar
-
 class PnpResult:
     def __init__(self, obj_pts, img_pts, tvec, rvec):
         """
@@ -131,10 +128,10 @@ class BoardEstimator:
         # Display on the drawing frame
         if drawing_frame is not None:
             rvec, tvec = matrix_to_vecs(board_T)
-            rvec_string = ', '.join([str(round(math.degrees(x), 2)) for x in rvec])
-            tvec_string = ', '.join([str(round(float(x), 2)) for x in tvec])
-            cv2.putText(drawing_frame, f"R: {rvec_string}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
-            cv2.putText(drawing_frame, f"T: {tvec_string}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+            rvec_string = ', '.join([str(round(math.degrees(x), 3)) for x in rvec])
+            tvec_string = ', '.join([str(round(float(x), 3)) for x in tvec])
+            cv2.putText(drawing_frame, f"R: {rvec_string}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(drawing_frame, f"T: {tvec_string}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
         return board_T, res
 
@@ -173,6 +170,7 @@ def get_board_pose(
 
     return PnpResult(obj_pts=obj_pts, img_pts=img_pts, tvec=tvec.flatten(), rvec=rvec.flatten())
 
+# Legacy functions for direct use with CharucoBoard and GridBoard
 def get_charuco_pose(
     board: cv2.aruco.CharucoBoard,
     K: np.ndarray,
