@@ -104,34 +104,76 @@ class PnpResult:
         return (X, Y)
 
 class BoardEstimator:
-    def __init__(self, board_config, K, D=None):
+    def __init__(self, board_config, K, D=None, rotate_180=True):
+        """Initialize BoardEstimator.
+        
+        Args:
+            board_config: Board configuration object
+            K: Camera intrinsic matrix
+            D: Distortion coefficients (default: zeros)
+            rotate_180: Whether to rotate input frame 180° before processing (default: True)
+        """
         self.config = board_config
         self.board = board_config.board
         self.detector = board_config.detector
         self.K = K
         self.D = D if D is not None else np.zeros(5)
+        self.rotate_180 = rotate_180
 
     def get_board_transform(self, frame, drawing_frame=None):
-        # Detect markers/corners using config's detect method
+        # Rotate frame 180 degrees if enabled (fixes coordinate convention)
+        # But keep drawing_frame unrotated so we can draw on the original image
+        processing_frame = cv2.rotate(frame, cv2.ROTATE_180) if self.rotate_180 else frame
+        
+        # Detect markers/corners using config's detect method (on original frame for drawing)
         corners, ids = self.config.detect_corners(frame, drawing_frame=drawing_frame)
         if ids is None:
             return None
         
+        # For pose estimation, use the rotated corners if rotation is enabled
+        if self.rotate_180:
+            # Rotate corner coordinates 180 degrees around image center
+            h, w = frame.shape[:2]
+            cx, cy = w / 2, h / 2
+            rotated_corners = []
+            for corner_set in corners:
+                # Each corner_set is shape (1, N, 2) where N is number of corners per marker
+                rotated_set = corner_set.copy()
+                for i in range(rotated_set.shape[1]):
+                    x, y = rotated_set[0, i]
+                    # Rotate 180 degrees around center
+                    rotated_set[0, i, 0] = 2 * cx - x
+                    rotated_set[0, i, 1] = 2 * cy - y
+                rotated_corners.append(rotated_set)
+            corners_for_pnp = rotated_corners
+        else:
+            corners_for_pnp = corners
+        
         # Get board pose with centering offset applied before PnP
-        res = get_board_pose(self.board, self.K, self.D, corners, ids, offset=self.config.center)
+        res = get_board_pose(self.board, self.K, self.D, corners_for_pnp, ids, offset=self.config.center)
         if res is None:
             return None
         
         # Convert rvec, tvec to a 4x4 transformation matrix
         board_T = vecs_to_matrix(res.rvec, res.tvec)
+        
+        # Apply 180-degree rotation around X-axis to fix coordinate convention
+        if self.rotate_180:
+            R_x_180 = np.array([
+                [1,  0,  0,  0],
+                [0, -1,  0,  0],
+                [0,  0, -1,  0],
+                [0,  0,  0,  1]
+            ], dtype=np.float64)
+            board_T = board_T @ R_x_180
 
         # Display on the drawing frame
         if drawing_frame is not None:
             rvec, tvec = matrix_to_vecs(board_T)
             rvec_string = ', '.join([str(round(math.degrees(x), 3)) for x in rvec])
             tvec_string = ', '.join([str(round(float(x), 3)) for x in tvec])
-            cv2.putText(drawing_frame, f"R: {rvec_string}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            cv2.putText(drawing_frame, f"T: {tvec_string}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(drawing_frame, f"R: {rvec_string}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+            cv2.putText(drawing_frame, f"T: {tvec_string}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
         
         return board_T, res
 
@@ -170,87 +212,55 @@ def get_board_pose(
 
     return PnpResult(obj_pts=obj_pts, img_pts=img_pts, tvec=tvec.flatten(), rvec=rvec.flatten())
 
-# Legacy functions for direct use with CharucoBoard and GridBoard
-def get_charuco_pose(
-    board: cv2.aruco.CharucoBoard,
-    K: np.ndarray,
-    D: np.ndarray,
-    charuco_corners: np.ndarray,
-    charuco_ids: np.ndarray,
-    center: bool = False
-) -> PnpResult:
-    """
-    Estimate the Charuco‐board pose, optionally recentering the translation
-    so that the board’s center is treated as the origin instead of its top-left corner.
-    """
-    obj_pts, img_pts = board.matchImagePoints(charuco_corners, charuco_ids)
-    if obj_pts.shape[0] < 6:
-        return None
+def get_cam_T(board_T: np.ndarray) -> np.ndarray:
+    cam_T = np.linalg.inv(board_T) # Invert to get camera-to-board
 
-    if center:
-        # Compute the board's geometric center in board coords
-        squaresX, squaresY = board.getChessboardSize()
-        sq_len = board.getSquareLength()
-        center_board = np.array([
-            ((squaresX - 1) * sq_len / 2.0) + sq_len / 2.0,
-            (squaresY - 1) * sq_len / 2.0 + sq_len / 2.0,
-            0.0
-        ], dtype=np.float64)
-        # Subtract the center from all obj_pts
-        obj_pts = obj_pts - center_board
+    # 1) Pivot the camera transform around the X axis by 180 degrees, then rotate it along the X axis by 180 degrees.
+    cam_T = Rx180 @ cam_T @ Rx180
 
-    success, rvec, tvec = cv2.solvePnP(
-        obj_pts,
-        img_pts,
-        K,
-        D,
-        flags=cv2.SOLVEPNP_ITERATIVE
-    )
-    if not success:
-        return None
+    # 2) Split out R and t
+    R = cam_T[:3, :3].copy()
+    t = cam_T[:3,  3].copy()
 
-    return PnpResult(obj_pts=obj_pts, img_pts=img_pts, tvec=tvec.flatten(), rvec=rvec.flatten())
+    # 3) Mirror‐Y reflection to fix Z (keep t unchanged)
+    mirror_y_3 = np.diag([1, -1,  1])
+    R = mirror_y_3 @ R @ mirror_y_3
 
-def get_grid_pose(
-    board: cv2.aruco.GridBoard,
-    K: np.ndarray,
-    D: np.ndarray,
-    marker_corners: np.ndarray,
-    marker_ids: np.ndarray,
-    center: bool = False
-) -> PnpResult:
-    """
-    Estimate the GridBoard pose, optionally recentering the translation
-    so that the board's center is treated as the origin instead of its top-left corner.
-    """
-    obj_pts, img_pts = board.matchImagePoints(marker_corners, marker_ids)
-    if obj_pts.shape[0] < 6:
-        return None
+    # 4) Reassemble cam_T with R_fixed‐Z, same translation
+    cam_T[:3, :3] = R
+    cam_T[:3,  3] = t
 
-    if center:
-        # Compute the board's geometric center in board coords
-        gridX, gridY = board.getGridSize()
-        marker_len = board.getMarkerLength()
-        marker_sep = board.getMarkerSeparation()
-        # Total size = (n_markers * marker_len) + ((n_markers - 1) * separation)
-        total_x = (gridX * marker_len) + ((gridX - 1) * marker_sep)
-        total_y = (gridY * marker_len) + ((gridY - 1) * marker_sep)
-        center_board = np.array([
-            total_x / 2.0,
-            total_y / 2.0,
-            0.0
-        ], dtype=np.float64)
-        # Subtract the center from all obj_pts
-        obj_pts = obj_pts - center_board
+    # 5) Fix X (180° swap) is assumed done already; now reorder X/Y/Z
+    #    so that X and Z come out correct. This is your existing line:
+    cam_T = reverse_xyz_to_zyx_4x4(cam_T)
 
-    success, rvec, tvec = cv2.solvePnP(
-        obj_pts,
-        img_pts,
-        K,
-        D,
-        flags=cv2.SOLVEPNP_ITERATIVE
-    )
-    if not success:
-        return None
+    # 6) At this point, cam_T[:3,:3] is R_rev = Rx(α)·Ry(β)·Rz(γ),
+    #    and you found that the Y‐rotation was still backward.
+    #    So now we extract (α,β,γ) under the “intrinsic ZYX” convention,
+    #    flip β → –β, and recompose exactly Rx·Ry·Rz.
 
-    return PnpResult(obj_pts=obj_pts, img_pts=img_pts, tvec=tvec.flatten(), rvec=rvec.flatten())
+    # 6a) Extract the “ZYX” Euler angles from R_rev
+    R_rev = cam_T[:3, :3].copy()
+    t_rev = cam_T[:3,  3].copy()
+
+    alpha, beta, gamma = extract_euler_zyx(R_rev)
+    
+    # Now flip only the Y‐angle (pitch)
+    beta = -beta
+    
+    # 6b) Rebuild R_fixed = Rx(alpha)·Ry(beta)·Rz(gamma)
+    R_fixed = Rx(alpha) @ Ry(beta) @ Rz(gamma)
+    
+    # 6c) Reinsert into cam_T with the same translation
+    cam_T[:3, :3] = R_fixed
+    cam_T[:3,  3] = t_rev
+    return cam_T
+
+def rot_x_180():
+    """Returns a 4x4 matrix for a 180-degree rotation about the X axis."""
+    R = np.eye(4)
+    R[1, 1] = -1
+    R[2, 2] = -1
+    return R
+
+Rx180 = rot_x_180()

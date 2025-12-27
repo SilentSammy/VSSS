@@ -249,15 +249,15 @@ board_config_plotter = GridboardConfig(
     board_width=0.58,
     print_width=0.6
 )
-board_config_A4 = GridboardConfig(
+board_config_letter = GridboardConfig(
     dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50),
     size=(3, 4),
     marker_length=0.025,
-    board_width=0.19,        # 19cm board content width
-    print_width=0.21         # A4 width is 21cm (210mm)
+    board_width=0.15,      # 17.46cm board content width (fits Letter height)
+    print_width=0.2159       # Letter width is 8.5" = 21.59cm
 )
 # board_config = board_config_plotter
-board_config = board_config_A4
+board_config = board_config_letter
 
 if __name__ == "__main__":
     # Example usage: save board image and PDF

@@ -7,8 +7,8 @@ IN1A_PIN = 5  # 1A - PWM for direction/speed
 IN2A_PIN = 6  # 2A - PWM for direction/speed
 
 # Motor 2 pin assignments (PWM control)
-IN3A_PIN = 4  # 3A - PWM for direction/speed
-IN4A_PIN = 3  # 4A - PWM for direction/speed
+IN3A_PIN = 7  # 3A - PWM for direction/speed
+IN4A_PIN = 8  # 4A - PWM for direction/speed
 
 # Setup PWM pins
 # Motor 1
