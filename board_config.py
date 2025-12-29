@@ -69,7 +69,7 @@ def image_to_pdf(img, filepath, physical_width):
 class BoardConfig:
     """Base class for board configurations."""
     
-    def __init__(self, dictionary, board_width, print_width=None):
+    def __init__(self, dictionary, board_width, print_width=None, filename="board"):
         """Initialize board configuration.
         
         Args:
@@ -77,12 +77,24 @@ class BoardConfig:
             board_width: Physical width of board content in meters
             print_width: Total width for printing in meters (includes margins). 
                         If None, defaults to board_width (no margins)
+            filename: Base filename for saving/loading (no extension)
         """
         self.dictionary = dictionary
         self.board_width = board_width
         self.print_width = print_width if print_width is not None else board_width
+        self.filename = filename
         self.board: cv2.aruco.Board = self._create_board()
         self.center = self._calculate_center()
+    
+    @property
+    def image_path(self):
+        """Get image filepath with .png extension."""
+        return f"{self.filename}.png"
+    
+    @property
+    def pdf_path(self):
+        """Get PDF filepath with .pdf extension."""
+        return f"{self.filename}.pdf"
     
     def _create_board(self):
         """Create and return the board object. Override in subclasses."""
@@ -169,7 +181,7 @@ class BoardConfig:
 
 class GridboardConfig(BoardConfig):
     """Configuration for ArUco GridBoard with automatic marker separation calculation."""
-    def __init__(self, dictionary, size, marker_length, board_width, print_width=None):
+    def __init__(self, dictionary, size, marker_length, board_width, print_width=None, filename="gridboard"):
         """Initialize GridBoard configuration with automatic marker separation.
         
         Args:
@@ -178,6 +190,7 @@ class GridboardConfig(BoardConfig):
             marker_length: Length of each marker in meters
             board_width: Physical width of board content in meters
             print_width: Total width for printing in meters (includes margins)
+            filename: Base filename for saving/loading (no extension)
         """
         self.size = size
         self.marker_length = marker_length
@@ -193,7 +206,7 @@ class GridboardConfig(BoardConfig):
             self.marker_separation = 0.0
         
         # Call parent constructor
-        super().__init__(dictionary, board_width, print_width)
+        super().__init__(dictionary, board_width, print_width, filename)
         
         # Create detector (specific to GridBoard)
         self.detector = cv2.aruco.ArucoDetector(self.dictionary)
@@ -247,20 +260,22 @@ board_config_plotter = GridboardConfig(
     size=(3, 4),
     marker_length=0.05,
     board_width=0.58,
-    print_width=0.6
+    print_width=0.6,
+    filename="resources/gridboard_plotter"
 )
 board_config_letter = GridboardConfig(
     dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50),
     size=(3, 4),
     marker_length=0.025,
-    board_width=0.15,      # 17.46cm board content width (fits Letter height)
-    print_width=0.2159       # Letter width is 8.5" = 21.59cm
+    board_width=0.15,      # board content width (fits Letter height)
+    print_width=0.2159,    # Letter width is 8.5" = 21.59cm
+    filename="resources/gridboard_letter"
 )
 # board_config = board_config_plotter
 board_config = board_config_letter
 
 if __name__ == "__main__":
     # Example usage: save board image and PDF
-    board_config.generate_image(filepath="gridboard.png")
-    board_config.generate_pdf("gridboard.pdf")
+    board_config.generate_image(filepath=board_config.image_path)
+    board_config.generate_pdf(board_config.pdf_path)
     print(board_config.get_print_dimensions())  # Print dimensions including margins

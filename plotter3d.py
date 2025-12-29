@@ -257,7 +257,8 @@ if __name__ == "__main__":
     be = BoardEstimator(
         board_config=board_config,
         K=global_cam.K,
-        D=global_cam.D
+        D=global_cam.D,
+        # rotate_180=False
     )
     
     plotter = BoardPlotter3D(

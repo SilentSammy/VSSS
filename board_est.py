@@ -176,6 +176,28 @@ class BoardEstimator:
             cv2.putText(drawing_frame, f"T: {tvec_string}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
         
         return board_T, res
+    
+    def project_point_to_board(self, pnp_result, image_point, frame_shape):
+        """Project image point to board coordinates, handling rotation if enabled.
+        
+        Args:
+            pnp_result: PnpResult from get_board_transform
+            image_point: (x, y) tuple in original image coordinates
+            frame_shape: (height, width) or (height, width, channels) of the frame
+            
+        Returns:
+            (X, Y) in board coordinates
+        """
+        if self.rotate_180:
+            h, w = frame_shape[:2]
+            cx, cy = w / 2, h / 2
+            x, y = image_point
+            rotated_point = (2 * cx - x, 2 * cy - y)
+            board_x, board_y = pnp_result.project_point(rotated_point)
+            # Invert Y to match board coordinate convention (Y up vs image Y down)
+            return (board_x, -board_y)
+        else:
+            return pnp_result.project_point(image_point)
 
 def get_board_pose(
     board: cv2.aruco.Board,
@@ -193,7 +215,7 @@ def get_board_pose(
                 Use this to recenter the coordinate system (e.g., board center).
     """
     obj_pts, img_pts = board.matchImagePoints(detected_corners, detected_ids)
-    if obj_pts.shape[0] < 6:
+    if obj_pts is None or obj_pts.shape[0] < 6:
         return None
 
     # Apply offset to object points before solving PnP

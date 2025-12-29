@@ -44,19 +44,26 @@ def _get_sim_image():
 def _get_droidcam_image():
     _get_droidcam_image.cap = getattr(_get_droidcam_image, 'cap', None)
     if _get_droidcam_image.cap is None:
-        _get_droidcam_image.cap = cv2.VideoCapture("http://192.168.137.86:4747/video")
+        _get_droidcam_image.cap = cv2.VideoCapture("http://192.168.1.211:4747/video")
     
     ret, frame = _get_droidcam_image.cap.read()
     if not ret:
         return None
-    return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    return frame
 
-sim_K = np.array([[444,   0, 256], [  0, 444, 256], [  0,   0,   1]], dtype=np.float32)
-sim_D = np.zeros(5)  # [0, 0, 0, 0, 0]
-sim_cam = Camera(K=sim_K, D=sim_D, frame_getter=_get_sim_image)
+sim_cam = Camera(
+    K=np.array([[444,   0, 256], [  0, 444, 256], [  0,   0,   1]], dtype=np.float32),
+    D=np.zeros(5),
+    frame_getter=_get_sim_image
+)
 
-K_droid = np.array([[487.14566155, 0., 321.7888109], [0., 487.60075097, 239.38896134], [0., 0., 1.]], dtype=np.float32)
-D_droid = np.array([0.33819757, 1.36709606, -6.17042008, 8.65929659], dtype=np.float32)
-droidcam = Camera(K=K_droid, D=D_droid, frame_getter=_get_droidcam_image)
+droidcam = Camera(
+    K=np.array([[487.14566155, 0., 321.7888109], [0., 487.60075097, 239.38896134], [0., 0., 1.]], dtype=np.float32),
+    # D=np.array([0.33819757, 1.36709606, -6.17042008, 8.65929659], dtype=np.float32),
+    D=np.zeros(5),
+    frame_getter=_get_droidcam_image
+)
 
 global_cam = droidcam
+global_cam = sim_cam
