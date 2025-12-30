@@ -22,7 +22,7 @@ class ObjectDetector:
     @staticmethod
     def get_centroid(contour):
         """Get centroid (x, y) of contour or None if invalid."""
-        if contour is None:
+        if contour is None or len(contour) == 0:
             return None
         
         M = cv2.moments(contour)
@@ -86,7 +86,7 @@ class BallDetector(ObjectDetector):
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
-            return None, None
+            return None
         
         # Find most circular contour
         best_contour = None
@@ -128,6 +128,32 @@ class ArucoDetector(ObjectDetector):
         self.aruco_dict = aruco_dict
         self.marker_id = marker_id
         self.detector = cv2.aruco.ArucoDetector(aruco_dict)
+    
+    @staticmethod
+    def get_angle(contour):
+        """Calculate ArUco marker orientation from contour.
+        
+        Args:
+            contour: ArUco marker contour in format returned by _detect
+            
+        Returns:
+            Angle in radians from top-left to top-right corner
+        """
+        if contour is None:
+            return None
+        
+        # Reshape back to corner format: [[top-left, top-right, bottom-right, bottom-left]]
+        corners = contour.reshape(1, 4, 2)
+        top_left = corners[0][0]
+        top_right = corners[0][1]
+        
+        # Vector from top-left to top-right gives marker orientation
+        dx = top_right[0] - top_left[0]
+        dy = top_right[1] - top_left[1]
+        angle = np.arctan2(dy, dx)
+        
+        # Apply π/2 offset and negation
+        return -(angle - np.pi/2)
     
     def _detect(self, frame, drawing_frame=None):
         """Detect ArUco marker contour."""
