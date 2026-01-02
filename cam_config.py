@@ -52,6 +52,16 @@ def _get_droidcam_image():
     frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
     return frame
 
+def _get_usb_image():
+    _get_usb_image.cap = getattr(_get_usb_image, 'cap', None)
+    if _get_usb_image.cap is None:
+        _get_usb_image.cap = cv2.VideoCapture(1)
+    
+    ret, frame = _get_usb_image.cap.read()
+    if not ret:
+        return None
+    return frame
+
 sim_cam = Camera(
     K=np.array([[444,   0, 256], [  0, 444, 256], [  0,   0,   1]], dtype=np.float32),
     D=np.zeros(5),
@@ -65,5 +75,12 @@ droidcam = Camera(
     frame_getter=_get_droidcam_image
 )
 
+usb_cam = Camera(
+    K=np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float32),
+    D=np.zeros(5),
+    frame_getter=_get_usb_image
+)
+
+global_cam = usb_cam
 global_cam = droidcam
 global_cam = sim_cam

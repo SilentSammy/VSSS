@@ -1,23 +1,82 @@
 import cv2
 import numpy as np
+import time
+from dataclasses import dataclass
 
+@dataclass
+class DetectedObject:
+    contour : np.ndarray = None
+    centroid : tuple = None  # (x, y)
+    norm_centroid : tuple = None  # normalized (x, y)
+    area : float = None  # contour area in pixels
+    timestamp : float = None  # time.time() when object was detected
+    parent : 'ObjectDetector' = None
+    source_image = None  # The original image this object was detected in
+
+@dataclass
+class DetectedAruco(DetectedObject):
+    id : int = None  # ArUco marker ID
+    dict : cv2.aruco.Dictionary = None  # ArUco dictionary used
+    angle : float = None  # Marker orientation in radians
 
 class ObjectDetector:
     """Base class for object detection."""
     
+    object_class = DetectedObject
+    
     def _detect(self, frame, drawing_frame=None):
-        """Detect object and return contour (numpy array) or None."""
+        """Detect objects and return list of DetectedObject instances.
+        
+        Subclasses should populate at minimum the contour field and any
+        custom fields for each detection, then return the list. The base
+        detect() method will fill in all generic fields.
+        
+        Returns:
+            List of DetectedObject instances (or empty list if none found)
+        """
         pass
     
     def detect(self, frame, drawing_frame=None):
-        """Detect object and return (centroid, contour) tuple or (None, None)."""
-        contour = self._detect(frame, drawing_frame)
+        """Detect objects and return list of DetectedObject instances."""
+        detections = self._detect(frame, drawing_frame)
         
-        if contour is None:
-            return None, None
+        if detections is None or not detections:
+            return []
         
-        centroid = self.get_centroid(contour)
-        return centroid, contour
+        # Get image dimensions for normalization
+        height, width = frame.shape[:2]
+        
+        results = []
+        for detection in detections:
+            # Get contour (subclass should have populated this)
+            contour = detection.contour
+            if contour is None or len(contour) == 0:
+                continue
+            
+            # Compute centroid
+            centroid = self.get_centroid(contour)
+            if centroid is None:
+                continue
+            
+            # Normalize centroid
+            norm_centroid_x = (centroid[0] - width / 2) / (width / 2)
+            norm_centroid_y = (centroid[1] - height / 2) / (height / 2)
+            norm_centroid = (norm_centroid_x, norm_centroid_y)
+            
+            # Compute area
+            area = cv2.contourArea(contour)
+            
+            # Populate generic fields
+            detection.centroid = centroid
+            detection.norm_centroid = norm_centroid
+            detection.area = area
+            detection.timestamp = time.time()
+            detection.parent = self
+            detection.source_image = frame
+            
+            results.append(detection)
+        
+        return results
     
     @staticmethod
     def get_centroid(contour):
@@ -67,7 +126,7 @@ class BallDetector(ObjectDetector):
             drawing_frame: Optional frame to draw ball outline on
             
         Returns:
-            Ball contour (numpy array) or None if not found
+            List containing at most one DetectedObject with contour populated
         """
         # Blur to reduce noise
         blurred = cv2.GaussianBlur(frame, (11, 11), 0)
@@ -86,7 +145,7 @@ class BallDetector(ObjectDetector):
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
-            return None
+            return []
         
         # Find most circular contour
         best_contour = None
@@ -113,20 +172,23 @@ class BallDetector(ObjectDetector):
                 best_circularity = circularity
                 best_contour = contour
         
+        if best_contour is None:
+            return []
+        
         # Draw on frame if provided
-        if drawing_frame is not None and best_contour is not None:
+        if drawing_frame is not None:
             cv2.drawContours(drawing_frame, [best_contour], -1, (0, 255, 0), 2)
         
-        return best_contour
-
+        return [DetectedObject(contour=best_contour)]
 
 class ArucoDetector(ObjectDetector):
-    """Detects specific ArUco marker in image."""
+    """Detects all ArUco markers in image."""
     
-    def __init__(self, aruco_dict, marker_id):
-        """Initialize detector with ArUco dictionary and marker ID."""
+    object_class = DetectedAruco
+    
+    def __init__(self, aruco_dict):
+        """Initialize detector with ArUco dictionary."""
         self.aruco_dict = aruco_dict
-        self.marker_id = marker_id
         self.detector = cv2.aruco.ArucoDetector(aruco_dict)
     
     @staticmethod
@@ -156,32 +218,46 @@ class ArucoDetector(ObjectDetector):
         return -(angle - np.pi/2)
     
     def _detect(self, frame, drawing_frame=None):
-        """Detect ArUco marker contour."""
+        """Detect all ArUco markers and return list of DetectedAruco instances.
+        
+        Args:
+            frame: BGR image
+            drawing_frame: Optional frame to draw marker outlines on
+            
+        Returns:
+            List of DetectedAruco instances with contour, id, dict, and angle populated
+        """
         corners, ids, _ = self.detector.detectMarkers(frame)
         
         if ids is None:
-            return None
+            return []
         
-        # Find the marker with matching ID
+        detections = []
         for i, marker_id in enumerate(ids.flatten()):
-            if marker_id == self.marker_id:
-                # Convert corner points to contour format
-                contour = corners[i].reshape(-1, 1, 2).astype(np.int32)
-                
-                # Draw on frame if provided
-                if drawing_frame is not None:
-                    cv2.drawContours(drawing_frame, [contour], -1, (0, 255, 0), 2)
-                
-                return contour
+            # Convert corner points to contour format
+            contour = corners[i].reshape(-1, 1, 2).astype(np.int32)
+            
+            # Calculate angle
+            angle = self.get_angle(contour)
+            
+            # Draw on frame if provided
+            if drawing_frame is not None:
+                cv2.drawContours(drawing_frame, [contour], -1, (0, 255, 0), 2)
+            
+            detections.append(DetectedAruco(
+                contour=contour,
+                id=int(marker_id),
+                dict=self.aruco_dict,
+                angle=angle
+            ))
         
-        return None
+        return detections
 
 
 if __name__ == "__main__":
     from cam_config import global_cam
     
     ball_detector = BallDetector()
-    aruco_detector = ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100), 12)
     
     # State for mouse callback
     click_state = {'frame': None}
@@ -242,18 +318,16 @@ if __name__ == "__main__":
         drawing_frame = frame.copy()
         click_state['frame'] = frame
         
-        # Detect ball
-        ball_centroid, ball_contour = ball_detector.detect(frame, drawing_frame=drawing_frame)
-        if ball_centroid is not None:
-            cv2.circle(drawing_frame, ball_centroid, 5, (0, 0, 255), -1)
-        
-        # Detect ArUco marker
-        aruco_centroid, aruco_contour = aruco_detector.detect(frame, drawing_frame=drawing_frame)
-        if aruco_centroid is not None:
-            cv2.circle(drawing_frame, aruco_centroid, 5, (255, 0, 0), -1)
+        # Detect ball (new API returns list of DetectedObject)
+        ball_detections = ball_detector.detect(frame, drawing_frame=drawing_frame)
+        if ball_detections:
+            ball = ball_detections[0]
+            cv2.circle(drawing_frame, ball.centroid, 5, (0, 0, 255), -1)
+            # Debug: print detection info
+            print(f"Ball: centroid={ball.centroid}, norm_centroid=({ball.norm_centroid[0]:.3f}, {ball.norm_centroid[1]:.3f}), area={ball.area:.1f}")
         
         # Display instructions
-        cv2.putText(drawing_frame, "Double-click ball to configure | R to reset", (10, 30),
+        cv2.putText(drawing_frame, "Double-click ball to configure | R to reset | ESC to exit", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         # Display

@@ -1,0 +1,10 @@
+- Should we limit ArucoDetectors to a single Aruco id? What if we wanted to detect any id from a whitelist? Would we have to set up a detector for every id in that list or is there a more efficient way? It's important that at the end we know the id of each Aruco. Actually come to think of it we can use the same DetectedObject dataclass system from another one of my projects.
+- We need a class that exposes a method that simply takes an image and detects all the game objects in the image (board, ball and players + camera pose). We'd probably also want a dataclass to hold all the detected game_objects' poses. Depending on the previous point, we may want to define specific player ids to search for or simply recognize any player with an id in a whitelist.
+- Fix lag issue that happens when running plotter2d with droidcam (try with wired cam as sanity check, time various portions of code to debug)
+
+- Create large board, modify it so it looks like a soccer field while still leaving at least some Arucos visible, try in Sim
+- Try with omni robot in sim
+- Try basic visual servoing, like going to a waypoint or following the ball (no complex game logic, I'll delegate that to someone else) 
+
+- Print field IRL, try IRL
+- Finish up IRL robot, try visual servoing also
