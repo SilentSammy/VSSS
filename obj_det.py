@@ -61,7 +61,7 @@ class ObjectDetector:
             # Normalize centroid
             norm_centroid_x = (centroid[0] - width / 2) / (width / 2)
             norm_centroid_y = (centroid[1] - height / 2) / (height / 2)
-            norm_centroid = (norm_centroid_x, norm_centroid_y)
+            norm_centroid = (norm_centroid_x, -norm_centroid_y)
             
             # Compute area
             area = cv2.contourArea(contour)
@@ -258,7 +258,9 @@ if __name__ == "__main__":
     from cam_config import global_cam
     
     ball_detector = BallDetector()
-    
+    aruco_detector = ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100))
+
+
     # State for mouse callback
     click_state = {'frame': None}
     
@@ -326,6 +328,11 @@ if __name__ == "__main__":
             # Debug: print detection info
             print(f"Ball: centroid={ball.centroid}, norm_centroid=({ball.norm_centroid[0]:.3f}, {ball.norm_centroid[1]:.3f}), area={ball.area:.1f}")
         
+        aruco_detections = aruco_detector.detect(frame, drawing_frame=drawing_frame)
+        if aruco_detections:
+            aruco = aruco_detections[0]
+            print(f"Aruco pos: {aruco.norm_centroid}")
+
         # Display instructions
         cv2.putText(drawing_frame, "Double-click ball to configure | R to reset | ESC to exit", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)

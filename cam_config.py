@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+# TODO: for cams such as droidcam, where we might need to rotate the frame, we should specify the unrotated intrinsics, then if user requires rotation, we can compute the new intrinsics accordingly.
 class Camera:
     """Camera configuration with intrinsics and frame acquisition."""
     
@@ -42,9 +43,12 @@ def _get_sim_image():
     return img
 
 def _get_droidcam_image():
+    ip = "http://10.173.208.191:4747/video"
+    ip = "http://192.168.43.1:4747/video"
+    ip = "http://192.168.1.211:4747/video"
     _get_droidcam_image.cap = getattr(_get_droidcam_image, 'cap', None)
     if _get_droidcam_image.cap is None:
-        _get_droidcam_image.cap = cv2.VideoCapture("http://192.168.1.211:4747/video")
+        _get_droidcam_image.cap = cv2.VideoCapture(ip)
     
     ret, frame = _get_droidcam_image.cap.read()
     if not ret:
@@ -81,6 +85,19 @@ usb_cam = Camera(
     frame_getter=_get_usb_image
 )
 
+global_cam = sim_cam
 global_cam = usb_cam
 global_cam = droidcam
-global_cam = sim_cam
+
+if __name__ == "__main__":
+    while True:
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+        
+        # Get frame
+        frame = global_cam.get_frame()
+        drawing_frame = frame.copy()
+
+        # Display
+        cv2.imshow("Vision Sensor", drawing_frame)
+        cv2.setWindowProperty("Vision Sensor", cv2.WND_PROP_TOPMOST, 1)

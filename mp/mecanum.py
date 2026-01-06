@@ -12,7 +12,7 @@ MOTOR_PINS = [
 ]
 
 class Motor:
-    def __init__(self, pin1, pin2, min_freq=5, max_freq=100):
+    def __init__(self, pin1, pin2, min_freq=10, max_freq=100):
         """Initialize motor with two pins for H-bridge control."""
         self.pin1_num = pin1
         self.pin2_num = pin2

@@ -10,24 +10,17 @@ if __name__ == "__main__":
     # Create mecanum car
     car = MecanumCar()
     
-    # Define BLE callbacks
-    def on_x(data):
-        """Handle X-axis (forward/backward) updates"""
-        car.x = ble_server.to_bipolar(data[0])
+    # Define BLE callback for combined velocity
+    def on_velocity(data):
+        """Handle velocity update (3 bytes: x, y, w)"""
+        if len(data) >= 3:
+            car.x = ble_server.to_bipolar(data[0])
+            car.y = ble_server.to_bipolar(data[1])
+            car.w = ble_server.to_bipolar(data[2])
     
-    def on_y(data):
-        """Handle Y-axis (strafe) updates"""
-        car.y = ble_server.to_bipolar(data[0])
-    
-    def on_w(data):
-        """Handle W-axis (rotation) updates"""
-        car.w = ble_server.to_bipolar(data[0])
-    
-    # Register callbacks with UUIDs
+    # Register callback with single UUID
     ble_server.control_callbacks = {
-        '12345678-1234-5678-1234-56789abcdef1': on_x,  # X-axis (forward/backward)
-        '12345678-1234-5678-1234-56789abcdef2': on_y,  # Y-axis (strafe)
-        '12345678-1234-5678-1234-56789abcdef3': on_w,  # W-axis (rotation)
+        '12345678-1234-5678-1234-56789abcdef1': on_velocity,  # Combined velocity (x, y, w)
     }
     
     # Start BLE server
@@ -35,7 +28,5 @@ if __name__ == "__main__":
     
     print("\nBLE control active. Use BLE client to control the car.")
     print("Characteristics:")
-    print("  X-axis (fwd/back):   ...def1")
-    print("  Y-axis (strafe):     ...def2")
-    print("  W-axis (rotation):   ...def3")
+    print("  Velocity (x,y,w):    ...def1")
     
