@@ -30,6 +30,19 @@ def merge_proportional(cmd_primary, cmd_secondary):
     
     return cmd_final
 
+def get_user_cmd():
+    import combined_input as inp
+    scale = 1.0 if inp.is_pressed('c') else 0.5  # 'C' key for full speed
+    return {
+        'x': inp.get_bipolar_ctrl('w', 's', 'LY') * scale,
+        'y': inp.get_bipolar_ctrl('d', 'a', 'LX') * scale,
+        'w': inp.get_bipolar_ctrl('e', 'q', 'RX') * scale
+    }
+
+def get_manual_override(cmd):
+    user_cmd = get_user_cmd()
+    return merge_proportional(user_cmd, cmd)
+
 class MecanumBLEClient:
     def __init__(self, device_name="MP_BLE_Device", resolution=0.05):
         self.device_name = device_name
@@ -112,18 +125,12 @@ class MecanumBLEClient:
         future = asyncio.run_coroutine_threadsafe(self._async_disconnect(), self.loop)
         future.result()
     
-    def send(self, velocity, force=False):
-        """Send velocity command (non-blocking, queues latest values if busy)
+    def send(self, force=False):
+        """Send current velocity fields (x, y, w) to robot (non-blocking, queues if busy)
         
         Args:
-            velocity: Dictionary with keys 'x', 'y', 'w' (values -1.0 to 1.0)
             force: If True, bypasses cache and forces BLE write even if values unchanged
         """
-        # Update internal state with rounding
-        self.x = round(velocity.get('x', 0.0) / self.resolution) * self.resolution
-        self.y = round(velocity.get('y', 0.0) / self.resolution) * self.resolution
-        self.w = round(velocity.get('w', 0.0) / self.resolution) * self.resolution
-        
         velocity_tuple = (self.x, self.y, self.w, force)
         
         if self._pending is None or self._pending.done():
@@ -138,12 +145,30 @@ class MecanumBLEClient:
             # Busy - queue this value (replaces any previous queued value)
             self._queued = velocity_tuple
     
+    def set_velocity(self, velocity, force=False):
+        """Set velocity from dictionary and send command
+        
+        Args:
+            velocity: Dictionary with keys 'x', 'y', 'w' (values -1.0 to 1.0)
+            force: If True, bypasses cache and forces BLE write even if values unchanged
+        """
+        # Update internal state with rounding
+        self.x = round(velocity.get('x', 0.0) / self.resolution) * self.resolution
+        self.y = round(velocity.get('y', 0.0) / self.resolution) * self.resolution
+        self.w = round(velocity.get('w', 0.0) / self.resolution) * self.resolution
+        
+        self.send(force=force)
+    
     def _on_send_complete(self):
         """Callback when send completes - send queued values if exist"""
         if self._queued is not None:
             x, y, w, force = self._queued
             self._queued = None  # Clear queue
-            self.send({'x': x, 'y': y, 'w': w}, force=force)  # Send the queued values
+            # Update fields and send
+            self.x = x
+            self.y = y
+            self.w = w
+            self.send(force=force)
     
     def stop(self):
         """Stop all motors (blocking)"""
@@ -176,22 +201,13 @@ if __name__ == "__main__":
         print("  ESC: Exit\n")
         
         while True:
-            scale = 1.0 if inp.is_pressed('c') else 0.5  # 'C' key for full speed
-            
-            # Build velocity command
-            velocity = {
-                'x': inp.get_bipolar_ctrl('w', 's', 'LY') * scale,
-                'y': inp.get_bipolar_ctrl('d', 'a', 'LX') * scale,
-                'w': inp.get_bipolar_ctrl('e', 'q', 'RX') * scale
-            }
-            
             # Send velocity
-            car.send(velocity)
+            car.set_velocity(get_user_cmd())
             
             if inp.is_pressed('Key.esc'):
                 break
             
-            time.sleep(0.02)  # 50Hz update rate
+            time.sleep(0.02)  # update rate
             
     except KeyboardInterrupt:
         print("\nInterrupted")

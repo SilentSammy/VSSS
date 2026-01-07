@@ -1,8 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rc'))
-from mecanum_client import MecanumBLEClient, merge_proportional
-import combined_input as inp
+from mecanum_client import MecanumBLEClient, get_manual_override
 import cv2
 import numpy as np
 from cv2 import aruco
@@ -17,10 +16,10 @@ def main():
     pid_w = PID(Kp=0.4, Ki=0, Kd=0.04, setpoint=0)
     pid_w.output_limits = (-0.5, 0.5)
     
-    pid_x = PID(Kp=0.3, Ki=0, Kd=0.03, setpoint=0)
+    pid_x = PID(Kp=0.6, Ki=0, Kd=0.03, setpoint=0)
     pid_x.output_limits = (-0.5, 0.5)
     
-    pid_y = PID(Kp=0.3, Ki=0, Kd=0.03, setpoint=0)
+    pid_y = PID(Kp=0.6, Ki=0, Kd=0.03, setpoint=0)
     pid_y.output_limits = (-0.5, 0.5)
     
     # Connect to mecanum car (resolution=0.05 rounds commands to reduce BLE writes)
@@ -39,17 +38,9 @@ def main():
             # Detect markers
             detections = ad.detect(frame, drawing_frame=drawing_frame)
             
-            # Get manual control input
-            scale = 1.0 if inp.is_pressed('c') else 0.5
-            manual_cmd = {
-                'x': inp.get_bipolar_ctrl('w', 's', 'LY') * scale,
-                'y': inp.get_bipolar_ctrl('d', 'a', 'LX') * scale,
-                'w': inp.get_bipolar_ctrl('e', 'q', 'RX') * scale
-            }
-            
-            # Process first detected ArUco
+            # Process largest detected ArUco (closest marker)
             if detections:
-                marker = detections[0]
+                marker = max(detections, key=lambda d: d.area)
                 angle = marker.angle - np.radians(90)  # Adjust based on marker orientation
                 norm_x, norm_y = marker.norm_centroid
                 
@@ -82,11 +73,8 @@ def main():
                 # No marker detected
                 auto_cmd = {'x': 0, 'y': 0, 'w': 0}
             
-            # Merge manual and algorithmic commands (manual has priority)
-            final_cmd = merge_proportional(manual_cmd, auto_cmd)
-            
-            # Send merged command to car
-            client.send(final_cmd)
+            # Send command with manual override
+            client.set_velocity(get_manual_override(auto_cmd))
 
             # Display
             cv2.imshow("Vision Sensor", drawing_frame)
