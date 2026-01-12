@@ -6,10 +6,9 @@ CAMERA
 + Research how to plot more efficiently, common fixes in matplotlib, etc.
 + Create GamePlotter class that uses a more efficient library than matplotlib. It should consume a GameState object and output a plot / image.
 
-- Reorganize code:
-    - Move BoardPlotter3D to the board_est module, so we can remove plotter3d module.
-    - Remove rc folder
-    - remove matrix_help
++ Reorganize code:
+    + Move BoardPlotter3D to the board_est module, so we can remove plotter3d module.
+    + Remove rc folder
 
 - Make board image a true transparent png. Also, create proper soccer field.
 
