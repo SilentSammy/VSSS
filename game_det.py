@@ -165,17 +165,24 @@ class GameDetector:
                         length = 20
                         width = 12
                         
-                        # Calculate triangle points (isosceles pointing in direction of angle)
-                        # Tip of triangle (flipped from marker angle)
-                        tip_x = cx + length * np.cos(-player.angle)
-                        tip_y = cy + length * np.sin(-player.angle)
+                        # Direction vector (flipped angle for image space)
+                        cos_a = np.cos(-player.angle)
+                        sin_a = np.sin(-player.angle)
                         
-                        # Base corners (perpendicular to angle)
+                        # Triangle centroid at marker position
+                        # Base center is 1/3 of length behind centroid
+                        # Tip is 2/3 of length ahead of centroid
+                        base_cx = cx - (length / 3) * cos_a
+                        base_cy = cy - (length / 3) * sin_a
+                        tip_x = cx + (2 * length / 3) * cos_a
+                        tip_y = cy + (2 * length / 3) * sin_a
+                        
+                        # Base corners perpendicular to direction
                         base_angle = -player.angle + np.pi / 2
-                        base1_x = cx + (width / 2) * np.cos(base_angle)
-                        base1_y = cy + (width / 2) * np.sin(base_angle)
-                        base2_x = cx - (width / 2) * np.cos(base_angle)
-                        base2_y = cy - (width / 2) * np.sin(base_angle)
+                        base1_x = base_cx + (width / 2) * np.cos(base_angle)
+                        base1_y = base_cy + (width / 2) * np.sin(base_angle)
+                        base2_x = base_cx - (width / 2) * np.cos(base_angle)
+                        base2_y = base_cy - (width / 2) * np.sin(base_angle)
                         
                         # Draw filled triangle
                         pts = np.array([[tip_x, tip_y], [base1_x, base1_y], [base2_x, base2_y]], np.int32)
@@ -190,6 +197,195 @@ class GameDetector:
             detector=self,
             timestamp=timestamp
         )
+
+class GamePlotter2D:
+    """Real-time 2D plotting of game state using matplotlib with blitting for performance."""
+    
+    def __init__(self, board_config, figsize=(8, 6),
+                 ball_color='orange', ball_radius=0.01,
+                 player_color='blue', player_alpha=0.7, player_length=0.02, player_width=0.015,
+                 text_color='white', text_size=7):
+        """Initialize 2D plotter.
+        
+        Args:
+            board_config: BoardConfig instance for field dimensions
+            figsize: Figure size in inches (width, height)
+            ball_color: Ball circle fill color
+            ball_radius: Ball circle radius in meters
+            player_color: Player triangle fill color
+            player_alpha: Player triangle transparency (0-1)
+            player_length: Player triangle length in meters
+            player_width: Player triangle base width in meters
+            text_color: Player ID text color
+            text_size: Player ID text font size
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
+        import cv2
+        import os
+        
+        self.board_config = board_config
+        self.field_width, self.field_height = board_config.get_board_dimensions()
+        print_width, print_height = board_config.get_print_dimensions()
+        
+        # Appearance settings
+        self.ball_color = ball_color
+        self.ball_radius = ball_radius
+        self.player_color = player_color
+        self.player_alpha = player_alpha
+        self.player_length = player_length
+        self.player_width = player_width
+        self.text_color = text_color
+        self.text_size = text_size
+        
+        # Create figure and axis
+        self.fig, self.ax = plt.subplots(figsize=figsize)
+        self.fig.canvas.manager.set_window_title('VSS Game State')
+        self.ax.set_aspect('equal', adjustable='box')
+        self.ax.set_xlabel('X (m)')
+        self.ax.set_ylabel('Y (m)')
+        self.ax.set_title('VSS Game State')
+        self.ax.grid(True, alpha=0.3)
+        
+        # Load and display board image as background
+        if os.path.exists(board_config.image_path):
+            img = cv2.imread(board_config.image_path)
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # Display image centered, scaled to print dimensions
+            self.ax.imshow(img_rgb, extent=(-print_width/2, print_width/2, -print_height/2, print_height/2),
+                          aspect='auto', zorder=0)
+        
+        # Draw paper border rectangle
+        paper_rect = Rectangle(
+            (-print_width/2, -print_height/2), 
+            print_width, print_height,
+            fill=False, edgecolor='red', linewidth=2, zorder=1
+        )
+        self.ax.add_patch(paper_rect)
+        
+        # Set limits with margin
+        margin = 0.05
+        self.ax.set_xlim(-print_width/2 - margin, print_width/2 + margin)
+        self.ax.set_ylim(-print_height/2 - margin, print_height/2 + margin)
+        
+        # Initialize plot artists (animated=True for blitting)
+        self.ball_artists = []
+        self.player_artists = []
+        self.player_text_artists = []
+        
+        # Show and draw once to initialize
+        self.fig.show()
+        self.fig.canvas.draw()
+        
+        # Capture background for blitting
+        self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        
+        # Connect resize event to recapture background
+        self.fig.canvas.mpl_connect('resize_event', self._on_resize)
+        
+        # Trigger resize to fix initial aspect ratio
+        self._on_resize(None)
+    
+    def _on_resize(self, event):
+        """Handle window resize by recapturing background."""
+        self.ax.set_aspect('equal', adjustable='box')
+        self.fig.canvas.draw()
+        self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+    
+    def update(self, game_state):
+        """Update plot with new game state using blitting.
+        
+        Args:
+            game_state: GameState object with balls and players
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Circle, Polygon
+        
+        # Restore background (clears old artists)
+        self.fig.canvas.restore_region(self.background)
+        
+        # Remove old artists
+        for artist in self.ball_artists + self.player_artists + self.player_text_artists:
+            artist.remove()
+        self.ball_artists.clear()
+        self.player_artists.clear()
+        self.player_text_artists.clear()
+        
+        # Draw balls
+        if game_state.balls:
+            for ball in game_state.balls:
+                circle = Circle(
+                    (ball.x, ball.y), 
+                    radius=self.ball_radius,
+                    color=self.ball_color,
+                    animated=True,
+                    zorder=10
+                )
+                self.ax.add_patch(circle)
+                self.ball_artists.append(circle)
+                self.ax.draw_artist(circle)
+        
+        # Draw players
+        if game_state.players:
+            for player in game_state.players:
+                # Player triangle pointing in direction of angle
+                # Triangle centroid centered at (player.x, player.y)
+                length = self.player_length
+                width = self.player_width
+                
+                # Direction vector
+                cos_a = np.cos(player.angle)
+                sin_a = np.sin(player.angle)
+                
+                # Triangle centroid at player position
+                # Base center is 1/3 of length behind centroid
+                # Tip is 2/3 of length ahead of centroid
+                base_cx = player.x - (length / 3) * cos_a
+                base_cy = player.y - (length / 3) * sin_a
+                tip_x = player.x + (2 * length / 3) * cos_a
+                tip_y = player.y + (2 * length / 3) * sin_a
+                
+                # Base corners perpendicular to direction
+                base_angle = player.angle + np.pi / 2
+                base1_x = base_cx + (width / 2) * np.cos(base_angle)
+                base1_y = base_cy + (width / 2) * np.sin(base_angle)
+                base2_x = base_cx - (width / 2) * np.cos(base_angle)
+                base2_y = base_cy - (width / 2) * np.sin(base_angle)
+                
+                triangle = Polygon(
+                    [[tip_x, tip_y], [base1_x, base1_y], [base2_x, base2_y]],
+                    color=self.player_color,
+                    alpha=self.player_alpha,
+                    animated=True,
+                    zorder=10
+                )
+                self.ax.add_patch(triangle)
+                self.player_artists.append(triangle)
+                self.ax.draw_artist(triangle)
+                
+                # Player ID text
+                text = self.ax.text(
+                    player.x, player.y,
+                    f'{player.id}',
+                    ha='center', va='center',
+                    fontsize=self.text_size,
+                    color=self.text_color,
+                    animated=True,
+                    zorder=11
+                )
+                self.player_text_artists.append(text)
+                self.ax.draw_artist(text)
+        
+        # Blit the changes
+        self.fig.canvas.blit(self.ax.bbox)
+        self.fig.canvas.flush_events()
+    
+    def close(self):
+        """Close the plot window."""
+        import matplotlib.pyplot as plt
+        plt.close(self.fig)
+
 
 if __name__ == "__main__":
     import cv2
@@ -207,53 +403,63 @@ if __name__ == "__main__":
         player_height=0.04
     )
     
+    # Setup 2D plotter
+    plotter = GamePlotter2D(board_config_letter)
+    
     last_time = time.time()
     frame_times = deque(maxlen=30)  # Rolling average over last 30 frames
     
-    while True:
-        if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
-            break
-        
-        t0 = time.perf_counter()
-        frame = global_cam.get_frame()
-        t1 = time.perf_counter()
-        
-        if frame is None:
-            continue
-        
-        drawing_frame = frame.copy()
-        t2 = time.perf_counter()
-        
-        # Detect game state
-        game_state = game_detector.detect(frame, drawing_frame)
-        t3 = time.perf_counter()
-        
-        # Calculate FPS with rolling average
-        current_time = time.time()
-        dt = current_time - last_time
-        last_time = current_time
-        frame_times.append(dt)
-        avg_dt = sum(frame_times) / len(frame_times)
-        fps = 1.0 / avg_dt if avg_dt > 0 else 0
-        
-        # Print timing breakdown
-        print(f"Frame acquire: {(t1-t0)*1000:.1f}ms | Frame copy: {(t2-t1)*1000:.1f}ms | " 
-              f"Detect: {(t3-t2)*1000:.1f}ms | Total: {(t3-t0)*1000:.1f}ms | FPS: {fps:.1f}")
-        
-        # Annotate FPS
-        print(f"FPS: {fps:.1f} ({avg_dt*1000:.1f}ms)")
-        
-        # Annotate balls
-        for i, ball in enumerate(game_state.balls):
-            cv2.putText(drawing_frame, f"Ball: ({ball.x:.3f}, {ball.y:.3f})m",
-                       (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-        # Annotate players
-        for i, player in enumerate(game_state.players):
-            angle_deg = np.degrees(player.angle)
-            cv2.putText(drawing_frame, f"Player {player.id}: ({player.x:.3f}, {player.y:.3f})m, {angle_deg:.1f}deg",
-                       (10, 60 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 255), 2)
-        
-        # Display
-        cv2.imshow("Game Detection", drawing_frame)
-        cv2.setWindowProperty("Game Detection", cv2.WND_PROP_TOPMOST, 1)
+    try:
+        while True:
+            if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
+                break
+            
+            t0 = time.perf_counter()
+            frame = global_cam.get_frame()
+            t1 = time.perf_counter()
+            
+            if frame is None:
+                continue
+            
+            drawing_frame = frame.copy()
+            t2 = time.perf_counter()
+            
+            # Detect game state
+            game_state = game_detector.detect(frame, drawing_frame)
+            t3 = time.perf_counter()
+            
+            # Update 2D plot
+            plotter.update(game_state)
+            t4 = time.perf_counter()
+            
+            # Calculate FPS with rolling average
+            current_time = time.time()
+            dt = current_time - last_time
+            last_time = current_time
+            frame_times.append(dt)
+            avg_dt = sum(frame_times) / len(frame_times)
+            fps = 1.0 / avg_dt if avg_dt > 0 else 0
+            
+            # Print timing breakdown
+            print(f"Frame acquire: {(t1-t0)*1000:.1f}ms | Frame copy: {(t2-t1)*1000:.1f}ms | " 
+                  f"Detect: {(t3-t2)*1000:.1f}ms | Plot: {(t4-t3)*1000:.1f}ms | "
+                  f"Total: {(t4-t0)*1000:.1f}ms | FPS: {fps:.1f}")
+            
+            # Annotate camera view with ball positions
+            for i, ball in enumerate(game_state.balls):
+                cv2.putText(drawing_frame, f"Ball: ({ball.x:.3f}, {ball.y:.3f})m",
+                           (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Annotate camera view with player positions
+            for i, player in enumerate(game_state.players):
+                angle_deg = np.degrees(player.angle)
+                cv2.putText(drawing_frame, f"Player {player.id}: ({player.x:.3f}, {player.y:.3f})m, {angle_deg:.1f}deg",
+                           (10, 60 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 255), 2)
+            
+            # Display camera view
+            cv2.imshow("Game Detection", drawing_frame)
+            cv2.setWindowProperty("Game Detection", cv2.WND_PROP_TOPMOST, 1)
+    finally:
+        plotter.close()
+        cv2.destroyAllWindows()
+
