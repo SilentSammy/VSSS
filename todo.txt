@@ -1,13 +1,21 @@
-- Add rotation setting to cam_config
++ retake calibration images
++ Add rotation setting to cam_config
 - Allow cam_config to keep retrying
 
 - Fix Aruco angle convention
 
 - Create class that returns GameState object
+- Research how to plot more efficiently, common fixes in matplotlib, etc.
 - Create GamePlotter class that uses a more efficient library than matplotlib. It should consume a GameState object and output a plot / image.
 
 - Reorganize code:
     - Move BoardPlotter3D to the board_est module, so we can remove plotter3d module.
     - Remove rc folder
 
+- Make board image a true transparent png. Also, create proper soccer field.
+
 - 3 axis PID wrapper that takes errors and returns command
+
+- unblur frames
+
+- 

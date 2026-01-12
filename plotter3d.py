@@ -254,11 +254,13 @@ if __name__ == "__main__":
     from board_config import board_config
     from cam_config import global_cam
     
+    active_cam = global_cam  # Use rotated camera configuration
+
     be = BoardEstimator(
         board_config=board_config,
-        K=global_cam.K,
-        D=global_cam.D,
-        # rotate_180=False
+        K=active_cam.K,
+        D=active_cam.D,
+        # rotate_180=False,
     )
     
     plotter = BoardPlotter3D(
@@ -273,7 +275,7 @@ if __name__ == "__main__":
             break
     
         # Get frame
-        frame = global_cam.get_frame()
+        frame = active_cam.get_frame()
         drawing_frame = frame.copy()
     
         # Estimate
