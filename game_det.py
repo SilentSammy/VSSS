@@ -3,6 +3,10 @@ from typing import List
 import numpy as np
 from obj_det import ArucoDetector, BallDetector
 from board_est import BoardEstimator
+import cv2
+import board_config
+from board_config import global_board_config
+from cam_config import global_cam
 
 @dataclass
 class GameState:
@@ -386,79 +390,43 @@ class GamePlotter2D:
         import matplotlib.pyplot as plt
         plt.close(self.fig)
 
+# Setup-specific settings
+is_small_setup = global_board_config == board_config.board_config_letter
 
+# Setup GameDetector
+game_detector = GameDetector(
+    board_estimator=BoardEstimator(global_board_config, K=global_cam.K, D=global_cam.D, rotate_180=True),
+    ball_detector=BallDetector(),
+    ball_height=0.02,
+    aruco_detector=ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)),
+    player_height=0.04 if is_small_setup else 0.08,
+)
 if __name__ == "__main__":
-    import cv2
-    import time
-    from collections import deque
-    import board_config
-    from board_config import global_board_config
-    from cam_config import global_cam
-    
-    # Setup-specific settings
-    if global_board_config == board_config.board_config_letter:
-        player_height = 0.04
-        plot_player_width = 0.015
-        plot_player_height = 0.02
-    else:
-        player_height = 0.8
-        plot_player_width = 0.05
-        plot_player_height = 0.075
-
-    # Setup GameDetector
-    game_detector = GameDetector(
-        board_estimator=BoardEstimator(global_board_config, K=global_cam.K, D=global_cam.D, rotate_180=True),
-        ball_detector=BallDetector(),
-        ball_height=0.02,
-        aruco_detector=ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)),
-        player_height=0.04,
-    )
     
     # Setup 2D plotter
     plotter = GamePlotter2D(
         global_board_config,
-        player_width=plot_player_width,
-        player_length=plot_player_height
+        player_width=0.015 if is_small_setup else 0.05,
+        player_length=0.02 if is_small_setup else 0.075
     )
-    
-    last_time = time.time()
-    frame_times = deque(maxlen=30)  # Rolling average over last 30 frames
     
     try:
         while True:
             if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
                 break
             
-            t0 = time.perf_counter()
             frame = global_cam.get_frame()
-            t1 = time.perf_counter()
             
             if frame is None:
                 continue
             
             drawing_frame = frame.copy()
-            t2 = time.perf_counter()
             
             # Detect game state
             game_state = game_detector.detect(frame, drawing_frame)
-            t3 = time.perf_counter()
             
             # Update 2D plot
             plotter.update(game_state)
-            t4 = time.perf_counter()
-            
-            # Calculate FPS with rolling average
-            current_time = time.time()
-            dt = current_time - last_time
-            last_time = current_time
-            frame_times.append(dt)
-            avg_dt = sum(frame_times) / len(frame_times)
-            fps = 1.0 / avg_dt if avg_dt > 0 else 0
-            
-            # Print timing breakdown
-            print(f"Frame acquire: {(t1-t0)*1000:.1f}ms | Frame copy: {(t2-t1)*1000:.1f}ms | " 
-                  f"Detect: {(t3-t2)*1000:.1f}ms | Plot: {(t4-t3)*1000:.1f}ms | "
-                  f"Total: {(t4-t0)*1000:.1f}ms | FPS: {fps:.1f}")
             
             # Annotate camera view with ball positions
             for i, ball in enumerate(game_state.balls):

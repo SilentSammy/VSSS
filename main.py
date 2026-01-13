@@ -25,7 +25,7 @@ def rotate_commands(x_ref, y_ref, angle):
     y = x_ref * np.sin(angle) + y_ref * np.cos(angle)
     return x, y
 
-def main():
+def image_servo_demo():
     ad = ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100))
     
     # Initialize PID controllers - gentle tuning for latency
@@ -115,5 +115,101 @@ def main():
         client.stop()
         client.disconnect()
 
+def board_servo_demo():
+    from game_det import game_detector, GamePlotter2D
+    from board_config import global_board_config
+    
+    # Real setup configuration
+    plotter = GamePlotter2D(
+        global_board_config,
+        player_width=0.05,
+        player_length=0.075
+    )
+    
+    # PID controller for aiming at ball
+    pid_w = PID(Kp=0.6, Ki=0.02, Kd=0.02, setpoint=0)
+    pid_w.output_limits = (-0.5, 0.5)
+    
+    # Connect to mecanum car
+    client = MecanumBLEClient(resolution=0.05)
+    client.connect()
+    
+    try:
+        while True:
+            if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
+                break
+            
+            frame = global_cam.get_frame()
+            
+            if frame is None:
+                continue
+            
+            drawing_frame = frame.copy()
+            
+            # Detect game state
+            game_state = game_detector.detect(frame, drawing_frame)
+            
+            # Update 2D plot
+            plotter.update(game_state)
+            
+            # Annotate camera view with ball positions
+            for i, ball in enumerate(game_state.balls):
+                cv2.putText(drawing_frame, f"Ball: ({ball.x:.3f}, {ball.y:.3f})m",
+                           (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Annotate camera view with player positions
+            for i, player in enumerate(game_state.players):
+                angle_deg = np.degrees(player.angle)
+                cv2.putText(drawing_frame, f"Player {player.id}: ({player.x:.3f}, {player.y:.3f})m, {angle_deg:.1f}deg",
+                           (10, 60 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 255), 2)
+            
+            # Calculate aiming angle if we have both player and ball
+            auto_cmd = {'x': 0, 'y': 0, 'w': 0}
+            if game_state.players and game_state.balls:
+                player = game_state.players[0]
+                ball = game_state.balls[0]
+                
+                # Calculate angle to ball
+                dx = ball.x - player.x
+                dy = ball.y - player.y
+                target_angle = np.arctan2(dy, dx)
+                
+                # Calculate angle error
+                angle_error = (target_angle - player.angle + np.pi) % (2 * np.pi) - np.pi
+                
+                # Apply deadband to prevent jittering when close
+                if abs(angle_error) < np.radians(5):  # 5 degree deadband
+                    w = 0
+                else:
+                    # PID control for rotation
+                    w = pid_w(angle_error)
+                auto_cmd['w'] = w
+                
+                # Debug output
+                print(f"Player angle: {np.degrees(player.angle):6.1f}° | "
+                      f"Ball pos: ({ball.x:6.3f}, {ball.y:6.3f}) | "
+                      f"Target: {np.degrees(target_angle):6.1f}° | "
+                      f"Error: {np.degrees(angle_error):6.1f}° | "
+                      f"w: {w:5.2f}")
+                
+                # Annotate angle to ball
+                cv2.putText(drawing_frame, f"Target angle: {np.degrees(target_angle):.1f} deg",
+                           (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(drawing_frame, f"Angle error: {np.degrees(angle_error):.1f} deg",
+                           (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            
+            # Send manual control commands (manual can override x, y; w is auto)
+            client.set_velocity(get_manual_override(auto_cmd))
+            
+            # Display camera view
+            cv2.imshow("Game Detection", drawing_frame)
+            cv2.setWindowProperty("Game Detection", cv2.WND_PROP_TOPMOST, 1)
+    finally:
+        client.stop()
+        client.disconnect()
+        plotter.close()
+        cv2.destroyAllWindows()
+
 if __name__ == "__main__":
-    main()
+    # image_servo_demo()
+    board_servo_demo()

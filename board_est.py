@@ -130,10 +130,6 @@ class PnpResult:
         # Correct the position
         X_corrected = X - offset_x
         Y_corrected = Y - offset_y
-        
-        # Print debug info
-        print(f"Ball: ({X:.3f}, {Y:.3f}, {Z:.3f}) -> Corrected: ({X_corrected:.3f}, {Y_corrected:.3f}), Cam: ({cam_pos[0]:.3f}, {cam_pos[1]:.3f}, {cam_pos[2]:.3f})")
-        print(f"Angle X: {math.degrees(angle_x):.2f}°, Angle Y: {math.degrees(angle_y):.2f}°")
 
         return (X_corrected, Y_corrected)
 
