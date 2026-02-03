@@ -107,63 +107,13 @@ def _get_droidcam_image(rotation = None):
         frame = cv2.rotate(frame, rotation)
     return frame
 
-def _get_droidcam_image_1(rotation = None):
-    """Get frame from DroidCam using background thread to avoid HTTP blocking."""
-    ip = "http://192.168.137.128:4747/video"
-    ip = "http://10.22.209.148:4747/video"
-    
-    # Initialize threaded capture on first call
-    _get_droidcam_image.thread_cap = getattr(_get_droidcam_image, 'thread_cap', None)
-    if _get_droidcam_image.thread_cap is None:
-        cap = cv2.VideoCapture(ip)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer to reduce latency
-        
-        # Create thread-safe queue for frames
-        frame_queue = queue.Queue(maxsize=1)
-        
-        def capture_frames():
-            """Background thread that continuously captures frames."""
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    continue
-                # Non-blocking put - if queue is full, discard old frame
-                try:
-                    frame_queue.put_nowait(frame)
-                except queue.Full:
-                    # Remove old frame and add new one
-                    try:
-                        frame_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        frame_queue.put_nowait(frame)
-                    except queue.Full:
-                        pass
-        
-        # Start background thread
-        thread = threading.Thread(target=capture_frames, daemon=True)
-        thread.start()
-        
-        _get_droidcam_image.thread_cap = frame_queue
-    
-    # Get latest frame without blocking
-    try:
-        frame = _get_droidcam_image.thread_cap.get_nowait()
-    except queue.Empty:
-        return None
-    
-    if rotation is not None:
-        frame = cv2.rotate(frame, rotation)
-    return frame
-
 def _get_webcam_image():
     _get_webcam_image.cap = getattr(_get_webcam_image, 'cap', None)
     if _get_webcam_image.cap is None:
-        _get_webcam_image.cap = cv2.VideoCapture(0)
-        # If camera 0 fails, try camera 1
+        _get_webcam_image.cap = cv2.VideoCapture(1)
+        # If camera 1 fails, try camera 0
         if not _get_webcam_image.cap.isOpened():
-            _get_webcam_image.cap = cv2.VideoCapture(1)
+            _get_webcam_image.cap = cv2.VideoCapture(0)
     
     ret, frame = _get_webcam_image.cap.read()
     if not ret:

@@ -344,8 +344,8 @@ def waypoint_demo():
             # Control logic
             auto_cmd = {'x': 0, 'y': 0, 'w': 0}
             
-            # Find player with ID 14
-            player = next((p for p in game_state.players if p.id == 14), None)
+            # Find player with ID 14 or 13
+            player = next((p for p in game_state.players if p.id in [14, 13]), None)
             
             if player is not None:
                 # Get or update current waypoint
