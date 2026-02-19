@@ -21,7 +21,7 @@ def main():
 
     # 3) Draw and save markers for IDs 0 through n-1 in the script's directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    for marker_id in range(13, 16):
+    for marker_id in range(15, 25):
         # generateImageMarker creates the marker image
         marker_img = cv2.aruco.generateImageMarker(aruco_dict, marker_id, 120)
         filename = os.path.join(script_dir, f"aruco_{marker_id:02d}.png")

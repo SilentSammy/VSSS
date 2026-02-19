@@ -35,7 +35,8 @@ def get_user_cmd():
     import combined_input as inp
     slow = 0.5
     fast = 1.0
-    scale = fast if inp.is_pressed('c') else slow  # 'C' key for full speed
+    boost = inp.get_bipolar_ctrl(high_key='c', high_game='RT')  # 'C' key or Right Bumper for boost
+    scale = slow + (fast - slow) * boost  # Interpolate between slow and fast based on boost input
     return {
         'x': inp.get_bipolar_ctrl('w', 's', 'LY') * scale,
         'y': -inp.get_bipolar_ctrl('d', 'a', 'LX') * scale, # positive y is left according to right-handed coordinate system
@@ -192,7 +193,7 @@ if __name__ == "__main__":
     print("Mecanum BLE Manual Control Demo")
     print("================================\n")
     
-    car = MecanumBLEClient()
+    car = MecanumBLEClient(device_name="Therian00")
     car.connect()
     
     try:
