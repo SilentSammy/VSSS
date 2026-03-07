@@ -306,8 +306,8 @@ board_config_letter = GridboardConfig(
     print_width=0.2159,    # Letter width is 8.5" = 21.59cm
     filename="resources/gridboard_letter"
 )
-global_board_config = board_config_letter
 global_board_config = board_config_plotter
+global_board_config = board_config_letter
 
 if __name__ == "__main__":
     # Example usage: save board image and PDF
