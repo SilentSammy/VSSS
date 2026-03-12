@@ -2,6 +2,7 @@ import numpy as np
 import asyncio
 from bleak import BleakScanner, BleakClient
 from threading import Thread
+import time
 
 def to_byte(val):
     """Convert -1.0 to +1.0 range to 0-255 byte using two's complement"""

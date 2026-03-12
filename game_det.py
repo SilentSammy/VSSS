@@ -24,6 +24,9 @@ class GameState:
         if self.players is None:
             self.players = []
 
+    def get_player(self, aruco_id):
+        return next((p for p in self.players if p.id == aruco_id), None)
+
 @dataclass
 class BallState:
     """Represents a single ball's state."""
@@ -202,38 +205,128 @@ class GameDetector:
             timestamp=timestamp
         )
 
+class PlotOverlay:
+    """Handle to a group of animated artists managed by GamePlotter2D.
+
+    Obtain via plotter.add_overlay(artists).
+    Artists must already be added to plotter.ax before calling add_overlay.
+    Call remove() to deregister and clean up all artists.
+
+    Example:
+        line, = plotter.ax.plot([], [], 'r--', zorder=5)
+        overlay = plotter.add_overlay([line])
+        # each frame before plotter.update():
+        line.set_data(xs, ys)
+        # when no longer needed:
+        overlay.remove()
+    """
+
+    def __init__(self, plotter, artists):
+        self._plotter = plotter
+        self._artists = []
+        self._apply(artists)
+
+    def _apply(self, artists):
+        for a in self._artists:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._artists = list(artists)
+        for a in self._artists:
+            a.set_animated(True)
+
+    @property
+    def artists(self):
+        return self._artists
+
+    def set_artists(self, new_artists):
+        """Replace artists. Old ones are removed from axes; new ones must already be added."""
+        self._apply(new_artists)
+
+    def remove(self):
+        """Remove all artists from axes and deregister from plotter."""
+        self._apply([])
+        try:
+            self._plotter._overlays.remove(self)
+        except ValueError:
+            pass
+
+class PathOverlay:
+    """Animated overlay that draws a sequence of points with a pursuit indicator.
+
+    Shows:
+    - Highlighted dot + pursuit line from car to the first (active) point
+    - Dashed line + dots through all remaining points
+
+    Usage:
+        overlay = PathOverlay(plotter)
+        # each frame:
+        overlay.update(points, player_pos=(x, y))
+    """
+
+    def __init__(self, plotter,
+                 path_color='c', path_lw=1.5, path_ms=6, path_style='--',
+                 target_color='y', target_ms=8, pursuit_lw=1.5):
+        ax = plotter.ax
+        self._pursuit_line, = ax.plot([], [], '-',        color=target_color, lw=pursuit_lw, zorder=5)
+        self._target_dot,   = ax.plot([], [], 'o',        color=target_color, ms=target_ms,  zorder=6)
+        self._path_line,    = ax.plot([], [], path_style, color=path_color,   lw=path_lw,    zorder=5)
+        self._path_dots,    = ax.plot([], [], 'o',        color=path_color,   ms=path_ms,    zorder=5)
+        plotter.add_overlay([self._path_line, self._path_dots,
+                             self._pursuit_line, self._target_dot])
+
+    def update(self, points, player_pos=None):
+        """Redraw the overlay.
+
+        Args:
+            points: list of (x, y); first point is the active target.
+            player_pos: (x, y) of the car, or None to hide the pursuit line.
+        """
+        if not points:
+            for artist in (self._pursuit_line, self._target_dot,
+                           self._path_line, self._path_dots):
+                artist.set_data([], [])
+            return
+
+        tx, ty = points[0]
+        self._target_dot.set_data([tx], [ty])
+
+        if player_pos is not None:
+            self._pursuit_line.set_data([player_pos[0], tx], [player_pos[1], ty])
+        else:
+            self._pursuit_line.set_data([], [])
+
+        rest = points[1:]
+        if rest:
+            xs, ys = zip(*points)        # line through active + queued
+            self._path_line.set_data(xs, ys)
+            rxs, rys = zip(*rest)        # dots only on queued
+            self._path_dots.set_data(rxs, rys)
+        else:
+            self._path_line.set_data([], [])
+            self._path_dots.set_data([], [])
+
+
 class GamePlotter2D:
-    """Real-time 2D plotting of game state using matplotlib with blitting for performance."""
-    
+    """Real-time 2D plotting of game state using matplotlib with blitting for performance.
+
+    Supports user-defined animated overlays via add_overlay(). Built-in ball and
+    player drawings are managed internally using the same mechanism and always
+    drawn on top of user overlays.
+    """
+
     def __init__(self, board_config, figsize=(8, 6),
                  ball_color='orange', ball_radius=0.01,
                  player_color='blue', player_alpha=0.7, player_length=0.02, player_width=0.015,
                  text_color='white', text_size=7, on_click=None, margin=0.2):
-        """Initialize plotter settings (does not create plot window).
-        
-        Args:
-            board_config: BoardConfig instance for field dimensions
-            figsize: Figure size in inches (width, height)
-            ball_color: Ball circle fill color
-            ball_radius: Ball circle radius in meters
-            player_color: Player triangle fill color
-            player_alpha: Player triangle transparency (0-1)
-            player_length: Player triangle length in meters
-            player_width: Player triangle base width in meters
-            text_color: Player ID text color
-            text_size: Player ID text font size
-            on_click: Optional callback function(x, y) called when board is clicked
-        """
-        # Store configuration
         self.margin = margin
         self.board_config = board_config
         self.figsize = figsize
-        
-        # Click handling
+
         self.on_click = on_click
-        self.last_click = None  # (x, y) in board coordinates
-        
-        # Appearance settings
+        self.last_click = None
+
         self.ball_color = ball_color
         self.ball_radius = ball_radius
         self.player_color = player_color
@@ -242,26 +335,35 @@ class GamePlotter2D:
         self.player_width = player_width
         self.text_color = text_color
         self.text_size = text_size
-        
-        # Plot objects (created in start())
+
         self.fig = None
         self.ax = None
         self.background = None
-        self.ball_artists = []
-        self.player_artists = []
-        self.player_text_artists = []
-    
+
+        self._overlays = []  # all overlays in draw order; game objects appended last in start()
+        self._balls_overlay = None
+        self._players_overlay = None
+
+    def add_overlay(self, artists):
+        """Register a group of animated artists to be drawn each frame.
+
+        Artists must already be added to self.ax (ax.add_patch, ax.plot, ax.text, etc.).
+        Returns a PlotOverlay handle. Call handle.remove() to stop drawing and clean up.
+        """
+        overlay = PlotOverlay(self, artists)
+        self._overlays.append(overlay)
+        return overlay
+
     def start(self):
         """Create and display the plot window."""
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
         import cv2
         import os
-        
+
         self.field_width, self.field_height = self.board_config.get_board_dimensions()
         print_width, print_height = self.board_config.get_print_dimensions()
-        
-        # Create figure and axis
+
         self.fig, self.ax = plt.subplots(figsize=self.figsize)
         self.fig.canvas.manager.set_window_title('VSS Game State')
         self.ax.set_aspect('equal', adjustable='box')
@@ -269,158 +371,107 @@ class GamePlotter2D:
         self.ax.set_ylabel('Y (m)')
         self.ax.set_title('VSS Game State')
         self.ax.grid(True, alpha=0.3)
-        
-        # Load and display board image as background
+
         if os.path.exists(self.board_config.image_path):
             img = cv2.imread(self.board_config.image_path)
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            
-            # Display image centered, scaled to print dimensions
             self.ax.imshow(img_rgb, extent=(-print_width/2, print_width/2, -print_height/2, print_height/2),
                           aspect='auto', zorder=0)
-        
-        # Draw paper border rectangle
+
         paper_rect = Rectangle(
-            (-print_width/2, -print_height/2), 
+            (-print_width/2, -print_height/2),
             print_width, print_height,
             fill=False, edgecolor='red', linewidth=2, zorder=1
         )
         self.ax.add_patch(paper_rect)
-        
-        # Set limits with margin
-        margin = self.margin
-        self.ax.set_xlim(-print_width/2 - margin, print_width/2 + margin)
-        self.ax.set_ylim(-print_height/2 - margin, print_height/2 + margin)
-        
-        # Initialize plot artists lists
-        self.ball_artists = []
-        self.player_artists = []
-        self.player_text_artists = []
-        
-        # Show and draw once to initialize
+
+        self.ax.set_xlim(-print_width/2 - self.margin, print_width/2 + self.margin)
+        self.ax.set_ylim(-print_height/2 - self.margin, print_height/2 + self.margin)
+
+        # Game object overlays — created last so they draw on top of user overlays
+        self._balls_overlay = self.add_overlay([])
+        self._players_overlay = self.add_overlay([])
+
         self.fig.show()
         self.fig.canvas.draw()
-        
-        # Capture background for blitting
         self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-        
-        # Connect resize event to recapture background
+
         self.fig.canvas.mpl_connect('resize_event', self._on_resize)
-        
-        # Connect click event for waypoint selection
         self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
-        
-        # Trigger initial resize to ensure proper sizing
         self._on_resize(None)
-    
+
     def _on_resize(self, event):
-        """Handle window resize by recapturing background."""
         self.ax.set_aspect('equal', adjustable='box')
         self.fig.canvas.draw()
         self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-    
+
     def _on_mouse_click(self, event):
-        """Handle mouse click on plot."""
-        # Only process left clicks inside the axes
         if event.button == 1 and event.inaxes == self.ax:
             x, y = event.xdata, event.ydata
             self.last_click = (x, y)
-            
-            # Print click location
             print(f"Board clicked at: ({x:.3f}, {y:.3f}) m")
-            
-            # Call user callback if provided
             if self.on_click is not None:
                 self.on_click(x, y)
-    
-    def update(self, game_state):
-        """Update plot with new game state using blitting.
-        
-        Args:
-            game_state: GameState object with balls and players
-        """
-        import matplotlib.pyplot as plt
+
+    def _rebuild_game_objects(self, game_state):
+        """Recreate ball and player artists from current game state."""
         from matplotlib.patches import Circle, Polygon
-        
-        # Restore background (clears old artists)
+
+        ball_artists = []
+        for ball in game_state.balls:
+            circle = Circle((ball.x, ball.y), radius=self.ball_radius,
+                           color=self.ball_color, zorder=10)
+            self.ax.add_patch(circle)
+            ball_artists.append(circle)
+        self._balls_overlay.set_artists(ball_artists)
+
+        player_artists = []
+        for player in game_state.players:
+            length = self.player_length
+            width = self.player_width
+            cos_a = np.cos(player.angle)
+            sin_a = np.sin(player.angle)
+
+            base_cx = player.x - (length / 3) * cos_a
+            base_cy = player.y - (length / 3) * sin_a
+            tip_x = player.x + (2 * length / 3) * cos_a
+            tip_y = player.y + (2 * length / 3) * sin_a
+
+            base_angle = player.angle + np.pi / 2
+            base1_x = base_cx + (width / 2) * np.cos(base_angle)
+            base1_y = base_cy + (width / 2) * np.sin(base_angle)
+            base2_x = base_cx - (width / 2) * np.cos(base_angle)
+            base2_y = base_cy - (width / 2) * np.sin(base_angle)
+
+            triangle = Polygon(
+                [[tip_x, tip_y], [base1_x, base1_y], [base2_x, base2_y]],
+                color=self.player_color, alpha=self.player_alpha, zorder=10
+            )
+            self.ax.add_patch(triangle)
+            player_artists.append(triangle)
+
+            text = self.ax.text(
+                player.x, player.y, f'{player.id}',
+                ha='center', va='center',
+                fontsize=self.text_size, color=self.text_color, zorder=11
+            )
+            player_artists.append(text)
+
+        self._players_overlay.set_artists(player_artists)
+
+    def update(self, game_state):
+        """Update plot with new game state using blitting."""
+        self._rebuild_game_objects(game_state)
+
         self.fig.canvas.restore_region(self.background)
-        
-        # Remove old artists
-        for artist in self.ball_artists + self.player_artists + self.player_text_artists:
-            artist.remove()
-        self.ball_artists.clear()
-        self.player_artists.clear()
-        self.player_text_artists.clear()
-        
-        # Draw balls
-        if game_state.balls:
-            for ball in game_state.balls:
-                circle = Circle(
-                    (ball.x, ball.y), 
-                    radius=self.ball_radius,
-                    color=self.ball_color,
-                    animated=True,
-                    zorder=10
-                )
-                self.ax.add_patch(circle)
-                self.ball_artists.append(circle)
-                self.ax.draw_artist(circle)
-        
-        # Draw players
-        if game_state.players:
-            for player in game_state.players:
-                # Player triangle pointing in direction of angle
-                # Triangle centroid centered at (player.x, player.y)
-                length = self.player_length
-                width = self.player_width
-                
-                # Direction vector
-                cos_a = np.cos(player.angle)
-                sin_a = np.sin(player.angle)
-                
-                # Triangle centroid at player position
-                # Base center is 1/3 of length behind centroid
-                # Tip is 2/3 of length ahead of centroid
-                base_cx = player.x - (length / 3) * cos_a
-                base_cy = player.y - (length / 3) * sin_a
-                tip_x = player.x + (2 * length / 3) * cos_a
-                tip_y = player.y + (2 * length / 3) * sin_a
-                
-                # Base corners perpendicular to direction
-                base_angle = player.angle + np.pi / 2
-                base1_x = base_cx + (width / 2) * np.cos(base_angle)
-                base1_y = base_cy + (width / 2) * np.sin(base_angle)
-                base2_x = base_cx - (width / 2) * np.cos(base_angle)
-                base2_y = base_cy - (width / 2) * np.sin(base_angle)
-                
-                triangle = Polygon(
-                    [[tip_x, tip_y], [base1_x, base1_y], [base2_x, base2_y]],
-                    color=self.player_color,
-                    alpha=self.player_alpha,
-                    animated=True,
-                    zorder=10
-                )
-                self.ax.add_patch(triangle)
-                self.player_artists.append(triangle)
-                self.ax.draw_artist(triangle)
-                
-                # Player ID text
-                text = self.ax.text(
-                    player.x, player.y,
-                    f'{player.id}',
-                    ha='center', va='center',
-                    fontsize=self.text_size,
-                    color=self.text_color,
-                    animated=True,
-                    zorder=11
-                )
-                self.player_text_artists.append(text)
-                self.ax.draw_artist(text)
-        
-        # Blit the changes
+
+        for overlay in self._overlays:
+            for artist in overlay.artists:
+                self.ax.draw_artist(artist)
+
         self.fig.canvas.blit(self.ax.bbox)
         self.fig.canvas.flush_events()
-    
+
     def close(self):
         """Close the plot window."""
         import matplotlib.pyplot as plt
@@ -439,19 +490,11 @@ game_detector = GameDetector(
 )
 
 # Setup GamePlotter2D
-plotter_small = GamePlotter2D(
-    global_board_config,
-    player_width=0.015,
-    player_length=0.02
-)
-
-plotter_large = GamePlotter2D(
+global_plotter = GamePlotter2D(
     global_board_config,
     player_width=0.05,
     player_length=0.075
 )
-
-global_plotter = plotter_large
 
 if __name__ == "__main__":
     

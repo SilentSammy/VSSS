@@ -1,25 +1,9 @@
-+ Create class that returns GameState object
-+ Research how to plot more efficiently, common fixes in matplotlib, etc.
-+ Create GamePlotter class that uses a more efficient library than matplotlib. It should consume a GameState object and output a plot / image.
-
-+ Reorganize code:
-    + Move BoardPlotter3D to the board_est module, so we can remove plotter3d module.
-    + Remove rc folder
-
-+ Make board image a true transparent png. Also, create proper soccer field.
-
 - don't store configs in their own modules. Set up a single module for project-wide config storage.
+- pre-process or filter GameDetector's output, to smooth out false positives and fill the gaps between missed detections.
+- associate aruco + client + controller
 -- Allow cam_config to keep retrying
 -- What if we had a camera that was actually a recorded video? We could even encode the camera intrinsics into the video title or metadata such that when we load the video it also instantiates the intrinsics needed for pose estimation. Furthermore, we could also add playback controls by importing the pynputs module.
 -- 3 axis PID wrapper that takes errors and returns command
 -- unblur frames
 -- parallax effect for players not properly accounted for at very extreme viewing angles
-
-FIX Brown-out: Things to try
-+ Change PWM frequency
-- Different ESP32
-++ Parallel batteries
-+++ 9V solely for ESP32, another 9V for motors and drivers (regulated down to 5)
-- 18V
-
 

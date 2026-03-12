@@ -306,8 +306,27 @@ board_config_letter = GridboardConfig(
     print_width=0.2159,    # Letter width is 8.5" = 21.59cm
     filename="resources/gridboard_letter"
 )
+board_config_square = GridboardConfig(
+    dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100),
+    size=(4, 4),
+    marker_length=0.05,
+    board_width=0.86,
+    print_width=0.9,
+    filename="resources/gridboard_square"
+)
+board_config_full = GridboardConfig(
+    dictionary=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100),
+    size=(3, 4),
+    marker_length=0.1,
+    board_width=0.84,
+    print_width=0.9,
+    filename="resources/gridboard_full"
+)
+
 global_board_config = board_config_plotter
 global_board_config = board_config_letter
+global_board_config = board_config_full
+global_board_config = board_config_square
 
 if __name__ == "__main__":
     # Example usage: save board image and PDF
