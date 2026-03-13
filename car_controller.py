@@ -75,25 +75,65 @@ class CarController:
         self._pid_heading.reset()
 
 
-class PurePursuit:
-    """Finds the lookahead target point on a discrete path."""
+class Path:
+    """A sequence of (x, y) points describing a trajectory."""
 
-    def __init__(self, points, lookahead=0.05, loop=True):
-        self._pts = np.array(points, dtype=float)  # (N, 2)
-        self.lookahead = lookahead
+    def __init__(self, points, loop=True):
+        self.pts = np.array(points, dtype=float)  # (N, 2)
         self.loop = loop
+
+    @classmethod
+    def circle(cls, r=0.15, n=200, cx=0.0, cy=0.0):
+        a = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        return cls(np.column_stack([cx + r * np.cos(a), cy + r * np.sin(a)]))
+
+    @classmethod
+    def from_fn(cls, fn, t_start=0.0, t_end=2*np.pi, n=200, loop=True):
+        """fn(t) -> (x, y), sampled at n evenly-spaced t values."""
+        ts = np.linspace(t_start, t_end, n, endpoint=not loop)
+        return cls([fn(t) for t in ts], loop=loop)
+
+    def resample(self, spacing=0.005):
+        """Return a new Path with points redistributed at uniform arc-length intervals."""
+        pts = self.pts
+        diffs = np.diff(pts, axis=0)
+        seg_lens = np.hypot(diffs[:, 0], diffs[:, 1])
+        cumlen = np.concatenate([[0], np.cumsum(seg_lens)])
+        total = cumlen[-1]
+        n = max(2, int(total / spacing))
+        new_s = np.linspace(0, total, n, endpoint=not self.loop)
+        new_x = np.interp(new_s, cumlen, pts[:, 0])
+        new_y = np.interp(new_s, cumlen, pts[:, 1])
+        return Path(np.column_stack([new_x, new_y]), loop=self.loop)
+
+    def ordered_from(self, idx):
+        """Points starting from idx; closes the loop by appending pts[idx] at end."""
+        n = len(self.pts)
+        count = n + 1 if self.loop else n - idx
+        return [(float(self.pts[(idx + i) % n, 0]),
+                 float(self.pts[(idx + i) % n, 1]))
+                for i in range(count)]
+
+
+class PurePursuit:
+    """Finds the lookahead target point on a Path."""
+
+    def __init__(self, path, lookahead=0.05):
+        self._path = path
+        self.lookahead = lookahead
         self._idx = 0
 
     def get_target(self, x, y):
         """Advance along path and return the lookahead (tx, ty)."""
-        pts = self._pts
+        pts = self._path.pts
+        loop = self._path.loop
         n = len(pts)
 
         # Advance _idx to the closest point in a forward search window
         window = min(n, max(10, n // 5))
         best_d = np.hypot(pts[self._idx, 0] - x, pts[self._idx, 1] - y)
         for i in range(1, window):
-            idx = (self._idx + i) % n if self.loop else min(self._idx + i, n - 1)
+            idx = (self._idx + i) % n if loop else min(self._idx + i, n - 1)
             d = np.hypot(pts[idx, 0] - x, pts[idx, 1] - y)
             if d < best_d:
                 best_d = d
@@ -103,18 +143,14 @@ class PurePursuit:
         arc = 0.0
         prev = self._idx
         for _ in range(n):
-            nxt = (prev + 1) % n if self.loop else min(prev + 1, n - 1)
+            nxt = (prev + 1) % n if loop else min(prev + 1, n - 1)
             arc += np.hypot(pts[nxt, 0] - pts[prev, 0], pts[nxt, 1] - pts[prev, 1])
-            if arc >= self.lookahead or (not self.loop and nxt == n - 1):
+            if arc >= self.lookahead or (not loop and nxt == n - 1):
                 return float(pts[nxt, 0]), float(pts[nxt, 1])
             prev = nxt
 
         return float(pts[(self._idx + 1) % n, 0]), float(pts[(self._idx + 1) % n, 1])
 
     def ordered_points(self):
-        """Path points reordered from current progress index; closes the loop if loop=True."""
-        n = len(self._pts)
-        count = n + 1 if self.loop else n
-        return [(float(self._pts[(self._idx + i) % n, 0]),
-                 float(self._pts[(self._idx + i) % n, 1]))
-                for i in range(count)]
+        """Remaining path points from current progress, for visualization."""
+        return self._path.ordered_from(self._idx)

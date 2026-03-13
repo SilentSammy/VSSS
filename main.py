@@ -4,7 +4,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rc'))
 from mecanum_client import MecanumBLEClient, get_manual_override
 import numpy as np
 from cam_config import global_cam
-from car_controller import CarController, load_cars, PurePursuit
+from car_controller import CarController, load_cars, PurePursuit, Path
 
 client = None
 
@@ -20,7 +20,6 @@ def stop_client():
         client.stop()
         client.disconnect()
         client = None
-
 
 def waypoint_demo():
     from game_det import game_detector, global_plotter, PathOverlay
@@ -94,12 +93,22 @@ def path_demo():
     game_detector.ball_detector = None
     car = load_cars()[0]
 
-    # Circle trajectory: 100 points, 15cm radius
-    N = 100
-    R = 0.15
-    circle = [(R * np.cos(a), R * np.sin(a))
-              for a in np.linspace(0, 2 * np.pi, N, endpoint=False)]
-    pursuit = PurePursuit(circle, lookahead=0.05)
+    def heart(t, scale=0.6/32):
+        x = 16 * np.sin(t)**3
+        y = 13*np.cos(t) - 5*np.cos(2*t) - 2*np.cos(3*t) - np.cos(4*t)
+        return x * scale, y * scale
+
+    # --- Pick a path (uncomment one) ---
+    path = Path.from_fn(lambda t: heart(t),           n=2000).resample(spacing=0.003)  # heart
+    # path = Path.circle(r=0.15)                                .resample(spacing=0.005)  # circle
+    # path = Path.from_fn(lambda t: heart(t, 0.3/32), n=2000).resample(spacing=0.003)  # small heart
+    # path = Path.from_fn(lambda t: (                          # lemniscate (infinity)
+    #     0.2 * np.cos(t) / (1 + np.sin(t)**2),
+    #     0.2 * np.sin(t) * np.cos(t) / (1 + np.sin(t)**2)
+    # ), n=1000).resample(spacing=0.003)
+    # ------------------------------------
+
+    pursuit = PurePursuit(path, lookahead=0.05)
 
     global_plotter.start()
     path_overlay = PathOverlay(global_plotter, path_ms=2)
@@ -134,9 +143,13 @@ def path_demo():
             global_plotter.update(game_state)
             client.set_velocity(get_manual_override(auto_cmd))
 
+            cv2.imshow("Camera", frame)
+            cv2.setWindowProperty("Camera", cv2.WND_PROP_TOPMOST, 1)
+
     finally:
         stop_client()
         global_plotter.close()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     path_demo()
