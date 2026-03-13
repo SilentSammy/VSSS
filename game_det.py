@@ -267,27 +267,36 @@ class PathOverlay:
 
     def __init__(self, plotter,
                  path_color='c', path_lw=1.5, path_ms=6, path_style='--',
-                 target_color='y', target_ms=8, pursuit_lw=1.5):
+                 target_color='y', target_ms=8, pursuit_lw=1.5,
+                 start_color='lime', start_ms=10):
         ax = plotter.ax
         self._pursuit_line, = ax.plot([], [], '-',        color=target_color, lw=pursuit_lw, zorder=5)
         self._target_dot,   = ax.plot([], [], 'o',        color=target_color, ms=target_ms,  zorder=6)
         self._path_line,    = ax.plot([], [], path_style, color=path_color,   lw=path_lw,    zorder=5)
         self._path_dots,    = ax.plot([], [], 'o',        color=path_color,   ms=path_ms,    zorder=5)
+        self._start_dot,    = ax.plot([], [], 'o',        color=start_color,  ms=start_ms,   zorder=7,
+                                      markerfacecolor='none', markeredgewidth=2)
         plotter.add_overlay([self._path_line, self._path_dots,
-                             self._pursuit_line, self._target_dot])
+                             self._pursuit_line, self._target_dot, self._start_dot])
 
-    def update(self, points, player_pos=None):
+    def update(self, points, player_pos=None, start_point=None):
         """Redraw the overlay.
 
         Args:
             points: list of (x, y); first point is the active target.
             player_pos: (x, y) of the car, or None to hide the pursuit line.
+            start_point: (x, y) to highlight as the path start, or None to hide.
         """
         if not points:
             for artist in (self._pursuit_line, self._target_dot,
-                           self._path_line, self._path_dots):
+                           self._path_line, self._path_dots, self._start_dot):
                 artist.set_data([], [])
             return
+
+        if start_point is not None:
+            self._start_dot.set_data([start_point[0]], [start_point[1]])
+        else:
+            self._start_dot.set_data([], [])
 
         tx, ty = points[0]
         self._target_dot.set_data([tx], [ty])

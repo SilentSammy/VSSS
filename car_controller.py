@@ -114,6 +114,22 @@ class Path:
                  float(self.pts[(idx + i) % n, 1]))
                 for i in range(count)]
 
+    def roll_to_closest(self, x, y):
+        """Return a new Path whose points start at the point nearest to (x, y)."""
+        dists = np.hypot(self.pts[:, 0] - x, self.pts[:, 1] - y)
+        idx = int(np.argmin(dists))
+        return Path(np.roll(self.pts, -idx, axis=0), loop=self.loop)
+
+    def reverse(self):
+        """Return a new Path with traversal direction reversed, keeping the same start point."""
+        pts = self.pts
+        reversed_pts = np.concatenate([pts[:1], pts[1:][::-1]])
+        return Path(reversed_pts, loop=self.loop)
+
+    def __add__(self, other):
+        """Concatenate two paths into one loop: self then other, back to self.pts[0]."""
+        return Path(np.concatenate([self.pts, other.pts]), loop=True)
+
 
 class PurePursuit:
     """Finds the lookahead target point on a Path."""
