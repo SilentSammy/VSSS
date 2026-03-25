@@ -323,6 +323,13 @@ class GamePlotter2D:
     Supports user-defined animated overlays via add_overlay(). Built-in ball and
     player drawings are managed internally using the same mechanism and always
     drawn on top of user overlays.
+
+    Lifecycle:
+        start()  — create the window and show it
+        hide()   — hide the window without destroying it
+        show()   — reveal a hidden window
+        stop()   — destroy the window entirely
+        update() — push new game state; no-op if not started or hidden
     """
 
     def __init__(self, board_config, figsize=(8, 6),
@@ -353,6 +360,17 @@ class GamePlotter2D:
         self._balls_overlay = None
         self._players_overlay = None
 
+        self._started = False
+        self._visible = False
+
+    @property
+    def is_started(self):
+        return self._started
+
+    @property
+    def is_visible(self):
+        return self._started and self._visible
+
     def add_overlay(self, artists):
         """Register a group of animated artists to be drawn each frame.
 
@@ -364,7 +382,11 @@ class GamePlotter2D:
         return overlay
 
     def start(self):
-        """Create and display the plot window."""
+        """Create the plot window and show it. No-op if already started."""
+        if self._started:
+            self.show()
+            return
+
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
         import cv2
@@ -408,6 +430,53 @@ class GamePlotter2D:
         self.fig.canvas.mpl_connect('resize_event', self._on_resize)
         self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
         self._on_resize(None)
+
+        self._started = True
+        self._visible = True
+
+    def _window_show(self):
+        win = self.fig.canvas.manager.window
+        if hasattr(win, 'deiconify'):   # Tk
+            win.deiconify()
+        else:                           # Qt
+            win.show()
+
+    def _window_hide(self):
+        win = self.fig.canvas.manager.window
+        if hasattr(win, 'withdraw'):    # Tk
+            win.withdraw()
+        else:                           # Qt
+            win.hide()
+
+    def show(self):
+        """Make the window visible. Calls start() if not yet started."""
+        if not self._started:
+            self.start()
+            return
+        if not self._visible:
+            self._window_show()
+            self._visible = True
+
+    def hide(self):
+        """Hide the window without destroying it. update() becomes a no-op while hidden."""
+        if self._started and self._visible:
+            self._window_hide()
+            self._visible = False
+
+    def stop(self):
+        """Destroy the plot window and reset all state."""
+        if not self._started:
+            return
+        import matplotlib.pyplot as plt
+        plt.close(self.fig)
+        self.fig = None
+        self.ax = None
+        self.background = None
+        self._overlays.clear()
+        self._balls_overlay = None
+        self._players_overlay = None
+        self._started = False
+        self._visible = False
 
     def _on_resize(self, event):
         self.ax.set_aspect('equal', adjustable='box')
@@ -469,7 +538,10 @@ class GamePlotter2D:
         self._players_overlay.set_artists(player_artists)
 
     def update(self, game_state):
-        """Update plot with new game state using blitting."""
+        """Update plot with new game state using blitting. No-op if not started or hidden."""
+        if not self._started or not self._visible:
+            return
+
         self._rebuild_game_objects(game_state)
 
         self.fig.canvas.restore_region(self.background)
@@ -480,11 +552,6 @@ class GamePlotter2D:
 
         self.fig.canvas.blit(self.ax.bbox)
         self.fig.canvas.flush_events()
-
-    def close(self):
-        """Close the plot window."""
-        import matplotlib.pyplot as plt
-        plt.close(self.fig)
 
 # Setup-specific settings
 is_small_setup = global_board_config == board_config.board_config_letter
@@ -544,6 +611,6 @@ if __name__ == "__main__":
             cv2.imshow("Game Detection", drawing_frame)
             cv2.setWindowProperty("Game Detection", cv2.WND_PROP_TOPMOST, 1)
     finally:
-        global_plotter.close()
+        global_plotter.stop()
         cv2.destroyAllWindows()
 

@@ -570,20 +570,22 @@ class BoardPlotter3D:
 
 if __name__ == "__main__":
     import cv2
-    from board_config import global_board_config
+    from board_config import global_board_config, board_config_letter
     from cam_config import global_cam
     
+    # board_config = global_board_config
+    board_config = board_config_letter
     active_cam = global_cam  # Use rotated camera configuration
 
     be = BoardEstimator(
-        board_config=global_board_config,
+        board_config=board_config,
         K=active_cam.K,
         D=active_cam.D,
         # rotate_180=False,
     )
     
     plotter = BoardPlotter3D(
-        global_board_config,
+        board_config,
         axis_limit=0.5,
         # camera_at_origin=True,
         camera_at_origin=False,

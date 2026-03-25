@@ -1,5 +1,6 @@
 import json
 import numpy as np
+from collections import deque
 from dataclasses import dataclass, field
 from simple_pid import PID
 
@@ -38,7 +39,7 @@ class CarController:
         y = x_board * np.sin(-theta) + y_board * np.cos(-theta)
         return x, y
 
-    def go_to(self, x, y, theta, tx=None, ty=None, ttheta=None):
+    def go_to(self, x, y, theta, tx=None, ty=None, ttheta=None, path_idx=None):
         """Return a velocity command dict to reach the desired pose.
 
         Args:
@@ -129,6 +130,68 @@ class Path:
     def __add__(self, other):
         """Concatenate two paths into one loop: self then other, back to self.pts[0]."""
         return Path(np.concatenate([self.pts, other.pts]), loop=True)
+
+
+class SelfTuningCarController(CarController):
+    """CarController that continuously adjusts its own distance PID gains online.
+
+    Monitors a sliding window of distance errors each frame. When oscillation is
+    detected it backs off Kp and boosts Kd; when the error trend is worsening it
+    reduces Kp; when the error is steadily improving it nudges Kp up.  All gains
+    are clamped to safe bounds so the system can't diverge.
+
+    Usage:
+        ctrl = SelfTuningCarController()
+        cmd  = ctrl.go_to(x, y, theta, tx=tx, ty=ty, ttheta=ttheta)
+        # No extra arguments needed — it monitors error automatically.
+    """
+
+    def __init__(self, window=80, lr=0.015,
+                 kp_dist_bounds=(1.0, 15.0), kd_dist_bounds=(0.0, 1.5),
+                 **kwargs):
+        super().__init__(**kwargs)
+        self._window = window
+        self._lr = lr
+        self._kp_bounds = kp_dist_bounds
+        self._kd_bounds = kd_dist_bounds
+        self._dist_errors = deque(maxlen=window)
+        self.tuning_enabled = True  # set False when disconnected to avoid corrupting the error buffer
+
+    def go_to(self, x, y, theta, tx=None, ty=None, ttheta=None, path_idx=None):
+        if self.tuning_enabled and tx is not None and ty is not None:
+            self._dist_errors.append(np.hypot(tx - x, ty - y))
+            if len(self._dist_errors) == self._window:
+                self._adapt()
+
+        return super().go_to(x, y, theta, tx=tx, ty=ty, ttheta=ttheta, path_idx=path_idx)
+
+    def _adapt(self):
+        errors = np.array(self._dist_errors)
+
+        # Oscillation: fraction of steps where the error derivative changes sign
+        deriv = np.diff(errors)
+        osc = np.mean(np.diff(np.sign(deriv)) != 0)
+
+        # Trend: is the recent half worse than the older half?
+        half = len(errors) // 2
+        trend = np.mean(errors[half:]) - np.mean(errors[:half])
+
+        kp = self._pid_distance.Kp
+        kd = self._pid_distance.Kd
+
+        if osc > 0.35:
+            # Too oscillatory — soften Kp, harden Kd
+            kp *= (1 - self._lr)
+            kd *= (1 + self._lr * 0.5)
+        elif trend > 0.005:
+            # Error is growing — reduce Kp more aggressively
+            kp *= (1 - self._lr * 1.5)
+        elif trend < -0.002:
+            # Error is shrinking — cautiously raise Kp
+            kp *= (1 + self._lr * 0.3)
+
+        self._pid_distance.Kp = float(np.clip(kp, *self._kp_bounds))
+        self._pid_distance.Kd = float(np.clip(kd, *self._kd_bounds))
 
 
 class PurePursuit:
