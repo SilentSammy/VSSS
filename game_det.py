@@ -93,13 +93,13 @@ class GameDetector:
         
         return (x, y, height)
     
-    def detect(self, frame, drawing_frame=None):
+    def detect(self, frame, drawing_frame=None, include_balls=True):
         """Detect all game objects and return GameState.
         
         Args:
             frame: Input image frame
             drawing_frame: Optional frame to draw detections on
-            
+            include_balls: Whether to include ball detections
         Returns:
             GameState with detected balls and players
         """
@@ -118,7 +118,7 @@ class GameDetector:
         players = []
         
         # Detect balls
-        if self.ball_detector is not None:
+        if self.ball_detector is not None and include_balls:
             ball_detections = self.ball_detector.detect(frame)
             for ball in ball_detections:
                 xyz = self._localize(frame, ball.centroid, pnp_result, self.ball_height)

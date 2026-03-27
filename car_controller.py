@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from simple_pid import PID
@@ -26,12 +27,18 @@ class CarController:
 
     def __init__(self,
                  kp_dist=5.0, kd_dist=0.2, max_speed=0.4,
-                 kp_heading=0.8, kd_heading=0.1, max_w=0.7):
+                 kp_heading=0.8, kd_heading=0.1, max_w=0.7,
+                 tune_file='car_pid.json'):
         self._pid_distance = PID(Kp=kp_dist, Ki=0, Kd=kd_dist, setpoint=0)
         self._pid_distance.output_limits = (-max_speed, max_speed)
 
         self._pid_heading = PID(Kp=kp_heading, Ki=0, Kd=kd_heading, setpoint=0)
         self._pid_heading.output_limits = (-max_w, max_w)
+        
+        # Real-time tuning support
+        self._tune_file = tune_file
+        self._last_tune_mtime = 0.0
+        self._create_tune_file_if_missing()
 
     def _board_to_robot(self, x_board, y_board, theta):
         """Rotate a board-frame vector into the robot frame."""
@@ -74,6 +81,62 @@ class CarController:
     def reset(self):
         self._pid_distance.reset()
         self._pid_heading.reset()
+    
+    def _create_tune_file_if_missing(self):
+        """Create tune file with current parameters if it doesn't exist."""
+        if not os.path.exists(self._tune_file):
+            params = {
+                "kp_dist": self._pid_distance.Kp,
+                "kd_dist": self._pid_distance.Kd,
+                "max_speed": self._pid_distance.output_limits[1],
+                "kp_heading": self._pid_heading.Kp,
+                "kd_heading": self._pid_heading.Kd,
+                "max_w": self._pid_heading.output_limits[1]
+            }
+            with open(self._tune_file, 'w') as f:
+                json.dump(params, f, indent=2)
+    
+    def check_tune_file(self):
+        """Check for tune file changes and reload parameters if modified.
+        
+        Call this once per loop iteration to enable real-time PID tuning.
+        Returns True if parameters were reloaded, False otherwise.
+        """
+        if not os.path.exists(self._tune_file):
+            return False
+        
+        try:
+            mtime = os.path.getmtime(self._tune_file)
+            if mtime != self._last_tune_mtime:
+                self._last_tune_mtime = mtime
+                with open(self._tune_file) as f:
+                    params = json.load(f)
+                
+                # Apply distance PID params
+                if 'kp_dist' in params:
+                    self._pid_distance.Kp = params['kp_dist']
+                if 'kd_dist' in params:
+                    self._pid_distance.Kd = params['kd_dist']
+                if 'max_speed' in params:
+                    self._pid_distance.output_limits = (-params['max_speed'], params['max_speed'])
+                
+                # Apply heading PID params
+                if 'kp_heading' in params:
+                    self._pid_heading.Kp = params['kp_heading']
+                if 'kd_heading' in params:
+                    self._pid_heading.Kd = params['kd_heading']
+                if 'max_w' in params:
+                    self._pid_heading.output_limits = (-params['max_w'], params['max_w'])
+                
+                print(f"[PID] Reloaded: kp_dist={self._pid_distance.Kp:.2f} kd_dist={self._pid_distance.Kd:.2f} "
+                      f"max_speed={self._pid_distance.output_limits[1]:.2f} | "
+                      f"kp_heading={self._pid_heading.Kp:.2f} kd_heading={self._pid_heading.Kd:.2f} "
+                      f"max_w={self._pid_heading.output_limits[1]:.2f}")
+                return True
+        except (OSError, ValueError, KeyError) as e:
+            print(f"[PID] Failed to reload tune file: {e}")
+        
+        return False
 
 
 class Path:
@@ -130,68 +193,6 @@ class Path:
     def __add__(self, other):
         """Concatenate two paths into one loop: self then other, back to self.pts[0]."""
         return Path(np.concatenate([self.pts, other.pts]), loop=True)
-
-
-class SelfTuningCarController(CarController):
-    """CarController that continuously adjusts its own distance PID gains online.
-
-    Monitors a sliding window of distance errors each frame. When oscillation is
-    detected it backs off Kp and boosts Kd; when the error trend is worsening it
-    reduces Kp; when the error is steadily improving it nudges Kp up.  All gains
-    are clamped to safe bounds so the system can't diverge.
-
-    Usage:
-        ctrl = SelfTuningCarController()
-        cmd  = ctrl.go_to(x, y, theta, tx=tx, ty=ty, ttheta=ttheta)
-        # No extra arguments needed — it monitors error automatically.
-    """
-
-    def __init__(self, window=80, lr=0.015,
-                 kp_dist_bounds=(1.0, 15.0), kd_dist_bounds=(0.0, 1.5),
-                 **kwargs):
-        super().__init__(**kwargs)
-        self._window = window
-        self._lr = lr
-        self._kp_bounds = kp_dist_bounds
-        self._kd_bounds = kd_dist_bounds
-        self._dist_errors = deque(maxlen=window)
-        self.tuning_enabled = True  # set False when disconnected to avoid corrupting the error buffer
-
-    def go_to(self, x, y, theta, tx=None, ty=None, ttheta=None, path_idx=None):
-        if self.tuning_enabled and tx is not None and ty is not None:
-            self._dist_errors.append(np.hypot(tx - x, ty - y))
-            if len(self._dist_errors) == self._window:
-                self._adapt()
-
-        return super().go_to(x, y, theta, tx=tx, ty=ty, ttheta=ttheta, path_idx=path_idx)
-
-    def _adapt(self):
-        errors = np.array(self._dist_errors)
-
-        # Oscillation: fraction of steps where the error derivative changes sign
-        deriv = np.diff(errors)
-        osc = np.mean(np.diff(np.sign(deriv)) != 0)
-
-        # Trend: is the recent half worse than the older half?
-        half = len(errors) // 2
-        trend = np.mean(errors[half:]) - np.mean(errors[:half])
-
-        kp = self._pid_distance.Kp
-        kd = self._pid_distance.Kd
-
-        if osc > 0.35:
-            # Too oscillatory — soften Kp, harden Kd
-            kp *= (1 - self._lr)
-            kd *= (1 + self._lr * 0.5)
-        elif trend > 0.005:
-            # Error is growing — reduce Kp more aggressively
-            kp *= (1 - self._lr * 1.5)
-        elif trend < -0.002:
-            # Error is shrinking — cautiously raise Kp
-            kp *= (1 + self._lr * 0.3)
-
-        self._pid_distance.Kp = float(np.clip(kp, *self._kp_bounds))
-        self._pid_distance.Kd = float(np.clip(kd, *self._kd_bounds))
 
 
 class PurePursuit:
