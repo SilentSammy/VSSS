@@ -31,20 +31,57 @@ import threading
 import queue
 
 
+# ---------------------------------------------------------------------------
+# Click detection helper (runs in child process)
+# ---------------------------------------------------------------------------
+
+_click_file = None
+_vb = None
+
+
+def _click_store_setup(win, click_file):
+    """Register a click handler on the plot window (called in child process).
+    
+    The parent polls the file's mtime each loop; when it changes, it reads
+    the latest click coordinates. No queues, no Manager, no IPC complexity.
+
+    Args:
+        win:        PlotWidget (real object, lives in child process)
+        click_file: Absolute path string to write click coords to
+    """
+    global _click_file, _vb
+    _click_file = click_file
+    _vb = win.getViewBox()
+    win.scene().sigMouseClicked.connect(_click_store_on_click)
+
+
+def _click_store_on_click(event):
+    """Handle mouse click event in child process."""
+    if _click_file is None or _vb is None:
+        return
+    pos = _vb.mapSceneToView(event.scenePos())
+    try:
+        with open(_click_file, 'w') as f:
+            f.write(f'{float(pos.x())},{float(pos.y())}\n')
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Main plotter class
+# ---------------------------------------------------------------------------
+
 class GamePlotter2D:
     """Real-time 2D game-state plotter running in a separate Qt process.
 
     Balls are shown as orange circles.
-    Players are shown as blue circles with a white direction arrow.
+    Players are shown as blue circles with a cyan direction arrow and yellow ID number.
 
     Args:
-        board_config: Optional board_config object. If provided, uses:
+        board_config: BoardConfig object providing:
                       - get_board_dimensions() for field size
                       - get_print_dimensions() for image scaling
                       - image_path for background image
-                      If None, board_width / board_height are used directly.
-        board_width:  Field width in metres (ignored when board_config is given).
-        board_height: Field height in metres (ignored when board_config is given).
         margin:       Extra space around the field in metres.
         title:        Window title.
         ball_color:   (R, G, B) 0-255 ball fill colour.
@@ -54,23 +91,17 @@ class GamePlotter2D:
         arrow_length: Length of the player direction arrow in metres.
     """
 
-    def __init__(self, board_config=None, *,
-                 board_width=0.75, board_height=0.65, margin=0.05,
+    def __init__(self, board_config, *,
+                 margin=0.05,
                  title='VSS Game State',
-                 ball_color=(255, 165, 0), ball_size=12,
-                 player_color=(50, 100, 255), player_size=14,
+                 ball_color=(255, 165, 0), ball_size=15,
+                 player_color=(50, 100, 255), player_size=30,
                  arrow_length=0.06):
 
         self.board_config = board_config
-        
-        if board_config is not None:
-            self._bw, self._bh = board_config.get_board_dimensions()
-            self._pw, self._ph = board_config.get_print_dimensions()
-            self._image_path = board_config.image_path if hasattr(board_config, 'image_path') else None
-        else:
-            self._bw, self._bh = board_width, board_height
-            self._pw, self._ph = board_width, board_height
-            self._image_path = None
+        self._bw, self._bh = board_config.get_board_dimensions()
+        self._pw, self._ph = board_config.get_print_dimensions()
+        self._image_path = board_config.image_path if hasattr(board_config, 'image_path') else None
 
         self.margin = margin
         self.title = title
@@ -86,6 +117,7 @@ class GamePlotter2D:
         self._balls_item = None
         self._players_item = None
         self._arrows_item = None
+        self._player_text_items = []  # Dynamic text labels for player IDs
 
         self._started = False
         self._visible = False
@@ -204,12 +236,12 @@ class GamePlotter2D:
         # Direction arrows: NaN-separated line segments, one per player
         self._arrows_item = self._win.plot(
             x=[], y=[],
-            pen=rpg.mkPen('w', width=2),
+            pen=rpg.mkPen('c', width=2),
         )
 
         # --- Click detection setup ---
-        click_store = self._proc._import('_click_store')
-        click_store.setup(self._win, self._click_file)
+        plotter_remote = self._proc._import('plotter2d_remote')
+        plotter_remote._click_store_setup(self._win, self._click_file)
 
         # --- Start worker thread for non-blocking IPC ---
         self._update_queue = queue.Queue(maxsize=1)  # Only holds 1 item (latest)
@@ -256,6 +288,7 @@ class GamePlotter2D:
         self._balls_item = None
         self._players_item = None
         self._arrows_item = None
+        self._player_text_items = []
         self._update_queue = None
         self._worker_thread = None
         self._started = False
@@ -308,6 +341,31 @@ class GamePlotter2D:
                 axs += [p.x, p.x + L * math.cos(p.angle), float('nan')]
                 ays += [p.y, p.y + L * math.sin(p.angle), float('nan')]
             self._arrows_item.setData(x=axs, y=ays, _callSync='off')
+            
+            # Player ID text labels
+            rpg = self.rpg
+            for i, p in enumerate(game_state.players):
+                # Create text item if needed
+                if i >= len(self._player_text_items):
+                    text_item = rpg.TextItem(
+                        anchor=(0.5, 0.5),
+                        color='y'
+                    )
+                    self._win.addItem(text_item, _callSync='off')
+                    self._player_text_items.append(text_item)
+                
+                # Update text and position with larger font (3x default ~12pt = 36pt)
+                text_item = self._player_text_items[i]
+                text_item.setHtml(
+                    f'<span style="font-size: 12pt; color: white; font-weight: bold;">{p.id}</span>',
+                    _callSync='off'
+                )
+                text_item.setPos(p.x, p.y, _callSync='off')
+                text_item.setVisible(True, _callSync='off')
+            
+            # Hide unused text items
+            for i in range(len(game_state.players), len(self._player_text_items)):
+                self._player_text_items[i].setVisible(False, _callSync='off')
             
             # Overlays (external drawing updates)
             for overlay_item, data in overlays:

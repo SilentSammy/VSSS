@@ -7,6 +7,7 @@ import cv2
 import board_config
 from board_config import global_board_config
 from cam_config import global_cam
+from plotter2d_remote import GamePlotter2D
 
 @dataclass
 class GameState:
@@ -316,243 +317,6 @@ class PathOverlay:
             self._path_line.set_data([], [])
             self._path_dots.set_data([], [])
 
-
-class GamePlotter2D:
-    """Real-time 2D plotting of game state using matplotlib with blitting for performance.
-
-    Supports user-defined animated overlays via add_overlay(). Built-in ball and
-    player drawings are managed internally using the same mechanism and always
-    drawn on top of user overlays.
-
-    Lifecycle:
-        start()  — create the window and show it
-        hide()   — hide the window without destroying it
-        show()   — reveal a hidden window
-        stop()   — destroy the window entirely
-        update() — push new game state; no-op if not started or hidden
-    """
-
-    def __init__(self, board_config, figsize=(8, 6),
-                 ball_color='orange', ball_radius=0.01,
-                 player_color='blue', player_alpha=0.7, player_length=0.02, player_width=0.015,
-                 text_color='white', text_size=7, on_click=None, margin=0.2):
-        self.margin = margin
-        self.board_config = board_config
-        self.figsize = figsize
-
-        self.on_click = on_click
-        self.last_click = None
-
-        self.ball_color = ball_color
-        self.ball_radius = ball_radius
-        self.player_color = player_color
-        self.player_alpha = player_alpha
-        self.player_length = player_length
-        self.player_width = player_width
-        self.text_color = text_color
-        self.text_size = text_size
-
-        self.fig = None
-        self.ax = None
-        self.background = None
-
-        self._overlays = []  # all overlays in draw order; game objects appended last in start()
-        self._balls_overlay = None
-        self._players_overlay = None
-
-        self._started = False
-        self._visible = False
-
-    @property
-    def is_started(self):
-        return self._started
-
-    @property
-    def is_visible(self):
-        return self._started and self._visible
-
-    def add_overlay(self, artists):
-        """Register a group of animated artists to be drawn each frame.
-
-        Artists must already be added to self.ax (ax.add_patch, ax.plot, ax.text, etc.).
-        Returns a PlotOverlay handle. Call handle.remove() to stop drawing and clean up.
-        """
-        overlay = PlotOverlay(self, artists)
-        self._overlays.append(overlay)
-        return overlay
-
-    def start(self):
-        """Create the plot window and show it. No-op if already started."""
-        if self._started:
-            self.show()
-            return
-
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Rectangle
-        import cv2
-        import os
-
-        self.field_width, self.field_height = self.board_config.get_board_dimensions()
-        print_width, print_height = self.board_config.get_print_dimensions()
-
-        self.fig, self.ax = plt.subplots(figsize=self.figsize)
-        self.fig.canvas.manager.set_window_title('VSS Game State')
-        self.ax.set_aspect('equal', adjustable='box')
-        self.ax.set_xlabel('X (m)')
-        self.ax.set_ylabel('Y (m)')
-        self.ax.set_title('VSS Game State')
-        self.ax.grid(True, alpha=0.3)
-
-        if os.path.exists(self.board_config.image_path):
-            img = cv2.imread(self.board_config.image_path)
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            self.ax.imshow(img_rgb, extent=(-print_width/2, print_width/2, -print_height/2, print_height/2),
-                          aspect='auto', zorder=0)
-
-        paper_rect = Rectangle(
-            (-print_width/2, -print_height/2),
-            print_width, print_height,
-            fill=False, edgecolor='red', linewidth=2, zorder=1
-        )
-        self.ax.add_patch(paper_rect)
-
-        self.ax.set_xlim(-print_width/2 - self.margin, print_width/2 + self.margin)
-        self.ax.set_ylim(-print_height/2 - self.margin, print_height/2 + self.margin)
-
-        # Game object overlays — created last so they draw on top of user overlays
-        self._balls_overlay = self.add_overlay([])
-        self._players_overlay = self.add_overlay([])
-
-        self.fig.show()
-        self.fig.canvas.draw()
-        self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-
-        self.fig.canvas.mpl_connect('resize_event', self._on_resize)
-        self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
-        self._on_resize(None)
-
-        self._started = True
-        self._visible = True
-
-    def _window_show(self):
-        win = self.fig.canvas.manager.window
-        if hasattr(win, 'deiconify'):   # Tk
-            win.deiconify()
-        else:                           # Qt
-            win.show()
-
-    def _window_hide(self):
-        win = self.fig.canvas.manager.window
-        if hasattr(win, 'withdraw'):    # Tk
-            win.withdraw()
-        else:                           # Qt
-            win.hide()
-
-    def show(self):
-        """Make the window visible. Calls start() if not yet started."""
-        if not self._started:
-            self.start()
-            return
-        if not self._visible:
-            self._window_show()
-            self._visible = True
-
-    def hide(self):
-        """Hide the window without destroying it. update() becomes a no-op while hidden."""
-        if self._started and self._visible:
-            self._window_hide()
-            self._visible = False
-
-    def stop(self):
-        """Destroy the plot window and reset all state."""
-        if not self._started:
-            return
-        import matplotlib.pyplot as plt
-        plt.close(self.fig)
-        self.fig = None
-        self.ax = None
-        self.background = None
-        self._overlays.clear()
-        self._balls_overlay = None
-        self._players_overlay = None
-        self._started = False
-        self._visible = False
-
-    def _on_resize(self, event):
-        self.ax.set_aspect('equal', adjustable='box')
-        self.fig.canvas.draw()
-        self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-
-    def _on_mouse_click(self, event):
-        if event.button == 1 and event.inaxes == self.ax:
-            x, y = event.xdata, event.ydata
-            self.last_click = (x, y)
-            print(f"Board clicked at: ({x:.3f}, {y:.3f}) m")
-            if self.on_click is not None:
-                self.on_click(x, y)
-
-    def _rebuild_game_objects(self, game_state):
-        """Recreate ball and player artists from current game state."""
-        from matplotlib.patches import Circle, Polygon
-
-        ball_artists = []
-        for ball in game_state.balls:
-            circle = Circle((ball.x, ball.y), radius=self.ball_radius,
-                           color=self.ball_color, zorder=10)
-            self.ax.add_patch(circle)
-            ball_artists.append(circle)
-        self._balls_overlay.set_artists(ball_artists)
-
-        player_artists = []
-        for player in game_state.players:
-            length = self.player_length
-            width = self.player_width
-            cos_a = np.cos(player.angle)
-            sin_a = np.sin(player.angle)
-
-            base_cx = player.x - (length / 3) * cos_a
-            base_cy = player.y - (length / 3) * sin_a
-            tip_x = player.x + (2 * length / 3) * cos_a
-            tip_y = player.y + (2 * length / 3) * sin_a
-
-            base_angle = player.angle + np.pi / 2
-            base1_x = base_cx + (width / 2) * np.cos(base_angle)
-            base1_y = base_cy + (width / 2) * np.sin(base_angle)
-            base2_x = base_cx - (width / 2) * np.cos(base_angle)
-            base2_y = base_cy - (width / 2) * np.sin(base_angle)
-
-            triangle = Polygon(
-                [[tip_x, tip_y], [base1_x, base1_y], [base2_x, base2_y]],
-                color=self.player_color, alpha=self.player_alpha, zorder=10
-            )
-            self.ax.add_patch(triangle)
-            player_artists.append(triangle)
-
-            text = self.ax.text(
-                player.x, player.y, f'{player.id}',
-                ha='center', va='center',
-                fontsize=self.text_size, color=self.text_color, zorder=11
-            )
-            player_artists.append(text)
-
-        self._players_overlay.set_artists(player_artists)
-
-    def update(self, game_state):
-        """Update plot with new game state using blitting. No-op if not started or hidden."""
-        if not self._started or not self._visible:
-            return
-
-        self._rebuild_game_objects(game_state)
-
-        self.fig.canvas.restore_region(self.background)
-
-        for overlay in self._overlays:
-            for artist in overlay.artists:
-                self.ax.draw_artist(artist)
-
-        self.fig.canvas.blit(self.ax.bbox)
-        self.fig.canvas.flush_events()
-
 # Setup-specific settings
 is_small_setup = global_board_config == board_config.board_config_letter
 
@@ -566,17 +330,12 @@ game_detector = GameDetector(
 )
 
 # Setup GamePlotter2D
-global_plotter = GamePlotter2D(
-    global_board_config,
-    player_width=0.05,
-    player_length=0.075
-)
+global_plotter = GamePlotter2D(global_board_config)
 
 if __name__ == "__main__":
-    
+    plotter = global_plotter
     # Setup 2D plotter
-
-    global_plotter.start()  # Create plot window
+    plotter.start()  # Create plot window
     
     try:
         while True:
@@ -592,14 +351,15 @@ if __name__ == "__main__":
             
             # Detect game state
             game_state = game_detector.detect(frame, drawing_frame)
+            game_state.balls = []
             
             # Update 2D plot
-            global_plotter.update(game_state)
+            plotter.update(game_state)
             
             # Annotate camera view with ball positions
             for i, ball in enumerate(game_state.balls):
                 cv2.putText(drawing_frame, f"Ball: ({ball.x:.3f}, {ball.y:.3f})m",
-                           (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                        (10, 30 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             
             # Annotate camera view with player positions
             for i, player in enumerate(game_state.players):
@@ -611,6 +371,6 @@ if __name__ == "__main__":
             cv2.imshow("Game Detection", drawing_frame)
             cv2.setWindowProperty("Game Detection", cv2.WND_PROP_TOPMOST, 1)
     finally:
-        global_plotter.stop()
+        plotter.stop()
         cv2.destroyAllWindows()
 
