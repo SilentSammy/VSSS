@@ -2,7 +2,23 @@ import threading
 import numpy as np
 import cv2
 import math
-from matrix_help import ( reverse_xyz_to_zyx_4x4, extract_euler_zyx, Rx, Ry, Rz, vecs_to_matrix, matrix_to_vecs )
+
+def vecs_to_matrix(rvec, tvec):
+    """Convert rvec, tvec to a 4x4 transformation matrix."""
+    rvec = np.asarray(rvec, dtype=np.float32)
+    tvec = np.asarray(tvec, dtype=np.float32)
+    R, _ = cv2.Rodrigues(rvec)
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = tvec.flatten()
+    return T
+
+def matrix_to_vecs(T):
+    """Convert a 4x4 transformation matrix to rvec, tvec."""
+    R = T[:3, :3]
+    tvec = T[:3, 3]
+    rvec, _ = cv2.Rodrigues(R)
+    return rvec.flatten(), tvec.flatten()
 
 class PnpResult:
     def __init__(self, obj_pts, img_pts, tvec, rvec):
@@ -38,8 +54,8 @@ class PnpResult:
         self.tvec = tvec
         self.rvec = rvec
 
-    def get_board_T(self):
-        """Get the 4x4 transformation matrix from board to camera coordinates.
+    def get_ref_T(self):
+        """Get the 4x4 transformation matrix from reference to camera coordinates.
         
         Returns:
             4x4 numpy array representing the board pose
@@ -103,13 +119,13 @@ class PnpResult:
         Z = z
 
         # Get camera position in board coordinates
-        board_T = self.get_board_T()
+        board_T = self.get_ref_T()
         # board_T transforms from board to camera, so invert to get camera pose in board frame
         cam_T_in_board = np.linalg.inv(board_T)
         cam_pos = cam_T_in_board[:3, 3]  # Camera position in board coordinates
         
-        # Calculate angle between camera and ball
-        # Vector from camera to ball (not ball to camera)
+        # Calculate angle between camera and point
+        # Vector from camera to point (not point to camera)
         delta_x = X - cam_pos[0]
         delta_y = Y - cam_pos[1]
         delta_z = Z - cam_pos[2]
@@ -151,10 +167,6 @@ class BoardEstimator:
         self.rotate_180 = rotate_180
 
     def get_board_transform(self, frame, drawing_frame=None):
-        # Rotate frame 180 degrees if enabled (fixes coordinate convention)
-        # But keep drawing_frame unrotated so we can draw on the original image
-        processing_frame = cv2.rotate(frame, cv2.ROTATE_180) if self.rotate_180 else frame
-        
         # Detect markers/corners using config's detect method (on original frame for drawing)
         corners, ids = self.config.detect_corners(frame, drawing_frame=drawing_frame)
         if ids is None:
@@ -264,58 +276,11 @@ def get_board_pose(
 
     return PnpResult(obj_pts=obj_pts, img_pts=img_pts, tvec=tvec.flatten(), rvec=rvec.flatten())
 
-def get_cam_T(board_T: np.ndarray) -> np.ndarray:
-    cam_T = np.linalg.inv(board_T) # Invert to get camera-to-board
+def get_cam_T(ref_T: np.ndarray) -> np.ndarray:
+    # Invert to get camera-to-reference
+    cam_T = np.linalg.inv(ref_T)
 
-    # 1) Pivot the camera transform around the X axis by 180 degrees, then rotate it along the X axis by 180 degrees.
-    cam_T = Rx180 @ cam_T @ Rx180
-
-    # 2) Split out R and t
-    R = cam_T[:3, :3].copy()
-    t = cam_T[:3,  3].copy()
-
-    # 3) Mirror‐Y reflection to fix Z (keep t unchanged)
-    mirror_y_3 = np.diag([1, -1,  1])
-    R = mirror_y_3 @ R @ mirror_y_3
-
-    # 4) Reassemble cam_T with R_fixed‐Z, same translation
-    cam_T[:3, :3] = R
-    cam_T[:3,  3] = t
-
-    # 5) Fix X (180° swap) is assumed done already; now reorder X/Y/Z
-    #    so that X and Z come out correct. This is your existing line:
-    cam_T = reverse_xyz_to_zyx_4x4(cam_T)
-
-    # 6) At this point, cam_T[:3,:3] is R_rev = Rx(α)·Ry(β)·Rz(γ),
-    #    and you found that the Y‐rotation was still backward.
-    #    So now we extract (α,β,γ) under the “intrinsic ZYX” convention,
-    #    flip β → –β, and recompose exactly Rx·Ry·Rz.
-
-    # 6a) Extract the “ZYX” Euler angles from R_rev
-    R_rev = cam_T[:3, :3].copy()
-    t_rev = cam_T[:3,  3].copy()
-
-    alpha, beta, gamma = extract_euler_zyx(R_rev)
-    
-    # Now flip only the Y‐angle (pitch)
-    beta = -beta
-    
-    # 6b) Rebuild R_fixed = Rx(alpha)·Ry(beta)·Rz(gamma)
-    R_fixed = Rx(alpha) @ Ry(beta) @ Rz(gamma)
-    
-    # 6c) Reinsert into cam_T with the same translation
-    cam_T[:3, :3] = R_fixed
-    cam_T[:3,  3] = t_rev
     return cam_T
-
-def rot_x_180():
-    """Returns a 4x4 matrix for a 180-degree rotation about the X axis."""
-    R = np.eye(4)
-    R[1, 1] = -1
-    R[2, 2] = -1
-    return R
-
-Rx180 = rot_x_180()
 
 class BoardPlotter3D:
     """Real-time 3D visualization of board pose relative to camera.
@@ -571,11 +536,11 @@ class BoardPlotter3D:
 if __name__ == "__main__":
     import cv2
     from board_config import global_board_config, board_config_letter
-    from cam_config import global_cam
+    from cam_config import global_cam, webcam
     
     # board_config = global_board_config
     board_config = board_config_letter
-    active_cam = global_cam  # Use rotated camera configuration
+    active_cam = webcam
 
     be = BoardEstimator(
         board_config=board_config,

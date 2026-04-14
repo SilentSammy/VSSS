@@ -26,14 +26,18 @@ class CarController:
     """
 
     def __init__(self,
-                 kp_dist=5.0, kd_dist=0.2, max_speed=0.4,
-                 kp_heading=0.8, kd_heading=0.1, max_w=0.7,
+                 kp_dist=5.0, ki_dist=0.0, kd_dist=0.2, max_speed=0.4, ki_dist_limit=None,
+                 kp_heading=0.8, ki_heading=0.0, kd_heading=0.1, max_w=0.7, ki_heading_limit=None,
                  tune_file='car_pid.json'):
-        self._pid_distance = PID(Kp=kp_dist, Ki=0, Kd=kd_dist, setpoint=0)
+        self._pid_distance = PID(Kp=kp_dist, Ki=ki_dist, Kd=kd_dist, setpoint=0)
         self._pid_distance.output_limits = (-max_speed, max_speed)
+        if ki_dist_limit is not None:
+            self._pid_distance.integral_limits = (-ki_dist_limit, ki_dist_limit)
 
-        self._pid_heading = PID(Kp=kp_heading, Ki=0, Kd=kd_heading, setpoint=0)
+        self._pid_heading = PID(Kp=kp_heading, Ki=ki_heading, Kd=kd_heading, setpoint=0)
         self._pid_heading.output_limits = (-max_w, max_w)
+        if ki_heading_limit is not None:
+            self._pid_heading.integral_limits = (-ki_heading_limit, ki_heading_limit)
         
         # Real-time tuning support
         self._tune_file = tune_file
@@ -87,11 +91,15 @@ class CarController:
         if not os.path.exists(self._tune_file):
             params = {
                 "kp_dist": self._pid_distance.Kp,
+                "ki_dist": self._pid_distance.Ki,
                 "kd_dist": self._pid_distance.Kd,
                 "max_speed": self._pid_distance.output_limits[1],
+                "ki_dist_limit": self._pid_distance.integral_limits[1] if hasattr(self._pid_distance, 'integral_limits') and self._pid_distance.integral_limits else None,
                 "kp_heading": self._pid_heading.Kp,
+                "ki_heading": self._pid_heading.Ki,
                 "kd_heading": self._pid_heading.Kd,
-                "max_w": self._pid_heading.output_limits[1]
+                "max_w": self._pid_heading.output_limits[1],
+                "ki_heading_limit": self._pid_heading.integral_limits[1] if hasattr(self._pid_heading, 'integral_limits') and self._pid_heading.integral_limits else None
             }
             with open(self._tune_file, 'w') as f:
                 json.dump(params, f, indent=2)
@@ -115,22 +123,36 @@ class CarController:
                 # Apply distance PID params
                 if 'kp_dist' in params:
                     self._pid_distance.Kp = params['kp_dist']
+                if 'ki_dist' in params:
+                    self._pid_distance.Ki = params['ki_dist']
                 if 'kd_dist' in params:
                     self._pid_distance.Kd = params['kd_dist']
                 if 'max_speed' in params:
                     self._pid_distance.output_limits = (-params['max_speed'], params['max_speed'])
+                if 'ki_dist_limit' in params:
+                    if params['ki_dist_limit'] is not None:
+                        self._pid_distance.integral_limits = (-params['ki_dist_limit'], params['ki_dist_limit'])
+                    else:
+                        self._pid_distance.integral_limits = (None, None)
                 
                 # Apply heading PID params
                 if 'kp_heading' in params:
                     self._pid_heading.Kp = params['kp_heading']
+                if 'ki_heading' in params:
+                    self._pid_heading.Ki = params['ki_heading']
                 if 'kd_heading' in params:
                     self._pid_heading.Kd = params['kd_heading']
                 if 'max_w' in params:
                     self._pid_heading.output_limits = (-params['max_w'], params['max_w'])
+                if 'ki_heading_limit' in params:
+                    if params['ki_heading_limit'] is not None:
+                        self._pid_heading.integral_limits = (-params['ki_heading_limit'], params['ki_heading_limit'])
+                    else:
+                        self._pid_heading.integral_limits = (None, None)
                 
-                print(f"[PID] Reloaded: kp_dist={self._pid_distance.Kp:.2f} kd_dist={self._pid_distance.Kd:.2f} "
+                print(f"[PID] Reloaded: kp_dist={self._pid_distance.Kp:.2f} ki_dist={self._pid_distance.Ki:.3f} kd_dist={self._pid_distance.Kd:.2f} "
                       f"max_speed={self._pid_distance.output_limits[1]:.2f} | "
-                      f"kp_heading={self._pid_heading.Kp:.2f} kd_heading={self._pid_heading.Kd:.2f} "
+                      f"kp_heading={self._pid_heading.Kp:.2f} ki_heading={self._pid_heading.Ki:.3f} kd_heading={self._pid_heading.Kd:.2f} "
                       f"max_w={self._pid_heading.output_limits[1]:.2f}")
                 return True
         except (OSError, ValueError, KeyError) as e:

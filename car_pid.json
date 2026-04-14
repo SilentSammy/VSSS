@@ -1,10 +1,14 @@
 {
   "_comment": "Edit these values in real-time while waypoint_mode is running. Changes are auto-detected and applied.",
   "kp_dist": 5.0,
+  "ki_dist": 0.0,
   "kd_dist": 0.2,
   "max_speed": 0.4,
+  "ki_dist_limit": null,
 
   "kp_heading": 0.8,
-  "kd_heading": 0.1,
-  "max_w": 1.0
+  "ki_heading": 0.1,
+  "kd_heading": 0.11,
+  "max_w": 0.6,
+  "ki_heading_limit": 0.1
 }
