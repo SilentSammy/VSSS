@@ -1,6 +1,6 @@
 from mecanum_client import MecanumBLEClient, get_manual_override
 from car_controller import load_cars
-from combined_input import rising_edge, is_pressed
+from user_input import rising_edge, is_pressed
 from cam_config import global_cam
 from game_det import game_detector, global_plotter
 from backg_poller import BackgroundPoller

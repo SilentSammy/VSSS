@@ -402,7 +402,7 @@ def waypoint_demo():
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    # image_servo_demo()
+    image_servo_demo()
     # board_servo_demo()
-    waypoint_demo()
+    # waypoint_demo()
     # rotate_demo()
