@@ -234,8 +234,8 @@ if __name__ == "__main__":
     # Each entry: (device_name, gamepad_index)
     # Add more tuples to control multiple cars simultaneously.
     CAR_CONFIG = [
-        ("Therian00", 0),
-        ("Therian01", 1),
+        ("Eq2", 0),
+        # ("Therian01", 1),
     ]
 
     cars = [(MecanumBLEClient(device_name=name), gp_idx) for name, gp_idx in CAR_CONFIG]

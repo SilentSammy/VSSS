@@ -161,75 +161,20 @@ class CarController:
         return False
 
 
-class Path:
-    """A sequence of (x, y) points describing a trajectory."""
-
-    def __init__(self, points, loop=True):
-        self.pts = np.array(points, dtype=float)  # (N, 2)
-        self.loop = loop
-
-    @classmethod
-    def circle(cls, r=0.15, n=200, cx=0.0, cy=0.0):
-        a = np.linspace(0, 2 * np.pi, n, endpoint=False)
-        return cls(np.column_stack([cx + r * np.cos(a), cy + r * np.sin(a)]))
-
-    @classmethod
-    def from_fn(cls, fn, t_start=0.0, t_end=2*np.pi, n=200, loop=True):
-        """fn(t) -> (x, y), sampled at n evenly-spaced t values."""
-        ts = np.linspace(t_start, t_end, n, endpoint=not loop)
-        return cls([fn(t) for t in ts], loop=loop)
-
-    def resample(self, spacing=0.005):
-        """Return a new Path with points redistributed at uniform arc-length intervals."""
-        pts = self.pts
-        diffs = np.diff(pts, axis=0)
-        seg_lens = np.hypot(diffs[:, 0], diffs[:, 1])
-        cumlen = np.concatenate([[0], np.cumsum(seg_lens)])
-        total = cumlen[-1]
-        n = max(2, int(total / spacing))
-        new_s = np.linspace(0, total, n, endpoint=not self.loop)
-        new_x = np.interp(new_s, cumlen, pts[:, 0])
-        new_y = np.interp(new_s, cumlen, pts[:, 1])
-        return Path(np.column_stack([new_x, new_y]), loop=self.loop)
-
-    def ordered_from(self, idx):
-        """Points starting from idx; closes the loop by appending pts[idx] at end."""
-        n = len(self.pts)
-        count = n + 1 if self.loop else n - idx
-        return [(float(self.pts[(idx + i) % n, 0]),
-                 float(self.pts[(idx + i) % n, 1]))
-                for i in range(count)]
-
-    def roll_to_closest(self, x, y):
-        """Return a new Path whose points start at the point nearest to (x, y)."""
-        dists = np.hypot(self.pts[:, 0] - x, self.pts[:, 1] - y)
-        idx = int(np.argmin(dists))
-        return Path(np.roll(self.pts, -idx, axis=0), loop=self.loop)
-
-    def reverse(self):
-        """Return a new Path with traversal direction reversed, keeping the same start point."""
-        pts = self.pts
-        reversed_pts = np.concatenate([pts[:1], pts[1:][::-1]])
-        return Path(reversed_pts, loop=self.loop)
-
-    def __add__(self, other):
-        """Concatenate two paths into one loop: self then other, back to self.pts[0]."""
-        return Path(np.concatenate([self.pts, other.pts]), loop=True)
-
-
 class PurePursuit:
-    """Finds the lookahead target point on a Path."""
+    """Finds the lookahead target point on an Nx2 array of (x, y) points."""
 
-    def __init__(self, path, lookahead=0.05):
-        self._path = path
+    def __init__(self, points, lookahead=0.05, loop=True):
+        self.pts = np.asarray(points, dtype=float)  # (N, 2)
         self.lookahead = lookahead
+        self.loop = loop
         self._idx = 0
 
     def get_target(self, x, y):
         """Advance along path and return the lookahead (tx, ty)."""
-        pts = self._path.pts
-        loop = self._path.loop
+        pts = self.pts
         n = len(pts)
+        loop = self.loop
 
         # Advance _idx to the closest point in a forward search window
         window = min(n, max(10, n // 5))
@@ -255,4 +200,9 @@ class PurePursuit:
 
     def ordered_points(self):
         """Remaining path points from current progress, for visualization."""
-        return self._path.ordered_from(self._idx)
+        pts = self.pts
+        n = len(pts)
+        count = n + 1 if self.loop else n - self._idx
+        return [(float(pts[(self._idx + i) % n, 0]),
+                 float(pts[(self._idx + i) % n, 1]))
+                for i in range(count)]

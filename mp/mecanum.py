@@ -5,7 +5,7 @@ import ble_server
 
 # Motor pin assignments (PWM control)
 MOTOR_PINS = [
-    (4, 3),
+    (2, 3),
     (1, 0),
     (9, 10),
     (20, 21),

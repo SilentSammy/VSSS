@@ -4,7 +4,7 @@ import time
 import ble_server
 from mecanum import MecanumCar
 
-ble_server.DEVICE_NAME = "Therian01"
+ble_server.DEVICE_NAME = "Eq2"
 car = MecanumCar()
 mfl = car.motor_fl
 mfr = car.motor_fr
