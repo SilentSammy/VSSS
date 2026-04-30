@@ -1,5 +1,5 @@
 from mecanum_client import MecanumBLEClient, get_manual_override
-from car_controller import load_cars
+from car_controller import load_cars, PurePursuit
 from combined_input import rising_edge, is_pressed
 from cam_config import global_cam
 from game_det import game_detector
@@ -11,6 +11,7 @@ from new_plotter.game_state import (
     PlotUpdate,
     ClickEvent,
 )
+from new_plotter.path_utils import load_svg
 from collections import deque
 import numpy as np
 import zmq
@@ -48,6 +49,18 @@ sub.setsockopt_string(zmq.SUBSCRIBE, '')
 
 # Background game detection
 detect_poller = BackgroundPoller(max_workers=1)
+_last_plot_gs = None  # last published PlotGameState, used for overlay-only updates
+
+def _publish(game_state, **overlay_kwargs):
+    """Publish a PlotUpdate, caching the game state for overlay-only sends."""
+    global _last_plot_gs
+    _last_plot_gs = game_state
+    pub.send_string(PlotUpdate(game_state=game_state, **overlay_kwargs).to_json())
+
+def _publish_overlay(**overlay_kwargs):
+    """Send an overlay-only update using the last known game state (if any)."""
+    if _last_plot_gs is not None:
+        pub.send_string(PlotUpdate(game_state=_last_plot_gs, **overlay_kwargs).to_json())
 
 # --- Modes ---
 def manual_mode():
@@ -110,8 +123,70 @@ def waypoint_mode():
             players=[PlotPlayerState(id=p.id, x=p.x, y=p.y, angle=p.angle) for p in game_state.players],
             timestamp=game_state.timestamp,
         )
-        pub.send_string(PlotUpdate(game_state=plot_gs, waypoint=wp_for_plot).to_json())
+        _publish(plot_gs, waypoint=wp_for_plot)
 
+    reset_timer('waypoint_active', 0.1, lambda: _publish_overlay(waypoint=()))
+    client.set_velocity(get_manual_override(auto_cmd))
+
+# --- Path mode state ---
+# TODO: Add auto-loadinf from directory
+PATH_SVGS = [
+    'new_plotter/lemniscate.svg',
+    'new_plotter/heart.svg',
+    'new_plotter/combined.svg',
+    'new_plotter/circle.svg',
+    'new_plotter/small_heart.svg',
+]
+_path_idx = 0
+_pursuit = None
+_path_pts_list = None
+
+def _load_path(idx):
+    global _pursuit, _path_pts_list, _path_idx
+    _path_idx = idx
+    pts = load_svg(PATH_SVGS[idx])
+    _pursuit = PurePursuit(pts, lookahead=0.1, loop=True)
+    _path_pts_list = pts.tolist()
+    car.controller.reset()
+    name = PATH_SVGS[idx].split('/')[-1]
+    print(f"[path] {idx+1}/{len(PATH_SVGS)}: {name} ({len(pts)} pts)")
+
+# TODO: Add hotkey to temporarily turn off path following and do manual control (e.g. for repositioning)
+def path_mode():
+    # Switch path with keys 1-n (no Alt)
+    for i in range(len(PATH_SVGS)):
+        if rising_edge(str(i + 1)) and i != _path_idx:
+            _load_path(i)
+            break
+
+    if _pursuit is None:
+        _load_path(0)
+
+    frame = global_cam.get_frame()
+    game_state = None
+    if frame is not None:
+        game_state = detect_poller.poll(lambda: game_detector.detect(frame, include_balls=False))
+
+    auto_cmd = {'x': 0.0, 'y': 0.0, 'w': 0.0}
+
+    if game_state is not None:
+        player = next((p for p in game_state.players if p.id == car.aruco_id), None)
+
+        if player is not None:
+            tx, ty = _pursuit.get_target(player.x, player.y)
+            auto_cmd = car.controller.go_to(
+                player.x, player.y, player.angle, tx=tx, ty=ty, ttheta=np.pi / 2
+            )
+
+        plot_gs = PlotGameState(
+            balls=[PlotBallState(x=b.x, y=b.y) for b in game_state.balls],
+            players=[PlotPlayerState(id=p.id, x=p.x, y=p.y, angle=p.angle) for p in game_state.players],
+            timestamp=game_state.timestamp,
+        )
+        wp = (tx, ty) if player is not None else None
+        _publish(plot_gs, svg_points=_path_pts_list, waypoint=wp)
+
+    reset_timer('path_active', 0.1, lambda: _publish_overlay(svg_points=[], waypoint=()))
     client.set_velocity(get_manual_override(auto_cmd))
 
 def camera_mode():
@@ -140,7 +215,7 @@ def plot_mode():
                 players=[PlotPlayerState(id=p.id, x=p.x, y=p.y, angle=p.angle) for p in game_state.players],
                 timestamp=game_state.timestamp,
             )
-            pub.send_string(PlotUpdate(game_state=plot_gs).to_json())
+            _publish(plot_gs)
             t_plotter = (time.monotonic() - t_plotter) * 1000
         else:
             t_plotter = 0.0
@@ -157,7 +232,8 @@ def plot_mode():
     reset_timer('camera', 0.3, lambda: cv2.destroyWindow("Camera"))
 
 # --- Main loop ---
-MODES = [manual_mode, rotisserie_mode, plot_mode, camera_mode, waypoint_mode]
+MODES = [manual_mode, rotisserie_mode, plot_mode, camera_mode, waypoint_mode, path_mode]
+
 mode = 0
 print(f"Mode: {MODES[mode].__name__} — press 1-{len(MODES)} to switch, ESC to quit")
 
