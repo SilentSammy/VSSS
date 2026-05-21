@@ -4,13 +4,13 @@ from typing import List, Optional
 
 
 @dataclass
-class BallState:
+class PlotBallState:
     x: float
     y: float
 
 
 @dataclass
-class PlayerState:
+class PlotPlayerState:
     id: int
     x: float
     y: float
@@ -18,7 +18,7 @@ class PlayerState:
 
 
 @dataclass
-class GameState:
+class PlotGameState:
     balls: List = None
     players: List = None
     timestamp: float = None
@@ -37,11 +37,11 @@ class GameState:
         })
 
     @staticmethod
-    def from_json(s: str) -> 'GameState':
+    def from_json(s: str) -> 'PlotGameState':
         d = json.loads(s)
-        return GameState(
-            balls=[BallState(**b) for b in d['balls']],
-            players=[PlayerState(**p) for p in d['players']],
+        return PlotGameState(
+            balls=[PlotBallState(**b) for b in d['balls']],
+            players=[PlotPlayerState(**p) for p in d['players']],
             timestamp=d['timestamp'],
         )
 
@@ -54,7 +54,7 @@ class PlotUpdate:
       svg_points: None = keep | [] = clear | [[x,y],...] = set new path
       waypoint:   None = keep | () = clear | (x, y) = set new target
     """
-    game_state: GameState
+    game_state: PlotGameState
     svg_points: Optional[List] = None
     waypoint: Optional[tuple] = None
 
@@ -70,7 +70,7 @@ class PlotUpdate:
         d = json.loads(s)
         raw_wp = d.get('waypoint')
         return PlotUpdate(
-            game_state=GameState.from_json(json.dumps(d['game_state'])),
+            game_state=PlotGameState.from_json(json.dumps(d['game_state'])),
             svg_points=d.get('svg_points'),
             waypoint=tuple(raw_wp) if raw_wp is not None else None,
         )

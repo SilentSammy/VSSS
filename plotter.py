@@ -2,32 +2,19 @@
 plotter.py — visualization loop.
 
 ZMQ topology:
-  CONNECT SUB tcp://localhost:5556  ← receives GameState from main
+  CONNECT SUB tcp://localhost:5556  ← receives PlotGameState from main
   BIND PUB    tcp://*:5557          → publishes ClickEvents to main
 """
 
 import time
 import os
-import sys
 import numpy as np
 import zmq
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
 import cv2
 
-from game_state import GameState, ClickEvent, PlotUpdate
-
-
-import time
-import os
-import sys
-import numpy as np
-import zmq
-import matplotlib.pyplot as plt
-from matplotlib.patches import Circle, Rectangle
-import cv2
-
-from game_state import GameState, ClickEvent, PlotUpdate
+from zmq_comms import PlotGameState, ClickEvent, PlotUpdate
 
 
 class PlotOverlay:
@@ -226,10 +213,7 @@ GAME_STATE_PORT = 5556
 CLICK_PORT      = 5557
 
 
-
 if __name__ == '__main__':
-    # Import board_config from parent directory
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from board_config import global_board_config
 
     context = zmq.Context()
@@ -263,7 +247,7 @@ if __name__ == '__main__':
     running = True
     plotter.fig.canvas.mpl_connect('close_event', lambda e: globals().update(running=False))
 
-    last_state = PlotUpdate(game_state=GameState())
+    last_state = PlotUpdate(game_state=PlotGameState())
     last_time  = time.perf_counter()
 
     try:

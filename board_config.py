@@ -325,8 +325,8 @@ board_config_full = GridboardConfig(
 
 global_board_config = board_config_plotter
 global_board_config = board_config_letter
-global_board_config = board_config_full
 global_board_config = board_config_square
+global_board_config = board_config_full
 
 if __name__ == "__main__":
     # Example usage: save board image and PDF

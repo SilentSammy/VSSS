@@ -234,8 +234,8 @@ if __name__ == "__main__":
     # Each entry: (device_name, gamepad_index)
     # Add more tuples to control multiple cars simultaneously.
     CAR_CONFIG = [
-        ("Therian00", 0),
-        # ("Eq4", 0),
+        # ("Therian00", 0),
+        ("Eq4", 0),
         # ("Eq3", 1),
         # ("Eq1", 0),
     ]

@@ -4,14 +4,8 @@ from combined_input import rising_edge, is_pressed
 from cam_config import global_cam
 from game_det import game_detector
 from backg_poller import BackgroundPoller
-from new_plotter.game_state import (
-    GameState as PlotGameState,
-    BallState as PlotBallState,
-    PlayerState as PlotPlayerState,
-    PlotUpdate,
-    ClickEvent,
-)
-from new_plotter.path_utils import load_svg
+from zmq_comms import PlotGameState, PlotBallState, PlotPlayerState, PlotUpdate, ClickEvent
+from path_utils import load_svg
 from collections import deque
 import numpy as np
 import zmq
@@ -130,10 +124,7 @@ def waypoint_mode():
 
 # --- Path mode state ---
 # TODO: Add auto-loadinf from directory
-PATH_SVGS = [
-    'heart.svg',
-    'heart_backwards.svg',
-]
+PATH_SVGS = [ 'resources/paths/heart.svg', ]
 _path_idx = 0
 _pursuit = None
 _path_pts_list = None
