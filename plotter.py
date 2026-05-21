@@ -9,12 +9,11 @@ ZMQ topology:
 import time
 import os
 import numpy as np
-import zmq
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
 import cv2
 
-from zmq_comms import PlotGameState, ClickEvent, PlotUpdate
+from zmq_comms import PlotGameState, PlotUpdate, PlotReceiver
 
 
 class PlotOverlay:
@@ -47,7 +46,7 @@ class GamePlotter2D:
     """Real-time 2D plotting of game state using matplotlib with blitting for performance."""
 
     def __init__(self, board_config=None, field_width=1.0, field_height=0.7, figsize=(8, 6),
-                 ball_color='orange', ball_radius=0.01,
+                 ball_color='orange', ball_radius=0.03,
                  player_color='blue', player_alpha=0.7, player_length=0.02,
                  text_color='white', text_size=7, margin=0.2, on_click=None):
         self.board_config = board_config
@@ -209,77 +208,52 @@ class GamePlotter2D:
         plt.close(self.fig)
 
 
-GAME_STATE_PORT = 5556
-CLICK_PORT      = 5557
-
-
 if __name__ == '__main__':
     from board_config import global_board_config
 
-    context = zmq.Context()
+    with PlotReceiver() as zmq_io:
+        def on_click(x, y):
+            zmq_io.send_click(x, y)
+            print(f"\n[plotter] Click sent: ({x:.3f}, {y:.3f})")
 
-    # Inbound: game state from main
-    sub = context.socket(zmq.SUB)
-    sub.setsockopt(zmq.CONFLATE, 1)   # keep only the latest message (no backlog)
-    sub.connect(f"tcp://localhost:{GAME_STATE_PORT}")
-    sub.setsockopt_string(zmq.SUBSCRIBE, '')
+        plotter = GamePlotter2D(
+            board_config=global_board_config,
+            player_length=0.075,
+            on_click=on_click,
+        )
+        plotter.start()
+        plt.pause(0.5)
 
-    # Outbound: click events to main
-    pub = context.socket(zmq.PUB)
-    pub.bind(f"tcp://*:{CLICK_PORT}")
+        running = True
+        plotter.fig.canvas.mpl_connect('close_event', lambda e: globals().update(running=False))
 
-    print(f"[plotter] Subscribing to game state on port {GAME_STATE_PORT}")
-    print(f"[plotter] Publishing clicks on port {CLICK_PORT}")
+        last_state = PlotUpdate(game_state=PlotGameState())
+        last_time  = time.perf_counter()
 
-    def on_click(x, y):
-        click = ClickEvent(x=x, y=y, timestamp=time.time())
-        pub.send_string(click.to_json())
-        print(f"\n[plotter] Click sent: ({x:.3f}, {y:.3f})")
-
-    plotter = GamePlotter2D(
-        board_config=global_board_config,
-        player_length=0.075,
-        on_click=on_click,
-    )
-    plotter.start()
-    plt.pause(0.5)
-
-    running = True
-    plotter.fig.canvas.mpl_connect('close_event', lambda e: globals().update(running=False))
-
-    last_state = PlotUpdate(game_state=PlotGameState())
-    last_time  = time.perf_counter()
-
-    try:
-        while running:
-            try:
+        try:
+            while running:
                 try:
-                    msg = sub.recv_string(zmq.NOBLOCK)
-                    last_state = PlotUpdate.from_json(msg)
-                except zmq.Again:
-                    pass
+                    update = zmq_io.recv()
+                    if update is not None:
+                        last_state = update
 
-                plotter.update(last_state)
+                    plotter.update(last_state)
 
-                now = time.perf_counter()
-                dt  = now - last_time
-                last_time = now
-                print(f"\r[plotter] Plot loop: {1/dt:.1f} Hz   ", end='', flush=True)
+                    now = time.perf_counter()
+                    dt  = now - last_time
+                    last_time = now
+                    print(f"\r[plotter] Plot loop: {1/dt:.1f} Hz   ", end='', flush=True)
 
-                time.sleep(0.01)
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                import traceback
-                print(f"\n[plotter] ERROR: {e}")
-                traceback.print_exc()
-                break
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print("\n[plotter] Stopped")
-        plotter.close()
-        sub.close()
-        pub.close()
-        context.term()
+                    time.sleep(0.01)
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    import traceback
+                    print(f"\n[plotter] ERROR: {e}")
+                    traceback.print_exc()
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            print("\n[plotter] Stopped")
+            plotter.close()

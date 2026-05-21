@@ -89,10 +89,28 @@ class ObjectDetector:
 class BallDetector(ObjectDetector):
     """Detects ball in image using HSV thresholding."""
     
-    def __init__(self, hsv_lower=(20, 100, 100), hsv_upper=(30, 255, 255)):
-        """Initialize detector with HSV thresholds."""
+    def __init__(self, hsv_lower=None, hsv_upper=None):
+        """Initialize detector with HSV thresholds (loads from file if None)."""
+        if hsv_lower is None or hsv_upper is None:
+            hsv_lower, hsv_upper = self._load_thresholds()
+        
         self.hsv_lower = np.array(hsv_lower, dtype=np.uint8)
         self.hsv_upper = np.array(hsv_upper, dtype=np.uint8)
+    
+    def _load_thresholds(self):
+        """Load thresholds from file or return defaults."""
+        try:
+            with open('ball_thresholds.txt', 'r') as f:
+                lines = f.readlines()
+                if len(lines) >= 2:
+                    lower = tuple(map(int, lines[0].strip().split(',')))
+                    upper = tuple(map(int, lines[1].strip().split(',')))
+                    return lower, upper
+        except (FileNotFoundError, ValueError, IndexError):
+            pass
+        
+        # Default to yellow ball
+        return (20, 100, 100), (30, 255, 255)
     
     def _detect(self, frame, drawing_frame=None):
         """Detect ball contour using HSV thresholding.
@@ -275,7 +293,12 @@ if __name__ == "__main__":
             ball_detector.hsv_lower = np.array(lower, dtype=np.uint8)
             ball_detector.hsv_upper = np.array(upper, dtype=np.uint8)
             
-            print(f"BallDetector(hsv_lower={lower}, hsv_upper={upper})")
+            # Save to file
+            with open('ball_thresholds.txt', 'w') as f:
+                f.write(f"{lower[0]},{lower[1]},{lower[2]}\n")
+                f.write(f"{upper[0]},{upper[1]},{upper[2]}\n")
+            
+            print(f"Updated thresholds: Lower={lower}, Upper={upper}")
     
     cv2.namedWindow("Object Detection")
     cv2.setMouseCallback("Object Detection", mouse_callback)
@@ -287,6 +310,9 @@ if __name__ == "__main__":
         elif key == ord('r'):  # Reset to default yellow thresholds
             ball_detector.hsv_lower = np.array([20, 100, 100], dtype=np.uint8)
             ball_detector.hsv_upper = np.array([30, 255, 255], dtype=np.uint8)
+            with open('ball_thresholds.txt', 'w') as f:
+                f.write("20,100,100\n")
+                f.write("30,255,255\n")
             print("Reset to default yellow thresholds: Lower=(20,100,100), Upper=(30,255,255)")
         
         # Get frame

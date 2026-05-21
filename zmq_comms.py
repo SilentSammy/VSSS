@@ -1,6 +1,8 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import List, Optional
+import zmq
 
 
 @dataclass
@@ -88,3 +90,105 @@ class ClickEvent:
     @staticmethod
     def from_json(s: str) -> 'ClickEvent':
         return ClickEvent(**json.loads(s))
+
+
+GAME_STATE_PORT = 5556
+CLICK_PORT      = 5557
+
+
+class PlotReceiver:
+    """ZMQ helper for the plotter process.
+
+    Subscribes to PlotUpdates from main and publishes ClickEvents back.
+    Use as a context manager or call close() when done.
+    """
+
+    def __init__(self, game_state_port: int = GAME_STATE_PORT, click_port: int = CLICK_PORT):
+        self._ctx = zmq.Context()
+        self._sub = self._ctx.socket(zmq.SUB)
+        self._sub.setsockopt(zmq.CONFLATE, 1)  # keep only latest (no backlog)
+        self._sub.connect(f"tcp://localhost:{game_state_port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, '')
+        self._pub = self._ctx.socket(zmq.PUB)
+        self._pub.bind(f"tcp://*:{click_port}")
+        print(f"[PlotReceiver] Subscribed to game state on :{game_state_port}")
+        print(f"[PlotReceiver] Publishing clicks on :{click_port}")
+
+    def recv(self) -> 'PlotUpdate | None':
+        """Non-blocking receive. Returns a PlotUpdate or None if nothing arrived."""
+        try:
+            return PlotUpdate.from_json(self._sub.recv_string(zmq.NOBLOCK))
+        except zmq.Again:
+            return None
+
+    def send_click(self, x: float, y: float):
+        """Publish a click event back to main."""
+        self._pub.send_string(ClickEvent(x=x, y=y, timestamp=time.time()).to_json())
+
+    def close(self):
+        self._sub.close()
+        self._pub.close()
+        self._ctx.term()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+class PlotPublisher:
+    """ZMQ helper for demo/main processes.
+
+    Publishes game state to the plotter and receives click events back.
+    Accepts raw game_det GameState objects — conversion is handled internally.
+    Use as a context manager or call close() when done.
+    """
+
+    def __init__(self, game_state_port: int = GAME_STATE_PORT, click_port: int = CLICK_PORT):
+        self._ctx = zmq.Context()
+        self._pub = self._ctx.socket(zmq.PUB)
+        self._pub.bind(f"tcp://*:{game_state_port}")
+        self._sub = self._ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://localhost:{click_port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, '')
+
+    def update(self, game_state, waypoint=None, svg_points=None):
+        """Publish game state to the plotter.
+
+        game_state: a game_det.GameState (or any object with .balls/.players/.timestamp)
+        waypoint:   None = clear | (x, y) = set new target marker
+        svg_points: None = clear | [[x,y],...] = draw path
+        """
+        plot_gs = PlotGameState(
+            balls=[PlotBallState(x=b.x, y=b.y) for b in game_state.balls],
+            players=[PlotPlayerState(id=p.id, x=p.x, y=p.y, angle=p.angle) for p in game_state.players],
+            timestamp=game_state.timestamp,
+        )
+        self._pub.send_string(PlotUpdate(
+            game_state=plot_gs,
+            waypoint=waypoint if waypoint is not None else (),    # None → clear
+            svg_points=svg_points if svg_points is not None else [],  # None → clear
+        ).to_json())
+
+    def get_clicks(self) -> list:
+        """Drain all pending click events. Returns a list of (x, y) tuples."""
+        clicks = []
+        try:
+            while True:
+                event = ClickEvent.from_json(self._sub.recv_string(zmq.NOBLOCK))
+                clicks.append((event.x, event.y))
+        except zmq.Again:
+            pass
+        return clicks
+
+    def close(self):
+        self._pub.close()
+        self._sub.close()
+        self._ctx.term()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()

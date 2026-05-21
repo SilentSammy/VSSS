@@ -33,7 +33,7 @@ def merge_proportional(cmd_primary, cmd_secondary):
     return cmd_final
 
 def get_user_cmd(gamepad_index: int = 0):
-    import combined_input as inp
+    import user_input as inp
 
     keymappings = [
         ('w', 's', 'd', 'a', 'e', 'q', 'c'),  # Gamepad 0
