@@ -2,7 +2,7 @@ import time
 import user_input as inp
 from mecanum_client import MecanumBLEClient
 
-DEVICE_NAME = "Therian00"
+DEVICE_NAME = "Eq4"
 
 car = MecanumBLEClient(device_name=DEVICE_NAME)
 car.connect()

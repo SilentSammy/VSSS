@@ -1,15 +1,18 @@
 import time
 import cv2
 
-from cam_config import global_cam
+from cam_config import global_cam, droidcam, webcam
 from game_det import GameDetector
 from board_est import BoardEstimator
-from board_config import global_board_config
+from board_config import global_board_config, board_config_letter
 from obj_det import BallDetector, ArucoDetector
 from zmq_comms import PlotPublisher
 
+cam = webcam  # switch to webcam or global_cam as needed
+board = board_config_letter  # switch to global_board_config as needed
+
 game_detector = GameDetector(
-    board_estimator=BoardEstimator(global_board_config, K=global_cam.K, D=global_cam.D, rotate_180=True),
+    board_estimator=BoardEstimator(board, K=cam.K, D=cam.D, rotate_180=True),
     ball_detector=BallDetector(),
     ball_height=0.02,
     aruco_detector=ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)),
@@ -19,7 +22,7 @@ game_detector = GameDetector(
 with PlotPublisher() as plotter:
     try:
         while True:
-            frame = global_cam.get_frame()
+            frame = cam.get_frame()
             if frame is None:
                 time.sleep(0.02)
                 continue
