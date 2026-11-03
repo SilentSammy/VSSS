@@ -17,11 +17,11 @@ def main():
         sys.exit("ERROR: ArUco module not found. Install opencv-contrib-python, not just opencv-python.")
 
     # 2) Load the 4×4 dictionary (50 possible markers: IDs 0–49)
-    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
 
     # 3) Draw and save markers for IDs 0 through n-1 in the script's directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    for marker_id in range(15, 25):
+    for marker_id in range(0, 25):
         # generateImageMarker creates the marker image
         marker_img = cv2.aruco.generateImageMarker(aruco_dict, marker_id, 120)
         filename = os.path.join(script_dir, f"aruco_{marker_id:02d}.png")

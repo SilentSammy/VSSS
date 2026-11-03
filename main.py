@@ -131,11 +131,8 @@ def waypoint_mode():
 # --- Path mode state ---
 # TODO: Add auto-loadinf from directory
 PATH_SVGS = [
-    'new_plotter/lemniscate.svg',
-    'new_plotter/heart.svg',
-    'new_plotter/combined.svg',
-    'new_plotter/circle.svg',
-    'new_plotter/small_heart.svg',
+    'heart.svg',
+    'heart_backwards.svg',
 ]
 _path_idx = 0
 _pursuit = None

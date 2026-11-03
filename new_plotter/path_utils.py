@@ -185,6 +185,8 @@ if __name__ == '__main__':
         spacing=0.003
     )
 
+    heart_backwards_path = reverse(heart_path)
+
     inf_path = resample(
         reverse(
             from_fn(lambda t: (
@@ -205,11 +207,12 @@ if __name__ == '__main__':
     circle_path = resample(circle(r=0.25), spacing=0.005)
 
     paths = {
-        'heart.svg':        (heart_path,       True),
-        'lemniscate.svg':   (inf_path,         True),
-        'combined.svg':     (combined_path,    False),
-        'circle.svg':       (circle_path,      True),
-        'small_heart.svg':  (small_heart_path, True),
+        'heart.svg':           (heart_path,           True),
+        'heart_backwards.svg': (heart_backwards_path, True),
+        'lemniscate.svg':      (inf_path,             True),
+        'combined.svg':        (combined_path,        False),
+        'circle.svg':          (circle_path,          True),
+        'small_heart.svg':     (small_heart_path,     True),
     }
 
     for filename, (pts, loop) in paths.items():

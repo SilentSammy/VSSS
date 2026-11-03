@@ -192,7 +192,6 @@ if __name__ == "__main__":
         car.w = 0.0
         
         print("Test complete!")
-        
     except KeyboardInterrupt:
         print("\nInterrupted")
     finally:
