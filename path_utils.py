@@ -1,5 +1,5 @@
-"""
-path_utils.py — helpers for building and manipulating paths,
+﻿"""
+path_utils.py ÔÇö helpers for building and manipulating paths,
                 and saving/loading them as SVG files.
 
 Paths are plain Nx2 numpy arrays of (x, y) coordinates in meters.
@@ -217,4 +217,4 @@ if __name__ == '__main__':
 
     for filename, (pts, loop) in paths.items():
         save_svg(pts, filename, loop=loop)
-        print(f"  → {filename}: {len(pts)} points")
+        print(f"  ÔåÆ {filename}: {len(pts)} points")

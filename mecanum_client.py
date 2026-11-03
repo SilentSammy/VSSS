@@ -33,7 +33,7 @@ def merge_proportional(cmd_primary, cmd_secondary):
     return cmd_final
 
 def get_user_cmd(gamepad_index: int = 0):
-    import combined_input as inp
+    import user_input as inp
 
     keymappings = [
         ('w', 's', 'd', 'a', 'e', 'q', 'c'),  # Gamepad 0
@@ -238,6 +238,7 @@ if __name__ == "__main__":
         ("Eq4", 0),
         # ("Eq2", 0),
         # ("Eq3", 1),
+        # ("Eq1", 0),
     ]
 
     cars = [(MecanumBLEClient(device_name=name), gp_idx) for name, gp_idx in CAR_CONFIG]

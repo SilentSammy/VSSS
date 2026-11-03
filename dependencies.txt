@@ -1,0 +1,8 @@
+opencv-python
+numpy
+bleak
+pynput
+inputs
+simple_pid
+pyqtgraph
+PySide6

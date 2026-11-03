@@ -1,17 +1,11 @@
 from mecanum_client import MecanumBLEClient, get_manual_override
 from car_controller import load_cars, PurePursuit
-from combined_input import rising_edge, is_pressed
+from user_input import rising_edge, is_pressed
 from cam_config import global_cam
 from game_det import game_detector
 from backg_poller import BackgroundPoller
-from new_plotter.game_state import (
-    GameState as PlotGameState,
-    BallState as PlotBallState,
-    PlayerState as PlotPlayerState,
-    PlotUpdate,
-    ClickEvent,
-)
-from new_plotter.path_utils import load_svg
+from zmq_comms import PlotGameState, PlotBallState, PlotPlayerState, PlotUpdate, ClickEvent
+from path_utils import load_svg
 from collections import deque
 import numpy as np
 import zmq
