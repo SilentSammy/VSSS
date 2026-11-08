@@ -1,9 +1,11 @@
-import machine
 import bluetooth
-from micropython import const
+import time
 
 # Global BLE setup
 DEVICE_NAME = "MP_BLE_Device"
+ADVERTISING_INTERVAL_US = 20000
+HEARTBEAT_TIMEOUT_MS = 1500
+CONNECT_TIMEOUT_MS = 10000  # Allow time for the laptop's initial GATT discovery.
 _ble = bluetooth.BLE()
 _ble.active(True)
 
@@ -11,19 +13,44 @@ _ble.active(True)
 control_callbacks = {}  # Dictionary mapping UUID strings to callback functions
 _connections = set()    # Set of connected devices
 _handles = {}           # Dictionary mapping UUID strings to characteristic handles
+_deadlines = {}
+_running = False
+disconnect_callback = None  # main.py uses this to stop the motors.
+
+
+def _release(conn_handle):
+    if conn_handle in _connections:
+        _connections.discard(conn_handle)
+        _deadlines.pop(conn_handle, None)
+        if disconnect_callback is not None:
+            disconnect_callback()
+
+
+def poll():
+    """Call from the main loop: stop and disconnect if heartbeats disappear."""
+    now = time.ticks_ms()
+    for conn_handle in tuple(_connections):
+        if time.ticks_diff(now, _deadlines[conn_handle]) >= 0:
+            _release(conn_handle)  # Stop motors before releasing the BLE link.
+            _ble.gap_disconnect(conn_handle)
 
 def _ble_irq(event, data):
     """Handle BLE events through interrupts"""
     if event == 1:  # _IRQ_CENTRAL_CONNECT
         conn_handle, _, _ = data
+        if not _running or _connections:
+            _ble.gap_disconnect(conn_handle)
+            return
         _connections.add(conn_handle)
+        _deadlines[conn_handle] = time.ticks_add(time.ticks_ms(), CONNECT_TIMEOUT_MS)
         print('Client connected')
         
     elif event == 2:  # _IRQ_CENTRAL_DISCONNECT
         conn_handle, _, _ = data
-        _connections.remove(conn_handle)
+        _release(conn_handle)
         print('Client disconnected')
-        _advertise()
+        if _running and not _connections:
+            _advertise()
         
     elif event == 3:  # _IRQ_GATTS_WRITE
         conn_handle, value_handle = data
@@ -35,10 +62,14 @@ def _ble_irq(event, data):
                     if payload and uuid in control_callbacks:
                         # Call the corresponding callback with the full data array
                         control_callbacks[uuid](payload)
+                        _deadlines[conn_handle] = time.ticks_add(
+                            time.ticks_ms(), HEARTBEAT_TIMEOUT_MS)
                     break
 
-def _advertise(interval_us=100000):
+def _advertise(interval_us=None):
     """Start advertising the BLE service"""
+    if interval_us is None:
+        interval_us = ADVERTISING_INTERVAL_US
     name = DEVICE_NAME.encode()
     adv_data = bytearray([
         0x02, 0x01, 0x06,  # General discoverable mode
@@ -47,6 +78,8 @@ def _advertise(interval_us=100000):
 
 def stop():
     """Stop the BLE server and clean up"""
+    global _running
+    _running = False
     # Stop advertising
     _ble.gap_advertise(None)
     
@@ -55,17 +88,20 @@ def stop():
     
     # Disconnect any active connections
     for conn_handle in _connections.copy():  # Use copy since we're modifying the set
+        _release(conn_handle)
         _ble.gap_disconnect(conn_handle)
-        _connections.remove(conn_handle)
     
     print("BLE Server stopped")
 
 def start():
     """Initialize and start the BLE server"""
-    global _handles
+    global _handles, _running
     
     # Ensure clean state
     stop()
+    # Also clear controller state left behind by serial/IDE soft resets.
+    _ble.active(False)
+    _ble.active(True)
     
     if not control_callbacks:
         raise ValueError("No callbacks defined!")
@@ -96,6 +132,8 @@ def start():
         _ble.gatts_write(handle, bytes([0]))
         
     # Set up event handler and start advertising
+    time.sleep_ms(1000)  # Let the ESP32 controller settle after rebuilding GATT (boot only).
+    _running = True
     _ble.irq(_ble_irq)
     _advertise()
     

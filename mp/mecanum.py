@@ -1,14 +1,13 @@
 # Dual motor driver test - PWM on direction pins, enable always HIGH
 from machine import Pin, PWM
 import time
-import ble_server
 
 # Motor pin assignments (PWM control)
 MOTOR_PINS = [
-    (2, 3),
+    (3, 2),
     (1, 0),
-    (9, 10),
     (20, 21),
+    (9, 10),
 ]
 
 class Motor:
@@ -43,10 +42,11 @@ class Motor:
             self.pin2.value(0)
             
             # Create PWM on pin1 if not exists or frequency changed
+            if self.pwm1 and self.pwm1.freq() != freq:
+                self.pwm1.deinit()  # Release the old timer before requesting a new frequency.
+                self.pwm1 = None
             if not self.pwm1:
                 self.pwm1 = PWM(self.pin1, freq=freq)
-            else:
-                self.pwm1.freq(freq)
             
             duty = int(power * 65535)
             self.pwm1.duty_u16(duty)
@@ -61,10 +61,11 @@ class Motor:
             self.pin1.value(0)
             
             # Create PWM on pin2 if not exists or frequency changed
+            if self.pwm2 and self.pwm2.freq() != freq:
+                self.pwm2.deinit()
+                self.pwm2 = None
             if not self.pwm2:
                 self.pwm2 = PWM(self.pin2, freq=freq)
-            else:
-                self.pwm2.freq(freq)
             
             duty = int(abs(power) * 65535)
             self.pwm2.duty_u16(duty)
@@ -96,6 +97,13 @@ class MecanumCar:
         self._x = 0.0
         self._y = 0.0
         self._w = 0.0
+
+    def set_velocity(self, x, y, w):
+        """Apply a whole command at once, avoiding intermediate wheel speeds."""
+        self._x = max(-1.0, min(1.0, x))
+        self._y = max(-1.0, min(1.0, y))
+        self._w = max(-1.0, min(1.0, w))
+        self._update_motors()
     
     @property
     def x(self):

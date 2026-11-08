@@ -1,0 +1,131 @@
+{
+  "timestamp_utc": "2026-11-04T01:46:54.881739+00:00",
+  "advertising_ms": 20,
+  "watchdog_ms": 1500,
+  "samples": [
+    {
+      "mode": "name_device",
+      "success": true,
+      "ready_s": 2.292556000058539,
+      "verified_s": 2.319304500008002,
+      "abrupt_exit": true,
+      "scenario": "abrupt_exit",
+      "trial": 1,
+      "process_wall_s": 2.7745166000677273
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": 1.1678582000313327,
+      "discovery_s": 1.1697741999523714,
+      "connect_s": 1.856237699976191,
+      "first_write_s": 0.025305300019681454,
+      "ready_s": 3.051317199948244,
+      "verified_s": 3.092642299947329,
+      "disconnect_s": 0.10830379999242723,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 1,
+      "process_wall_s": 3.6843719000462443
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "ready_s": 3.058955100015737,
+      "verified_s": 3.087141100084409,
+      "abrupt_exit": true,
+      "scenario": "abrupt_exit",
+      "trial": 2,
+      "process_wall_s": 3.5318073999369517
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": 1.1820668000727892,
+      "discovery_s": 1.1841088000219315,
+      "connect_s": 1.7911170000443235,
+      "first_write_s": 0.02599200000986457,
+      "ready_s": 3.0012178000761196,
+      "verified_s": 3.0427698000567034,
+      "disconnect_s": 0.11326270003337413,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 2,
+      "process_wall_s": 3.6492193000158295
+    },
+    {
+      "mode": "name_device",
+      "success": false,
+      "error": "RuntimeError('Device not advertising or not found')",
+      "elapsed_s": 10.155619599972852,
+      "scenario": "abrupt_exit",
+      "trial": 3,
+      "process_wall_s": 10.649352499982342
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": 0.2341152000008151,
+      "discovery_s": 0.2382811000570655,
+      "connect_s": 1.9369450999656692,
+      "first_write_s": 0.026048999978229403,
+      "ready_s": 2.201275200000964,
+      "verified_s": 2.242833700031042,
+      "disconnect_s": 0.11845680000260472,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 3,
+      "process_wall_s": 2.8774988000513986
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "ready_s": 3.015279500046745,
+      "verified_s": 3.0435251999879256,
+      "abrupt_exit": true,
+      "scenario": "abrupt_exit",
+      "trial": 4,
+      "process_wall_s": 3.498690899927169
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": 1.10447669995483,
+      "discovery_s": 1.1062838999787346,
+      "connect_s": 1.7966215999331325,
+      "first_write_s": 0.03955450002104044,
+      "ready_s": 2.9424599999329075,
+      "verified_s": 2.9700768999755383,
+      "disconnect_s": 0.1133034999947995,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 4,
+      "process_wall_s": 3.632065999903716
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "ready_s": 3.020690800040029,
+      "verified_s": 3.0490596999879926,
+      "abrupt_exit": true,
+      "scenario": "abrupt_exit",
+      "trial": 5,
+      "process_wall_s": 3.494930899934843
+    },
+    {
+      "mode": "name_device",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": 1.1660813000053167,
+      "discovery_s": 1.1681103999726474,
+      "connect_s": 1.7420719000510871,
+      "first_write_s": 0.02593090001028031,
+      "ready_s": 2.936113200034015,
+      "verified_s": 2.977179800043814,
+      "disconnect_s": 0.11115059989970177,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 5,
+      "process_wall_s": 3.5579413000959903
+    }
+  ]
+}

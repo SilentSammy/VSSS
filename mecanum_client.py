@@ -1,7 +1,11 @@
-import numpy as np
-import asyncio
-from bleak import BleakScanner, BleakClient
-from threading import Thread
+"""Student-facing robot client. BLE runs in ble_worker.py on Windows or Linux."""
+import atexit
+import json
+import math
+from pathlib import Path
+import subprocess
+import sys
+from threading import Condition, Lock, Thread
 import time
 
 def to_byte(val):
@@ -58,172 +62,145 @@ def get_manual_override(cmd):
     return merge_proportional(user_cmd, cmd)
 
 class MecanumBLEClient:
+    """Small synchronous interface to the separate BLE owner process."""
     def __init__(self, device_name="MP_BLE_Device", resolution=0.05):
+        if not math.isfinite(resolution) or resolution <= 0:
+            raise ValueError("resolution must be positive and finite")
         self.device_name = device_name
-        self.device = None
-        self.client = None
-        
-        # Velocity control fields
-        self.x = 0.0
-        self.y = 0.0
-        self.w = 0.0
-        
-        # Control resolution - round commands to nearest multiple
         self.resolution = resolution
-        
-        # UUID for combined velocity characteristic
-        self.uuid_velocity = "12345678-1234-5678-1234-56789abcdef1"
-        
-        # Cache last sent values to avoid redundant BLE writes
+        self.x = self.y = self.w = 0.0
+        self.last_error = None
+        self._process = None
+        self._reader = None
+        self._ready = False
+        self._sequence = self._written = 0
         self._cached_velocity = None
-        
-        # Track pending non-blocking writes and queued values
-        self._pending = None
-        self._queued = None
-
-        # Connection management
-        self._reconnect_enabled = False
-        self._reconnect_thread = None
-
-        # Start background event loop
-        self.loop = asyncio.new_event_loop()
-        self.thread = Thread(target=self.loop.run_forever, daemon=True)
-        self.thread.start()
-    
-    # Internal async methods
-    async def _async_find_device(self):
-        """Scan for and return the target BLE device"""
-        print(f"Scanning for {self.device_name}...")
-        devices = await BleakScanner.discover(timeout=10.0)
-        device = next((d for d in devices if d.name == self.device_name), None)
-        if not device:
-            print(f"✗ Device not found")
-            return None
-        print(f"✓ Found at {device.address}")
-        return device
-    
-    async def _async_connect(self):
-        """Connect to the BLE device"""
-        self.device = await self._async_find_device()
-        if not self.device:
-            raise Exception("Device not found")
-        
-        print(f"Connecting...")
-        self.client = BleakClient(self.device.address)
-        await self.client.connect()
-        if not self.client.is_connected:
-            raise Exception("Connection failed")
-        print(f"✓ Connected\n")
-    
-    async def _async_disconnect(self):
-        """Disconnect from the BLE device"""
-        if self.client:
-            await self.client.disconnect()
-            print("Disconnected.")
+        self._pipe_lock = Lock()
+        self._status = Condition()
+        atexit.register(self.disconnect)
 
     @property
-    def is_connected(self) -> bool:
-        """True if currently connected to the BLE device."""
-        return self.client is not None and self.client.is_connected
+    def is_connected(self):
+        """True only after GATT discovery and the initial stop command finish."""
+        return self._ready and self._process is not None and self._process.poll() is None
 
-    def _reconnect_loop(self):
-        """Background thread: keeps attempting to connect while enabled."""
-        while self._reconnect_enabled:
-            if not self.is_connected:
-                try:
-                    future = asyncio.run_coroutine_threadsafe(self._async_connect(), self.loop)
-                    future.result()
-                except Exception as e:
-                    print(f"Connection failed ({e}). Retrying in 3s...")
-                    time.sleep(3)
-            else:
-                time.sleep(1)
+    def _read_status(self, process):
+        try:
+            for line in process.stdout:
+                message = json.loads(line)
+                with self._status:
+                    if process is not self._process:
+                        return
+                    if 'ready' in message:
+                        self._ready = message['ready']
+                        self._cached_velocity = None
+                    if 'written' in message:
+                        self._written = max(self._written, message['written'])
+                    if 'error' in message:
+                        self.last_error = message['error']
+                        print(f"[{self.device_name}] {self.last_error}")
+                    if 'message' in message:
+                        print(f"[{self.device_name}] {message['message']}")
+                    self._status.notify_all()
+        finally:
+            with self._status:
+                if process is self._process:
+                    self._ready = False
+                self._status.notify_all()
 
-    async def _async_send_velocity(self, x, y, w, force=False):
-        """Send velocity command (3 bytes: x, y, w)"""
-        if not self.is_connected:
-            return
-        velocity_bytes = (to_byte(x), to_byte(y), to_byte(w))
-        
-        # Check cache to avoid redundant writes (unless forced)
-        if not force and self._cached_velocity == velocity_bytes:
-            return  # No change, skip write
-        
-        await self.client.write_gatt_char(self.uuid_velocity, bytes(velocity_bytes))
-        self._cached_velocity = velocity_bytes
-    
-    # Public synchronous methods
     def connect(self):
-        """Start background connection and auto-reconnect loop (non-blocking)."""
-        if self._reconnect_thread and self._reconnect_thread.is_alive():
-            return
-        self._reconnect_enabled = True
-        self._reconnect_thread = Thread(target=self._reconnect_loop, daemon=True)
-        self._reconnect_thread.start()
-    
-    def disconnect(self):
-        """Stop reconnect loop and disconnect from the BLE device (blocking)."""
-        self._reconnect_enabled = False
-        if self.is_connected:
-            future = asyncio.run_coroutine_threadsafe(self._async_disconnect(), self.loop)
-            future.result()
-    
+        """Start discovery/connection in the background; safe to call twice."""
+        if self._process is not None:
+            if self._process.poll() is None:
+                return
+            self.disconnect()
+        self.last_error = None
+        self._ready = False
+        self._cached_velocity = None
+        self._process = subprocess.Popen(
+            [sys.executable, '-u', str(Path(__file__).with_name('ble_worker.py')), self.device_name],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True, encoding='utf-8', bufsize=1, close_fds=True)
+        self._reader = Thread(target=self._read_status, args=(self._process,), daemon=True)
+        self._reader.start()
+
+    def wait_until_connected(self, timeout=15):
+        """Optional blocking helper for scripts that need the robot immediately."""
+        with self._status:
+            ready = self._status.wait_for(lambda: self.is_connected or self._process is None
+                                          or self._process.poll() is not None, timeout)
+        if not ready or not self.is_connected:
+            raise TimeoutError(self.last_error or f"Could not connect to {self.device_name}")
+
+    def _send_velocity(self, velocity, force):
+        with self._pipe_lock:
+            if not self.is_connected or (not force and velocity == self._cached_velocity):
+                return None
+            self._sequence += 1
+            message = dict(velocity=list(velocity), sequence=self._sequence, force=force)
+            try:
+                self._process.stdin.write(json.dumps(message) + '\n')
+                self._process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                self._ready = False
+                return None
+            self._cached_velocity = velocity
+            return self._sequence
+
     def send(self, force=False):
-        """Send current velocity fields (x, y, w) to robot (non-blocking, queues if busy)
-        
-        Args:
-            force: If True, bypasses cache and forces BLE write even if values unchanged
-        """
-        velocity_tuple = (self.x, self.y, self.w, force)
-        
-        if self._pending is None or self._pending.done():
-            # Not busy - start new write
-            self._pending = asyncio.run_coroutine_threadsafe(
-                self._async_send_velocity(*velocity_tuple), 
-                self.loop
-            )
-            # Add callback to process queued value when done
-            self._pending.add_done_callback(lambda f: self._on_send_complete())
-        else:
-            # Busy - queue this value (replaces any previous queued value)
-            self._queued = velocity_tuple
-    
+        """Send the current x/y/w fields; the worker coalesces rapid updates."""
+        self._send_velocity(bytes(to_byte(v) for v in (self.x, self.y, self.w)), force)
+
     def set_velocity(self, velocity, force=False):
-        """Set velocity from dictionary and send command
-        
-        Args:
-            velocity: Dictionary with keys 'x', 'y', 'w' (values -1.0 to 1.0)
-            force: If True, bypasses cache and forces BLE write even if values unchanged
-        """
-        # Update internal state with rounding
-        self.x = round(velocity.get('x', 0.0) / self.resolution) * self.resolution
-        self.y = round(velocity.get('y', 0.0) / self.resolution) * self.resolution
-        self.w = round(velocity.get('w', 0.0) / self.resolution) * self.resolution
-        
-        self.send(force=force)
-    
-    def _on_send_complete(self):
-        """Callback when send completes - send queued values if exist"""
-        if self._queued is not None:
-            x, y, w, force = self._queued
-            self._queued = None  # Clear queue
-            # Update fields and send
-            self.x = x
-            self.y = y
-            self.w = w
-            self.send(force=force)
-    
+        """Set normalized x/y/w, rounded to the configured resolution."""
+        self.x, self.y, self.w = (round(velocity.get(axis, 0.0) / self.resolution) * self.resolution
+                                 for axis in ('x', 'y', 'w'))
+        self.send(force)
+
     def stop(self):
-        """Stop all motors (blocking)"""
-        future = asyncio.run_coroutine_threadsafe(
-            self._async_send_velocity(0.0, 0.0, 0.0, force=True), 
-            self.loop
-        )
-        future.result()
-        # Update internal state
-        self.x = 0.0
-        self.y = 0.0
-        self.w = 0.0
+        """Send zero and wait briefly for its BLE acknowledgement."""
+        self.x = self.y = self.w = 0.0
+        sequence = self._send_velocity(bytes(3), force=True)
+        if sequence is not None:
+            with self._status:
+                done = self._status.wait_for(lambda: self._written >= sequence
+                                            or not self.is_connected, timeout=2)
+            if not done:
+                raise TimeoutError("Robot did not acknowledge stop")
+
+    def disconnect(self):
+        """Close the pipe: the worker stops the robot and releases BLE, then exits."""
+        process = self._process
+        if process is None:
+            return
+        self._ready = False
+        with self._pipe_lock:
+            try:
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()  # Firmware timeout handles an unresponsive worker.
+            process.wait()
+        if self._reader is not None:
+            self._reader.join(timeout=1)
+        process.stdout.close()
+        self._process = None
+        self._cached_velocity = None
+
+    def __enter__(self):
+        self.connect()
+        try:
+            self.wait_until_connected()
+        except Exception:
+            self.disconnect()
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        self.disconnect()
 
 if __name__ == "__main__":
     import time
@@ -265,5 +242,4 @@ if __name__ == "__main__":
         print("\nInterrupted")
     finally:
         for car, _ in cars:
-            car.stop()
-            car.disconnect()
+            car.disconnect()  # The worker sends stop before disconnecting.

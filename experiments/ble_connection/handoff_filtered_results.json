@@ -1,0 +1,158 @@
+{
+  "timestamp_utc": "2026-11-04T01:38:51.494581+00:00",
+  "advertising_ms": 20,
+  "samples": [
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 2.1908232000423595,
+      "scenario": "reuse_device_same_process",
+      "trial": 1
+    },
+    {
+      "mode": "service_filter",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": null,
+      "discovery_s": 1.300009898841381e-06,
+      "connect_s": 0.34285930008627474,
+      "first_write_s": 0.024620499927550554,
+      "ready_s": 0.36748110002372414,
+      "verified_s": 0.40918760001659393,
+      "disconnect_s": 0.10784349997993559,
+      "scenario": "reuse_device_same_process",
+      "trial": 2
+    },
+    {
+      "mode": "service_filter",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": null,
+      "discovery_s": 1.700012944638729e-06,
+      "connect_s": 0.24217219999991357,
+      "first_write_s": 0.03485789999831468,
+      "ready_s": 0.2770318000111729,
+      "verified_s": 0.3045162999769673,
+      "disconnect_s": 0.11180889990646392,
+      "scenario": "reuse_device_same_process",
+      "trial": 3
+    },
+    {
+      "mode": "service_filter",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": null,
+      "discovery_s": 8.998904377222061e-07,
+      "connect_s": 0.2402653000317514,
+      "first_write_s": 0.019114700029604137,
+      "ready_s": 0.25938089995179325,
+      "verified_s": 0.2873864999273792,
+      "disconnect_s": 0.11484970001038164,
+      "scenario": "reuse_device_same_process",
+      "trial": 4
+    },
+    {
+      "mode": "service_filter",
+      "success": true,
+      "is_paired": false,
+      "first_seen_s": null,
+      "discovery_s": 1.100008375942707e-06,
+      "connect_s": 0.25451100000645965,
+      "first_write_s": 0.06396429997403175,
+      "ready_s": 0.31847639998886734,
+      "verified_s": 0.40530790004413575,
+      "disconnect_s": 0.11165059998165816,
+      "scenario": "reuse_device_same_process",
+      "trial": 5
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.9126380000961944,
+      "scenario": "abrupt_exit",
+      "trial": 1,
+      "process_wall_s": 5.402977499994449
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.591023999964818,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 1,
+      "process_wall_s": 5.075853900052607
+    },
+    {
+      "success": false,
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\SAMMY_LOQ\\Desktop\\Python\\VSSS\\experiments\\ble_connection\\benchmark.py\", line 146, in <module>\n    main()\n  File \"C:\\Users\\SAMMY_LOQ\\Desktop\\Python\\VSSS\\experiments\\ble_connection\\benchmark.py\", line 104, in main\n    print(json.dumps(asyncio.run(worker(args.worker, args.address, abrupt=args.abrupt))))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\runners.py\", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\asyncio\\base_events.py\", line 654, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\Desktop\\Python\\VSSS\\experiments\\ble_connection\\benchmark.py\", line 52, in worker\n    await client.connect()\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\bleak\\__init__.py\", line 566, in connect\n    await self._backend.connect(self._pair_before_connect, **kwargs)\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\bleak\\backends\\winrt\\client.py\", line 443, in connect\n    self.services = await self._get_services(\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\bleak\\backends\\winrt\\client.py\", line 724, in _get_services\n    result = await FutureLike(service.get_characteristics_async())\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\bleak\\backends\\winrt\\client.py\", line 1149, in __await__\n    yield self  # This tells Task to wait for completion.\n    ^^^^^^^^^^\n  File \"C:\\Users\\SAMMY_LOQ\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\bleak\\backends\\winrt\\client.py\", line 1083, in result\n    raise asyncio.CancelledError\nasyncio.exceptions.CancelledError\n",
+      "scenario": "abrupt_exit",
+      "trial": 2,
+      "process_wall_s": 12.749283000011928
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 6.202455100021325,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 2,
+      "process_wall_s": 6.677880299976096
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 5.087996199959889,
+      "scenario": "abrupt_exit",
+      "trial": 3,
+      "process_wall_s": 5.57931139995344
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.492685999954119,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 3,
+      "process_wall_s": 5.006949000060558
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.923278300091624,
+      "scenario": "abrupt_exit",
+      "trial": 4,
+      "process_wall_s": 5.41512760007754
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.740647100028582,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 4,
+      "process_wall_s": 5.19668370008003
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.756649299990386,
+      "scenario": "abrupt_exit",
+      "trial": 5,
+      "process_wall_s": 5.243549899896607
+    },
+    {
+      "mode": "service_filter",
+      "success": false,
+      "error": "PermissionError(13, 'The device does not recognize the command.', None, -2147024874)",
+      "elapsed_s": 4.844524799962528,
+      "scenario": "restart_after_abrupt_exit",
+      "trial": 5,
+      "process_wall_s": 5.31725630001165
+    }
+  ]
+}
