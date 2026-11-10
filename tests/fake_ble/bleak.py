@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import time
+import struct
 
 
 def record(event, **details):
@@ -32,6 +33,7 @@ class BleakClient:
         self.callback = disconnected_callback
         self.is_connected = False
         self.services_ready = False
+        self.matrix = struct.pack('<9f', 1., 0., 0., 0., 1., 0., 0., 0., 1.)
 
     async def connect(self):
         self.is_connected = True  # Physical connection can precede GATT readiness.
@@ -44,12 +46,24 @@ class BleakClient:
         global drop_once
         assert self.services_ready and response is True
         await asyncio.sleep(.01)
+        if uuid.endswith('def3'):
+            self.matrix = bytes(data)
+            record('trim_matrix', data=list(data))
+            return
         record('write', data=list(data))
         if any(data) and os.environ.get('BLE_TEST_DROP_ON_MOVE') and drop_once:
             drop_once = False
             self.is_connected = False
             record('lost')
             self.callback(self)
+
+    async def read_gatt_char(self, uuid):
+        assert self.services_ready
+        if uuid.endswith('def3'):
+            if os.environ.get('BLE_TEST_LEGACY_TRIM'):
+                raise LookupError('Characteristic not found')
+            return self.matrix
+        raise LookupError('Characteristic not found')
 
     async def disconnect(self):
         self.is_connected = False

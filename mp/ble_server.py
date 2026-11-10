@@ -8,9 +8,11 @@ HEARTBEAT_TIMEOUT_MS = 1500
 CONNECT_TIMEOUT_MS = 10000  # Allow time for the laptop's initial GATT discovery.
 _ble = bluetooth.BLE()
 _ble.active(True)
+_SERVICE_UUID_LE = bytes.fromhex('f0debc9a785634127856341278563412')
 
 # Global state
 control_callbacks = {}  # Dictionary mapping UUID strings to callback functions
+initial_values = {}
 _connections = set()    # Set of connected devices
 _handles = {}           # Dictionary mapping UUID strings to characteristic handles
 _deadlines = {}
@@ -33,6 +35,21 @@ def poll():
         if time.ticks_diff(now, _deadlines[conn_handle]) >= 0:
             _release(conn_handle)  # Stop motors before releasing the BLE link.
             _ble.gap_disconnect(conn_handle)
+
+
+def set_value(uuid, value, notify=False):
+    """Update a readable characteristic, optionally notifying connected clients."""
+    handle = _handles.get(uuid)
+    if handle is None:
+        raise ValueError("Unknown BLE characteristic")
+    value = bytes(value)
+    _ble.gatts_write(handle, value)
+    if notify:
+        for conn_handle in tuple(_connections):
+            try:
+                _ble.gatts_notify(conn_handle, handle, value)
+            except OSError:
+                pass
 
 def _ble_irq(event, data):
     """Handle BLE events through interrupts"""
@@ -59,9 +76,11 @@ def _ble_irq(event, data):
             for uuid, handle in _handles.items():
                 if handle == value_handle:
                     payload = _ble.gatts_read(value_handle)
-                    if payload and uuid in control_callbacks:
+                    if uuid in control_callbacks:
                         # Call the corresponding callback with the full data array
-                        control_callbacks[uuid](payload)
+                        result = control_callbacks[uuid](payload)
+                        if result is not None:
+                            _ble.gatts_write(value_handle, result)
                         _deadlines[conn_handle] = time.ticks_add(
                             time.ticks_ms(), HEARTBEAT_TIMEOUT_MS)
                     break
@@ -71,10 +90,17 @@ def _advertise(interval_us=None):
     if interval_us is None:
         interval_us = ADVERTISING_INTERVAL_US
     name = DEVICE_NAME.encode()
-    adv_data = bytearray([
-        0x02, 0x01, 0x06,  # General discoverable mode
-        len(name) + 1, 0x09]) + name  # Complete Local Name
-    _ble.gap_advertise(interval_us, adv_data)
+    # Put the service identity in the primary advertisement so a computer can
+    # recognize a never-before-seen robot without relying on its GATT cache.
+    adv_data = bytearray([0x02, 0x01, 0x06, 0x11, 0x07]) + _SERVICE_UUID_LE
+    response_data = bytearray([len(name) + 1, 0x09]) + name
+    try:
+        _ble.gap_advertise(interval_us, adv_data, resp_data=response_data)
+    except TypeError:
+        # Compatibility with older MicroPython builds.
+        fallback = bytearray([0x02, 0x01, 0x06, len(name) + 1, 0x09]) + name
+        _ble.gap_advertise(interval_us, fallback)
+
 
 def stop():
     """Stop the BLE server and clean up"""
@@ -129,7 +155,9 @@ def start():
     for i, uuid_str in enumerate(uuids):
         handle = service_handles[0][i]
         _handles[uuid_str] = handle
-        _ble.gatts_write(handle, bytes([0]))
+        value = initial_values.get(uuid_str, bytes([0]))
+        _ble.gatts_set_buffer(handle, max(20, len(value)))
+        _ble.gatts_write(handle, value)
         
     # Set up event handler and start advertising
     time.sleep_ms(1000)  # Let the ESP32 controller settle after rebuilding GATT (boot only).

@@ -1,5 +1,3 @@
-opencv-python
-numpy
 bleak
 pynput
 inputs

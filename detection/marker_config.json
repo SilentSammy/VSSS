@@ -1,0 +1,21 @@
+{
+  "0": {
+    "color": [
+      255,
+      180,
+      220
+    ],
+    "text": "6"
+  },
+  "8": {
+    "image": "resources/sprites/laughing_crying_emoji.png",
+    "scale": 1.0
+  },
+  "9": {
+    "image": "resources/sprites/cool_cat.png",
+    "scale": 1.0
+  },
+  "2": {
+    "height_m": 0.0
+  }
+}

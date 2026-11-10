@@ -15,9 +15,27 @@ import types
 import unittest
 from unittest.mock import patch
 
-from mecanum_client import MecanumBLEClient
+from mecanum_client import MecanumBLEClient, parse_waypoint_input
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class WaypointConsoleTests(unittest.TestCase):
+    def test_accepts_spaces_or_commas(self):
+        self.assertEqual(parse_waypoint_input('0.2 0.75 -90'),
+                         ('waypoint', (0.2, 0.75, -90.0)))
+        self.assertEqual(parse_waypoint_input('0.2, 0.75, 90'),
+                         ('waypoint', (0.2, 0.75, 90.0)))
+
+    def test_recognizes_console_commands(self):
+        for command in ('stop', 'manual', 'quit', 'help'):
+            self.assertEqual(parse_waypoint_input(command), (command, None))
+        self.assertEqual(parse_waypoint_input('exit'), ('quit', None))
+
+    def test_rejects_malformed_or_nonfinite_targets(self):
+        for text in ('1 2', 'a b c', 'nan 0 0', '0 inf 0'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_waypoint_input(text)
 
 
 class ProcessTests(unittest.TestCase):
@@ -59,6 +77,47 @@ class ProcessTests(unittest.TestCase):
         self.client.wait_until_connected(4)
         self.assertEqual([e for e in self.events() if e['event'] == 'write'][0]['data'], [0, 0, 0])
 
+    def test_trim_is_written_read_back_and_not_a_velocity(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.assertEqual(self.client.trim_matrix, ((1.,0.,0.),(0.,1.,0.),(0.,0.,1.)))
+        actual = self.client.set_trim(((.9,0.,0.),(0.,1.1,0.),(0.,0.,1.)))
+        self.assertAlmostEqual(actual[0][0], .9, places=6)
+        self.assertAlmostEqual(actual[1][1], 1.1, places=6)
+        self.assertTrue(any(e['event'] == 'trim_matrix' for e in self.events()))
+        self.client.stop()
+        self.assertTrue(all(e['data'] == [0, 0, 0] for e in self.events() if e['event'] == 'write'))
+        for invalid in (-1, 3, float('nan')):
+            with self.assertRaises(ValueError):
+                self.client.set_trim(invalid)
+
+    def test_cross_axis_configuration_readback_and_reset_without_movement(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.assertEqual(self.client.trim_matrix, ((1.,0.,0.),(0.,1.,0.),(0.,0.,1.)))
+        self.client.set_trim(((1.1,0.,.1),(.02,1.,0.),(-.04,0.,1.)))
+        self.assertAlmostEqual(self.client.trim_matrix[0][0],1.1,places=6)
+        self.assertAlmostEqual(self.client.trim_matrix[1][0],.02,places=6)
+        self.assertAlmostEqual(self.client.trim_matrix[2][0],-.04,places=6)
+        self.assertAlmostEqual(self.client.trim_matrix[0][2],.1,places=6)
+        self.assertTrue(any(e['event']=='trim_matrix' for e in self.events()))
+        self.client.set_trim()
+        self.assertEqual(self.client.trim_matrix,((1.,0.,0.),(0.,1.,0.),(0.,0.,1.)))
+        self.client.stop()
+        self.assertTrue(all(e['data']==[0,0,0] for e in self.events() if e['event']=='write'))
+        for invalid in (float('nan'),float('inf'),2.1,-2.1):
+            with self.assertRaises(ValueError):
+                self.client.set_trim(((1.,0.,0.),(0.,1.,0.),(invalid,0.,1.)))
+
+    def test_old_firmware_can_drive_but_configuration_requires_matrix_support(self):
+        with patch.dict(os.environ,{'BLE_TEST_LEGACY_TRIM':'1'}):
+            self.client.connect()
+        self.client.wait_until_connected(4)
+        self.assertIsNone(self.client.trim_matrix)
+        with self.assertRaisesRegex(RuntimeError,'does not support matrix trim'):
+            self.client.set_trim()
+        self.assertFalse(any(e['event']=='trim_matrix' for e in self.events()))
+
     def test_latched_velocity_has_heartbeats_and_stop_is_acknowledged(self):
         self.client.connect()
         self.client.wait_until_connected(4)
@@ -79,6 +138,25 @@ class ProcessTests(unittest.TestCase):
             self.client.set_velocity({'x': -.2})
         self.client.set_velocity({'x': .5})
         self.wait_for(lambda: self.events()[-1].get('data') == [64, 0, 0])
+
+    def test_waypoint_uses_onboard_mode_and_lease_heartbeats(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.assertEqual(self.client.set_waypoint(.2, .75, 90), (.2, .75, 90.))
+        self.wait_for(lambda: any(len(e.get('data', ())) == 12 for e in self.events()))
+        self.wait_for(lambda: len([e for e in self.events()
+                                  if e.get('data') == [0]]) >= 2)
+        self.client.stop()
+        self.assertEqual([e for e in self.events() if e['event'] == 'write'][-1]['data'],
+                         [0, 0, 0])
+
+    def test_invalid_waypoint_never_reaches_worker(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        for target in ((1, 0, 0), (0, 2, 0), (float('nan'), 0, 0)):
+            with self.assertRaises(ValueError):
+                self.client.set_waypoint(*target)
+        self.assertFalse(any(len(e.get('data', ())) == 12 for e in self.events()))
 
     def test_close_cancels_a_long_discovery(self):
         self.client.device_name = 'missing'
@@ -151,6 +229,7 @@ class Radio:
     def gap_disconnect(self, handle): self.log.append(('disconnect', handle))
     def gatts_read(self, handle): return self.payload
     def gatts_write(self, handle, data): pass
+    def gatts_set_buffer(self, handle, size): self.log.append(('buffer', handle, size))
     def gatts_register_services(self, services): return ((1,),)
 
 
@@ -166,6 +245,20 @@ class FirmwareTests(unittest.TestCase):
         self.server.control_callbacks = {'velocity': lambda data: None}
         self.server.disconnect_callback = lambda: self.radio.log.append(('motors', 'stop'))
         self.server.start()
+
+    def test_long_trim_characteristic_reserves_the_full_buffer(self):
+        self.server.control_callbacks={'matrix':lambda data:None}
+        self.server.initial_values={'matrix':bytes(36)}
+        self.server.start()
+        self.assertIn(('buffer',1,36),self.radio.log)
+
+    def test_empty_configuration_write_can_restore_canonical_value(self):
+        self.server.control_callbacks['velocity']=lambda data:b'canonical'
+        self.radio.gatts_write=unittest.mock.Mock()
+        self.radio.payload=b''
+        self.radio.handler(1,(7,0,b''))
+        self.radio.handler(3,(7,1))
+        self.radio.gatts_write.assert_called_once_with(1,b'canonical')
 
     def test_timeout_stops_before_disconnect_and_resumes_advertising(self):
         self.radio.handler(1, (7, 0, b''))

@@ -61,6 +61,115 @@ def get_manual_override(cmd):
     user_cmd = get_user_cmd()
     return merge_proportional(user_cmd, cmd)
 
+
+def parse_waypoint_input(text):
+    """Parse one waypoint-console line without touching the robot."""
+    text = text.strip()
+    if not text:
+        return 'empty', None
+    command = text.lower()
+    if command in ('stop', 'manual', 'quit', 'exit', 'help'):
+        return ('quit' if command == 'exit' else command), None
+    parts = text.replace(',', ' ').split()
+    if len(parts) != 3:
+        raise ValueError('enter three values: x y angle')
+    try:
+        target = tuple(float(value) for value in parts)
+    except ValueError as error:
+        raise ValueError('x, y, and angle must be numbers') from error
+    if not all(math.isfinite(value) for value in target):
+        raise ValueError('x, y, and angle must be finite')
+    return 'waypoint', target
+
+
+def print_waypoint_help():
+    print("\nWaypoint mode")
+    print("  x y angle   Send a waypoint in metres, metres, degrees")
+    print("  stop        Cancel motion")
+    print("  manual      Return to WASD/gamepad control")
+    print("  help        Show these commands")
+    print("  quit        Stop and exit\n")
+
+
+def run_waypoint_console(cars):
+    """Read live waypoint commands while the BLE worker retains its link."""
+    print_waypoint_help()
+    while True:
+        try:
+            line = input("waypoint> ")
+        except EOFError:
+            line = 'quit'
+        try:
+            action, target = parse_waypoint_input(line)
+            if action == 'empty':
+                continue
+            if action == 'help':
+                print_waypoint_help()
+                continue
+            if action == 'manual':
+                for car, _ in cars:
+                    if car.is_connected:
+                        car.stop()
+                print("Manual mode. Press P to return to waypoint mode.")
+                return 'manual'
+            if action == 'quit':
+                for car, _ in cars:
+                    if car.is_connected:
+                        car.stop()
+                return 'quit'
+            if action == 'stop':
+                for car, _ in cars:
+                    if car.is_connected:
+                        car.stop()
+                print("Stopped.")
+                continue
+
+            connected = [car for car, _ in cars if car.is_connected]
+            if not connected:
+                print("No car is connected yet.")
+                continue
+            for car in connected:
+                car.set_waypoint(*target)
+            print("Waypoint sent: x={:.3f}, y={:.3f}, angle={:.1f} deg".format(*target))
+        except (ValueError, ConnectionError, RuntimeError, TimeoutError) as error:
+            print(f"Invalid command: {error}")
+
+
+def run_manual_demo(cars):
+    """Run sampled keyboard/gamepad control until P switches modes."""
+    import user_input as inp
+
+    # Discard a P edge captured while the user was typing in the waypoint
+    # console (for example, the final letter in "stop").
+    inp.rising_edge('p')
+    while True:
+        for car, gamepad_index in cars:
+            if car.is_connected:
+                car.set_velocity(get_user_cmd(gamepad_index))
+        if inp.rising_edge('p'):
+            for car, _ in cars:
+                if car.is_connected:
+                    car.stop()
+            return 'waypoint'
+        time.sleep(0.02)
+
+def normalize_trim_matrix(matrix=None):
+    """Validate a matrix without connecting to hardware."""
+    if matrix is None:
+        matrix = ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.))
+    try:
+        rows = tuple(tuple(float(v) for v in row) for row in matrix)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError('trim must be a finite 3x3 matrix') from error
+    if len(rows) != 3 or any(len(row) != 3 for row in rows):
+        raise ValueError('trim must be a 3x3 matrix')
+    values = tuple(v for row in rows for v in row)
+    if not all(math.isfinite(v) and (0 if i in (0, 4, 8) else -2) <= v <= 2
+               for i, v in enumerate(values)):
+        raise ValueError('diagonal gains must be in [0, 2], cross terms in [-2, 2], all finite')
+    return rows
+
+
 class MecanumBLEClient:
     """Small synchronous interface to the separate BLE owner process."""
     def __init__(self, device_name="MP_BLE_Device", resolution=0.05):
@@ -70,6 +179,11 @@ class MecanumBLEClient:
         self.resolution = resolution
         self.x = self.y = self.w = 0.0
         self.last_error = None
+        self.trim_matrix = None
+        self._trim_request = 0
+        self._trim_results = {}
+        self._waypoint_request = 0
+        self._waypoint_results = {}
         self._process = None
         self._reader = None
         self._ready = False
@@ -96,6 +210,13 @@ class MecanumBLEClient:
                         self._cached_velocity = None
                     if 'written' in message:
                         self._written = max(self._written, message['written'])
+                    if 'trim_matrix' in message:
+                        values = message['trim_matrix']
+                        self.trim_matrix = None if values is None else tuple(tuple(values[i:i+3]) for i in (0, 3, 6))
+                    if 'trim_done' in message:
+                        self._trim_results[message['trim_done']] = message.get('trim_error')
+                    if 'waypoint_done' in message:
+                        self._waypoint_results[message['waypoint_done']] = message.get('waypoint_error')
                     if 'error' in message:
                         self.last_error = message['error']
                         print(f"[{self.device_name}] {self.last_error}")
@@ -168,6 +289,54 @@ class MecanumBLEClient:
             if not done:
                 raise TimeoutError("Robot did not acknowledge stop")
 
+    def set_trim(self, matrix=None):
+        """Write/read back a complete 3x3 matrix. Rows: outputs; columns: inputs.
+
+        Diagonal entries are gains in [0, 2], cross terms in [-2, 2].
+        Omitting the matrix resets it to identity. Settings last until reboot.
+        """
+        rows = normalize_trim_matrix(matrix)
+        values = tuple(v for row in rows for v in row)
+        with self._pipe_lock:
+            if not self.is_connected:
+                raise ConnectionError('Robot is disconnected')
+            self._trim_request += 1
+            request = self._trim_request
+            self._process.stdin.write(json.dumps(dict(trim_matrix=values, request=request)) + '\n')
+            self._process.stdin.flush()
+        with self._status:
+            done = self._status.wait_for(lambda: request in self._trim_results
+                                        or not self.is_connected, timeout=4)
+            if not done or request not in self._trim_results:
+                raise ConnectionError('Trim was not acknowledged; reconnect before retrying')
+            error = self._trim_results.pop(request)
+            if error:
+                raise RuntimeError(error)
+            return self.trim_matrix
+
+    def set_waypoint(self, x, y, angle):
+        """Hand a field waypoint (metres, metres, degrees CCW) to onboard control."""
+        target = tuple(float(value) for value in (x, y, angle))
+        if (not all(math.isfinite(value) for value in target) or
+                not -0.8 <= target[0] <= 0.8 or not -1.5 <= target[1] <= 1.5):
+            raise ValueError('waypoint is invalid or outside the configured track')
+        with self._pipe_lock:
+            if not self.is_connected:
+                raise ConnectionError('Robot is disconnected')
+            self._waypoint_request += 1
+            request = self._waypoint_request
+            self._process.stdin.write(json.dumps(dict(waypoint=target, request=request)) + '\n')
+            self._process.stdin.flush()
+        with self._status:
+            done = self._status.wait_for(lambda: request in self._waypoint_results
+                                        or not self.is_connected, timeout=4)
+            if not done or request not in self._waypoint_results:
+                raise ConnectionError('Waypoint was not acknowledged; reconnect before retrying')
+            error = self._waypoint_results.pop(request)
+            if error:
+                raise RuntimeError(error)
+        return target
+
     def disconnect(self):
         """Close the pipe: the worker stops the robot and releases BLE, then exits."""
         process = self._process
@@ -211,11 +380,9 @@ if __name__ == "__main__":
     # Each entry: (device_name, gamepad_index)
     # Add more tuples to control multiple cars simultaneously.
     CAR_CONFIG = [
-        # ("Therian00", 0),
-        ("Eq4", 0),
-        # ("Eq2", 0),
-        # ("Eq3", 1),
-        # ("Eq1", 0),
+        ("car1", 0),
+        # ("car2", 0),
+        # ("car3", 1),
     ]
 
     cars = [(MecanumBLEClient(device_name=name), gp_idx) for name, gp_idx in CAR_CONFIG]
@@ -229,14 +396,12 @@ if __name__ == "__main__":
         print("  A/D or Left Stick X: Strafe Left/Right (Y-axis)")
         print("  Q/E or Right Stick X: Rotate (W-axis)")
         print("  C: Full speed mode")
+        print("  P: Switch to waypoint terminal")
         print("  Ctrl+C: Exit\n")
 
-        while True:
-            for car, gp_idx in cars:
-                if car.is_connected:
-                    car.set_velocity(get_user_cmd(gp_idx))
-
-            time.sleep(0.02)  # update rate
+        mode = 'manual'
+        while mode != 'quit':
+            mode = run_manual_demo(cars) if mode == 'manual' else run_waypoint_console(cars)
 
     except KeyboardInterrupt:
         print("\nInterrupted")

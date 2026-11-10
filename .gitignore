@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+vision.log
+vision.pid
+telemetry_sample.json
+scene.jpg
+scene_full.jpg
+calibration/runs/
+tests/experiments/runs/

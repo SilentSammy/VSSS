@@ -1,0 +1,8 @@
+{
+  "note": "Provisional forward-to-yaw correction from earlier car1 data. Not newly calibrated or validated; comparison only.",
+  "matrix": [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [-0.04, 0.0, 1.0]
+  ]
+}

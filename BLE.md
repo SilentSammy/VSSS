@@ -1,7 +1,7 @@
 # BLE robot control
 
 The client works the same way on Windows and Linux. The robot advertises as
-`Eq4` by default; change the name in `mp/main.py` and the client's `CAR_CONFIG`
+`car1` by default; change the name in `mp/main.py` and the client's `CAR_CONFIG`
 if needed. Linux needs a working BlueZ service and permission to use Bluetooth.
 
 ## Flash and run
@@ -31,7 +31,7 @@ For a student script:
 from mecanum_client import MecanumBLEClient
 import time
 
-with MecanumBLEClient("Eq4") as robot:
+with MecanumBLEClient("car1") as robot:
     robot.set_velocity({"x": 0.2, "y": 0, "w": 0})
     time.sleep(1)
     robot.stop()
@@ -41,7 +41,7 @@ The context manager waits for readiness and always disconnects on exit.
 The original nonblocking API also works:
 
 ```python
-robot = MecanumBLEClient("Eq4")
+robot = MecanumBLEClient("car1")
 robot.connect()
 try:
     robot.wait_until_connected(timeout=15)
@@ -69,6 +69,32 @@ The BLE payload is unchanged: three signed bytes for x, y, and rotation, using
 characteristic `12345678-1234-5678-1234-56789abcdef1`. No extra service, pairing,
 Windows-only service cache, or network connection is needed.
 
+## Trim
+
+The single trim characteristic is `12345678-1234-5678-1234-56789abcdef3`, with
+READ/WRITE properties. Its payload is **36 bytes**: nine little-endian float32
+values in row-major order. Rows are corrected outputs, columns are requested
+inputs, ordered x/y/w. Diagonal gains are in [0, 2]; off-diagonal correction
+terms in [-2, 2]; all entries must be finite. Defaults are the identity matrix.
+The former three-gain characteristic ending in `def2` is removed.
+
+Firmware computes `corrected = matrix * requested`, clips each result to [-1, 1],
+then mixes wheel powers. No constant offset is added: zero command stays zero.
+The matrix is kept in RAM until reboot. Invalid writes restore the previous
+canonical value. The client verifies every write with a readback.
+
+Use `Car.set_trim(matrix)` or `MecanumBLEClient.set_trim(matrix)` to replace the
+matrix, or omit the argument to restore identity. The return value and
+`trim_matrix` property expose the complete tuple of three rows. There is no
+separate gain tuple, synchronization step, or legacy gain-write path. Firmware
+without matrix support remains driveable but configuration reports an update
+requirement. Deploy `mp/axis_trim.py` alongside the other firmware files.
+
+The server reserves a 36-byte characteristic buffer with
+[`gatts_set_buffer`](https://docs.micropython.org/en/latest/library/bluetooth.html#bluetooth.BLE.gatts_set_buffer)
+because MicroPython's default incoming value limit is 20 bytes. Velocity commands
+still use the original three-byte characteristic ending in `def1`.
+
 ## Cleanup and heartbeat
 
 - The worker resends the current velocity every **200 ms**, even if unchanged.
@@ -89,9 +115,7 @@ after GATT setup and an initial zero command complete. Parent scripts share no
 global daemon, and one student's worker cannot keep running between scripts.
 
 The old internal `client`, `loop`, and `thread` objects are no longer exposed;
-BLE belongs to the worker. Use the public methods above. Earlier experimental
-scripts that accessed these internals are historical measurements, not the
-current client API.
+BLE belongs to the worker. Use the public methods above.
 
 ## Tests
 
@@ -101,8 +125,7 @@ python -m unittest discover -s tests -v
 
 Tests exercise real subprocesses and abrupt parent termination with a fake BLE
 radio, plus a simulated MicroPython clock/radio for the firmware lease. They
-require no adapter and never move a motor. All 12 tests pass on Windows/Python
-3.11 and Ubuntu/Python 3.12. Actual BLE checks were also run against the flashed
+require no adapter and never move a motor. Actual BLE checks were also run against the flashed
 board; Linux radio testing still requires a Bluetooth adapter on that computer.
 
 Live testing also found that changing PWM frequency could exhaust the C3's
@@ -110,7 +133,3 @@ timer/channel pool. Commands now update all three axes together, and motors
 release their old PWM allocation before changing frequency. Existing motor
 pin assignments, frequency range, and direction conventions are preserved.
 The board completed 100 rapidly changing mixed-axis commands after this fix.
-
-`experiments/ble_upgrade/hardware_check.py` repeats live heartbeat/crash tests.
-It deliberately sends nonzero velocities and is intended for an unmounted
-board. Original board files were backed up in that directory's `device_backup`.
