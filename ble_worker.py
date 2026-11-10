@@ -5,15 +5,12 @@ including os._exit() or an IDE stop, so we stop and disconnect immediately.
 """
 import asyncio
 import json
-import struct
 import sys
 from threading import Thread
 from bleak import BleakClient, BleakScanner
-
-VELOCITY_UUID = '12345678-1234-5678-1234-56789abcdef1'
-LEASE_UUID = '12345678-1234-5678-1234-56789abcdef2'
-TRIM_MATRIX_UUID = '12345678-1234-5678-1234-56789abcdef3'
-WAYPOINT_UUID = '12345678-1234-5678-1234-56789abcdef6'
+from ble_protocol import (CONTROLLER_KEYS, CONTROLLER_STRUCT, CONTROLLER_UUID,
+                          LEASE_UUID, STATUS_STRUCT, STATUS_UUID, TRIM_MATRIX_UUID,
+                          TRIM_STRUCT, VELOCITY_UUID, WAYPOINT_STRUCT, WAYPOINT_UUID)
 HEARTBEAT_SECONDS = 0.2
 WRITE_TIMEOUT = 1.0
 
@@ -27,14 +24,14 @@ class Commands:
         self.velocity = bytes(3)
         self.sequence = 0
         self.force = False
-        self.trims = asyncio.Queue()
+        self.operations = asyncio.Queue()
         self.waypoints = asyncio.Queue()
         self.position_mode = False
 
     def update(self, message):
         if self.ready:
-            if 'trim_matrix' in message:
-                self.trims.put_nowait(message)
+            if 'operation' in message:
+                self.operations.put_nowait(message)
                 self.changed.set()
                 return
             if 'waypoint' in message:
@@ -79,18 +76,27 @@ async def control(client, commands):
     commands.force = False
     commands.position_mode = False
     await write(client, bytes(3))
-    while not commands.trims.empty():
-        commands.report(trim_done=commands.trims.get_nowait()['request'],
-                        trim_error='Connection lost before applying trim')
+    while not commands.operations.empty():
+        commands.report(operation_done=commands.operations.get_nowait()['request'],
+                        operation_error='Connection lost before completing BLE operation')
     while not commands.waypoints.empty():
         commands.report(waypoint_done=commands.waypoints.get_nowait()['request'],
                         waypoint_error='Connection lost before applying waypoint')
     try:
-        matrix = struct.unpack('<9f', await asyncio.wait_for(client.read_gatt_char(TRIM_MATRIX_UUID), WRITE_TIMEOUT))
+        matrix = TRIM_STRUCT.unpack(await asyncio.wait_for(
+            client.read_gatt_char(TRIM_MATRIX_UUID), WRITE_TIMEOUT))
     except Exception:
         matrix = None  # Driving is still possible; configuring trim requires matrix firmware.
     matrix_supported = matrix is not None
     commands.report(trim_matrix=matrix)
+    try:
+        values = CONTROLLER_STRUCT.unpack(await asyncio.wait_for(
+            client.read_gatt_char(CONTROLLER_UUID), WRITE_TIMEOUT))
+        controller_supported = True
+        commands.report(controller_config=dict(zip(CONTROLLER_KEYS, values)))
+    except Exception:
+        controller_supported = False
+        commands.report(controller_config=None)
     commands.ready = True
     commands.report(ready=True, message='Connected')
     last_velocity = bytes(3)
@@ -111,24 +117,50 @@ async def control(client, commands):
             last_velocity, last_sequence = velocity, sequence
             last_write = asyncio.get_running_loop().time()
             commands.report(written=sequence)
-        if not commands.trims.empty():
-            message = commands.trims.get_nowait()
+        if not commands.operations.empty():
+            message = commands.operations.get_nowait()
             try:
-                if not matrix_supported:
-                    raise RuntimeError('Firmware does not support matrix trim; update the ESP32 firmware')
-                payload = struct.pack('<9f', *message['trim_matrix'])
-                await asyncio.wait_for(client.write_gatt_char(TRIM_MATRIX_UUID, payload, response=True), WRITE_TIMEOUT)
-                actual = await asyncio.wait_for(client.read_gatt_char(TRIM_MATRIX_UUID), WRITE_TIMEOUT)
-                if bytes(actual) != payload:
-                    raise ValueError('Firmware rejected trim')
-                commands.report(trim_matrix=struct.unpack('<9f', actual), trim_done=message['request'])
+                operation = message['operation']
+                if operation in ('read_trim', 'write_trim'):
+                    if not matrix_supported:
+                        raise RuntimeError('Firmware does not support matrix trim')
+                    if operation == 'write_trim':
+                        payload = TRIM_STRUCT.pack(*message['values'])
+                        await asyncio.wait_for(client.write_gatt_char(
+                            TRIM_MATRIX_UUID, payload, response=True), WRITE_TIMEOUT)
+                        last_write = asyncio.get_running_loop().time()
+                    actual = await asyncio.wait_for(
+                        client.read_gatt_char(TRIM_MATRIX_UUID), WRITE_TIMEOUT)
+                    if operation == 'write_trim' and bytes(actual) != payload:
+                        raise ValueError('Firmware rejected trim')
+                    commands.report(trim_matrix=TRIM_STRUCT.unpack(actual))
+                elif operation in ('read_controller', 'write_controller'):
+                    if not controller_supported:
+                        raise RuntimeError('Firmware does not support controller configuration')
+                    if operation == 'write_controller':
+                        payload = CONTROLLER_STRUCT.pack(*message['values'])
+                        await asyncio.wait_for(client.write_gatt_char(
+                            CONTROLLER_UUID, payload, response=True), WRITE_TIMEOUT)
+                        last_write = asyncio.get_running_loop().time()
+                    actual = await asyncio.wait_for(
+                        client.read_gatt_char(CONTROLLER_UUID), WRITE_TIMEOUT)
+                    if operation == 'write_controller' and bytes(actual) != payload:
+                        raise ValueError('Firmware rejected controller configuration')
+                    values = CONTROLLER_STRUCT.unpack(actual)
+                    commands.report(controller_config=dict(zip(CONTROLLER_KEYS, values)))
+                elif operation == 'read_status':
+                    actual = await asyncio.wait_for(
+                        client.read_gatt_char(STATUS_UUID), WRITE_TIMEOUT)
+                    commands.report(robot_status=STATUS_STRUCT.unpack(actual))
+                else:
+                    raise ValueError('Unknown BLE operation')
+                commands.report(operation_done=message['request'])
             except Exception as error:
-                commands.report(trim_done=message['request'], trim_error=str(error))
-                raise  # Reconnect stopped if a configuration operation stalled.
+                commands.report(operation_done=message['request'], operation_error=str(error))
         if not commands.waypoints.empty():
             message = commands.waypoints.get_nowait()
             try:
-                payload = struct.pack('<fff', *message['waypoint'])
+                payload = WAYPOINT_STRUCT.pack(*message['waypoint'])
                 await asyncio.wait_for(
                     client.write_gatt_char(WAYPOINT_UUID, payload, response=True), WRITE_TIMEOUT)
                 commands.report(waypoint_done=message['request'])

@@ -1,9 +1,0 @@
-- don't store configs in their own modules. Set up a single module for project-wide config storage.
-- pre-process or filter GameDetector's output, to smooth out false positives and fill the gaps between missed detections.
--- Allow cam_config to keep retrying
--- What if we had a camera that was actually a recorded video? We could even encode the camera intrinsics into the video title or metadata such that when we load the video it also instantiates the intrinsics needed for pose estimation. Furthermore, we could also add playback controls by importing the pynputs module.
--- unblur frames
--- use backg_poller for plotter IPC too
-+ associate aruco + client + controller
-+ 3 axis PID wrapper that takes errors and returns command
-+ parallax effect for players not properly accounted for at very extreme viewing angles (it was just the height that was wrong)

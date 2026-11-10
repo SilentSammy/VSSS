@@ -42,7 +42,7 @@ class DeliveryTests(unittest.TestCase):
         self.send_pose()
         self.assertEqual(self.gps._server, self.server.getsockname())
         data, address = self.server.recvfrom(65535)
-        self.assertEqual(data, b'VSSS_SUBSCRIBE')
+        self.assertEqual(data, b'POSE_SUBSCRIBE')
         self.assertEqual(address[1], self.gps.port)
         self.send_pose()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as legacy:
@@ -50,7 +50,7 @@ class DeliveryTests(unittest.TestCase):
             time.sleep(.03)
         self.assertIsNotNone(self.gps.get_car(1))
         data, _ = self.server.recvfrom(65535)
-        self.assertEqual(data, b'VSSS_SUBSCRIBE')
+        self.assertEqual(data, b'POSE_SUBSCRIBE')
 
     def test_close_unsubscribes(self):
         self.send_pose()
@@ -58,7 +58,7 @@ class DeliveryTests(unittest.TestCase):
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             data, address = self.server.recvfrom(65535)
-            if data == b'VSSS_UNSUBSCRIBE':
+            if data == b'POSE_UNSUBSCRIBE':
                 self.assertEqual(address[1], self.gps.port)
                 return
         self.fail('No unsubscribe datagram')
@@ -74,6 +74,6 @@ class DeliveryTests(unittest.TestCase):
         self.server.bind(address)
         self.server.settimeout(3)
         data, _ = self.server.recvfrom(65535)
-        self.assertEqual(data, b'VSSS_SUBSCRIBE')
+        self.assertEqual(data, b'POSE_SUBSCRIBE')
         self.send_pose()
         self.assertIsNotNone(self.gps.get_car(1))

@@ -6,19 +6,21 @@ except ImportError:
 import math
 import os
 
+try:
+    from onboard_controller import CONTROLLER_KEYS, DEFAULT_CONTROLLER
+except ImportError:  # CPython tests import this module as mp.robot_config.
+    from .onboard_controller import CONTROLLER_KEYS, DEFAULT_CONTROLLER
+
 
 DEFAULTS = {
     "version": 1,
     "car_id": 1,
     "wifi_ssid": "embedded",
     "wifi_password": "12345678",
+    "telemetry_host": "192.168.12.1",
+    "telemetry_port": 5000,
     "trim_matrix": [1., 0., 0., 0., 1., 0., 0., 0., 1.],
-    "controller": {
-        "kp_dist": 4., "kp_heading": .55, "max_speed": .4, "max_w": .35,
-        "horizon": .2, "velocity_alpha": .5, "min_speed": .12,
-        "min_w": .08, "position_tolerance": .025,
-        "heading_tolerance_deg": 5., "hold_ms": 600,
-    },
+    "controller": dict(DEFAULT_CONTROLLER),
 }
 
 
@@ -30,7 +32,8 @@ def validate(candidate):
     config = dict(DEFAULTS)
     config["controller"] = dict(DEFAULTS["controller"])
     if isinstance(candidate, dict):
-        for key in ("version", "car_id", "wifi_ssid", "wifi_password", "trim_matrix"):
+        for key in ("version", "car_id", "wifi_ssid", "wifi_password",
+                    "telemetry_host", "telemetry_port", "trim_matrix"):
             if key in candidate:
                 config[key] = candidate[key]
         if isinstance(candidate.get("controller"), dict):
@@ -39,16 +42,18 @@ def validate(candidate):
         raise ValueError("invalid robot identity")
     if not isinstance(config["wifi_ssid"], str) or not isinstance(config["wifi_password"], str):
         raise ValueError("invalid WiFi configuration")
+    if (not isinstance(config["telemetry_host"], str) or not config["telemetry_host"] or
+            not isinstance(config["telemetry_port"], int) or
+            not 1 <= config["telemetry_port"] <= 65534):
+        raise ValueError("invalid telemetry configuration")
     matrix = tuple(config["trim_matrix"])
     if len(matrix) != 9 or not all(_finite(v) and
             (0 if i in (0, 4, 8) else -2) <= v <= 2 for i, v in enumerate(matrix)):
         raise ValueError("invalid trim matrix")
     config["trim_matrix"] = list(matrix)
     controller = config["controller"]
-    positive = ("kp_dist", "kp_heading", "max_speed", "max_w", "horizon",
-                "velocity_alpha", "min_speed", "min_w", "position_tolerance",
-                "heading_tolerance_deg", "hold_ms")
-    if not all(_finite(controller.get(key)) and controller[key] > 0 for key in positive):
+    if not all(_finite(controller.get(key)) and controller[key] > 0
+               for key in CONTROLLER_KEYS):
         raise ValueError("invalid controller configuration")
     if controller["max_speed"] > 1 or controller["max_w"] > 1 or not 0 < controller["velocity_alpha"] <= 1:
         raise ValueError("controller limits are out of range")

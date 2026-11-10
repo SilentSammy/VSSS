@@ -6,7 +6,7 @@ import time
 
 from axis_trim import AxisTrim
 from mecanum import MecanumCar
-from onboard_controller import OnboardController
+from onboard_controller import CONTROLLER_KEYS, OnboardController
 from pose_receiver import PoseReceiver
 from robot_config import RobotConfig, validate
 
@@ -27,9 +27,6 @@ FAULT_NONE = 0
 FAULT_TELEMETRY = 1
 FAULT_TIMEOUT = 2
 WAYPOINT_TIMEOUT_MS = 30000
-CONTROLLER_KEYS = ("kp_dist", "kp_heading", "max_speed", "max_w", "horizon",
-                   "velocity_alpha", "min_speed", "min_w", "position_tolerance",
-                   "heading_tolerance_deg", "hold_ms")
 
 
 def connect_wifi(ssid, password, timeout_ms=20000):
@@ -57,7 +54,11 @@ def main():
     car = MecanumCar()
     car.stop()
     wlan = connect_wifi(settings["wifi_ssid"], settings["wifi_password"])
-    receiver = PoseReceiver(settings["car_id"], subscribe=False) if wlan.isconnected() else None
+    receiver = (PoseReceiver(settings["car_id"],
+                             server=settings["telemetry_host"],
+                             port=settings["telemetry_port"],
+                             subscribe=True)
+                if wlan.isconnected() else None)
 
     # Importing ble_server activates BLE, deliberately after WiFi association.
     import ble_server

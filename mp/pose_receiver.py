@@ -1,4 +1,4 @@
-"""Small polling VSSS telemetry receiver for MicroPython ESP32 firmware."""
+"""Small polling pose-telemetry receiver for MicroPython firmware."""
 try:
     import ujson as json
 except ImportError:
@@ -10,7 +10,7 @@ import time
 class PoseReceiver:
     """Subscribe to the vision server and retain one marker's latest pose."""
 
-    def __init__(self, marker_id, server="255.255.255.255", port=45888,
+    def __init__(self, marker_id, server="192.168.12.1", port=5000,
                  stale_ms=500, subscribe_ms=1000, subscribe=True):
         self.marker_id = int(marker_id)
         self.server = server
@@ -33,7 +33,7 @@ class PoseReceiver:
     def close(self):
         if self.subscribe:
             try:
-                self._socket.sendto(b"VSSS_UNSUBSCRIBE", (self.server, self.port + 1))
+                self._socket.sendto(b"POSE_UNSUBSCRIBE", (self.server, self.port + 1))
             except OSError:
                 pass
         self._socket.close()
@@ -43,7 +43,7 @@ class PoseReceiver:
         now = time.ticks_ms()
         if self.subscribe and time.ticks_diff(now, self._next_subscribe) >= 0:
             try:
-                self._socket.sendto(b"VSSS_SUBSCRIBE", (self.server, self.port + 1))
+                self._socket.sendto(b"POSE_SUBSCRIBE", (self.server, self.port + 1))
             except OSError:
                 pass
             self._next_subscribe = time.ticks_add(now, self.subscribe_ms)

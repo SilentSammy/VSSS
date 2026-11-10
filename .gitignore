@@ -8,3 +8,5 @@ scene.jpg
 scene_full.jpg
 calibration/runs/
 tests/experiments/runs/
+.hardware_backup/
+experiments/runs/

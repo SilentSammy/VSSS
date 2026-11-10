@@ -8,6 +8,8 @@ import sys
 from threading import Condition, Lock, Thread
 import time
 
+from ble_protocol import CONTROLLER_KEYS, RobotStatus, normalize_controller
+
 def to_byte(val):
     """Convert -1.0 to +1.0 range to 0-255 byte using two's complement"""
     signed = max(-128, min(127, int(val * 128.0)))
@@ -180,8 +182,10 @@ class MecanumBLEClient:
         self.x = self.y = self.w = 0.0
         self.last_error = None
         self.trim_matrix = None
-        self._trim_request = 0
-        self._trim_results = {}
+        self.controller_config = None
+        self.robot_status = None
+        self._operation_request = 0
+        self._operation_results = {}
         self._waypoint_request = 0
         self._waypoint_results = {}
         self._process = None
@@ -213,8 +217,14 @@ class MecanumBLEClient:
                     if 'trim_matrix' in message:
                         values = message['trim_matrix']
                         self.trim_matrix = None if values is None else tuple(tuple(values[i:i+3]) for i in (0, 3, 6))
-                    if 'trim_done' in message:
-                        self._trim_results[message['trim_done']] = message.get('trim_error')
+                    if 'controller_config' in message:
+                        values = message['controller_config']
+                        self.controller_config = (None if values is None else
+                                                  {key: values[key] for key in CONTROLLER_KEYS})
+                    if 'robot_status' in message:
+                        self.robot_status = RobotStatus(*message['robot_status'])
+                    if 'operation_done' in message:
+                        self._operation_results[message['operation_done']] = message.get('operation_error')
                     if 'waypoint_done' in message:
                         self._waypoint_results[message['waypoint_done']] = message.get('waypoint_error')
                     if 'error' in message:
@@ -289,6 +299,24 @@ class MecanumBLEClient:
             if not done:
                 raise TimeoutError("Robot did not acknowledge stop")
 
+    def _operation(self, operation, **values):
+        with self._pipe_lock:
+            if not self.is_connected:
+                raise ConnectionError('Robot is disconnected')
+            self._operation_request += 1
+            request = self._operation_request
+            message = dict(operation=operation, request=request, **values)
+            self._process.stdin.write(json.dumps(message) + '\n')
+            self._process.stdin.flush()
+        with self._status:
+            done = self._status.wait_for(lambda: request in self._operation_results
+                                         or not self.is_connected, timeout=4)
+            if not done or request not in self._operation_results:
+                raise ConnectionError('BLE operation was not acknowledged; reconnect before retrying')
+            error = self._operation_results.pop(request)
+            if error:
+                raise RuntimeError(error)
+
     def set_trim(self, matrix=None):
         """Write/read back a complete 3x3 matrix. Rows: outputs; columns: inputs.
 
@@ -297,22 +325,26 @@ class MecanumBLEClient:
         """
         rows = normalize_trim_matrix(matrix)
         values = tuple(v for row in rows for v in row)
-        with self._pipe_lock:
-            if not self.is_connected:
-                raise ConnectionError('Robot is disconnected')
-            self._trim_request += 1
-            request = self._trim_request
-            self._process.stdin.write(json.dumps(dict(trim_matrix=values, request=request)) + '\n')
-            self._process.stdin.flush()
-        with self._status:
-            done = self._status.wait_for(lambda: request in self._trim_results
-                                        or not self.is_connected, timeout=4)
-            if not done or request not in self._trim_results:
-                raise ConnectionError('Trim was not acknowledged; reconnect before retrying')
-            error = self._trim_results.pop(request)
-            if error:
-                raise RuntimeError(error)
-            return self.trim_matrix
+        self._operation('write_trim', values=values)
+        return self.trim_matrix
+
+    def read_trim(self):
+        self._operation('read_trim')
+        return self.trim_matrix
+
+    def set_controller(self, parameters):
+        configuration = normalize_controller(parameters, self.controller_config)
+        self._operation('write_controller',
+                        values=[configuration[key] for key in CONTROLLER_KEYS])
+        return self.controller_config
+
+    def read_controller(self):
+        self._operation('read_controller')
+        return self.controller_config
+
+    def read_status(self):
+        self._operation('read_status')
+        return self.robot_status
 
     def set_waypoint(self, x, y, angle):
         """Hand a field waypoint (metres, metres, degrees CCW) to onboard control."""

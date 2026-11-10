@@ -109,6 +109,41 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.client.set_trim(((1.,0.,0.),(0.,1.,0.),(invalid,0.,1.)))
 
+    def test_stored_trim_controller_and_live_status_are_readable(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.assertEqual(self.client.read_trim(),
+                         ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)))
+        controller = self.client.read_controller()
+        self.assertAlmostEqual(controller['kp_dist'], 4.)
+        updated = self.client.set_controller({'horizon': .15})
+        self.assertAlmostEqual(updated['horizon'], .15)
+        self.assertTrue(any(e['event'] == 'controller_config' for e in self.events()))
+        status = self.client.read_status()
+        self.assertEqual(status.mode_name, 'idle')
+        self.assertEqual(status.fault_name, 'none')
+        self.assertTrue(status.wifi_connected)
+        self.assertTrue(status.pose_fresh)
+        self.assertEqual(status.packet_count, 7)
+        self.assertAlmostEqual(status.angle, 90.)
+
+    def test_controller_configuration_rejects_invalid_values_before_ble(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        for update in ({'max_speed': 1.1}, {'velocity_alpha': 0},
+                       {'unknown': 1}, {'horizon': float('nan')}):
+            with self.subTest(update=update), self.assertRaises(ValueError):
+                self.client.set_controller(update)
+
+    def test_rejected_configuration_writes_are_reported(self):
+        with patch.dict(os.environ, {'BLE_TEST_REJECT_CONFIG': '1'}):
+            self.client.connect()
+        self.client.wait_until_connected(4)
+        with self.assertRaisesRegex(RuntimeError, 'Firmware rejected trim'):
+            self.client.set_trim(((.9, 0, 0), (0, 1, 0), (0, 0, 1)))
+        with self.assertRaisesRegex(RuntimeError, 'Firmware rejected controller'):
+            self.client.set_controller({'horizon': .15})
+
     def test_old_firmware_can_drive_but_configuration_requires_matrix_support(self):
         with patch.dict(os.environ,{'BLE_TEST_LEGACY_TRIM':'1'}):
             self.client.connect()

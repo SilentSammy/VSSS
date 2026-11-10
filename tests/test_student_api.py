@@ -170,13 +170,12 @@ class GPSTests(unittest.TestCase):
                     car.set_velocity(.5)
             client.disconnect.assert_called_once()
 
-    def test_car_applies_saved_calibration_transparently(self):
+    def test_connect_does_not_overwrite_robot_configuration(self):
         with patch('car.MecanumBLEClient') as client_type:
             client_type.return_value.is_connected = True
             with Car(1):
-                matrix = client_type.return_value.set_trim.call_args.args[0]
-                self.assertEqual(len(matrix), 3)
-                self.assertAlmostEqual(matrix[2][0], -0.05721879625165137)
+                client_type.return_value.set_trim.assert_not_called()
+                client_type.return_value.set_controller.assert_not_called()
 
     def test_failed_connection_is_closed(self):
         with patch('car.MecanumBLEClient') as client_type:

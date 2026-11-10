@@ -38,7 +38,7 @@ class GPS:
 
     Configure GPS(port=..., stale_after=...) before creating any Cars if needed.
     All later GPS() calls return that same receiver.
-    TE2004B broadcasts use GPS(port=5000, subscribe=False); balls are optional.
+    The default TE2004B service uses UDP 5000 data and 5001 subscriptions.
     """
     _instance = None
     _instance_lock = Lock()
@@ -47,7 +47,7 @@ class GPS:
         with cls._instance_lock:
             if cls._instance is None:
                 instance = super().__new__(cls)
-                instance._start(45888 if port is None else port,
+                instance._start(5000 if port is None else port,
                                 .5 if stale_after is None else stale_after,
                                 True if subscribe is None else subscribe)
                 cls._instance = instance
@@ -83,7 +83,9 @@ class GPS:
             raise
         self.port = self._socket.getsockname()[1]
         self._subscription_port = self.port + 1
-        self._server = None
+        # The canonical lab service is fixed and direct subscription avoids
+        # relying on WiFi broadcast discovery. Custom ports still discover.
+        self._server = ('192.168.12.1', self._subscription_port) if subscribe and port == 5000 else None
         self._unicast_received = None
         self._closed = False
         self._thread = Thread(target=self._receive, name='GPS', daemon=True)
@@ -101,7 +103,7 @@ class GPS:
                     targets.append(('255.255.255.255', self._subscription_port))
                 for target in targets:
                     try:
-                        self._socket.sendto(b'VSSS_SUBSCRIBE', target)
+                        self._socket.sendto(b'POSE_SUBSCRIBE', target)
                     except OSError:
                         pass
                 next_subscription = now + 1
@@ -234,7 +236,7 @@ class GPS:
             self._closed = True
             if self._server:
                 try:
-                    self._socket.sendto(b'VSSS_UNSUBSCRIBE', self._server)
+                    self._socket.sendto(b'POSE_UNSUBSCRIBE', self._server)
                 except OSError:
                     pass
             self._socket.close()

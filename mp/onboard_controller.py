@@ -3,6 +3,25 @@ import math
 import time
 
 
+CONTROLLER_KEYS = ("kp_dist", "kp_heading", "max_speed", "max_w", "horizon",
+                   "velocity_alpha", "min_speed", "min_w", "position_tolerance",
+                   "heading_tolerance_deg", "hold_ms")
+
+DEFAULT_CONTROLLER = {
+    "kp_dist": 4.0,
+    "kp_heading": .55,
+    "max_speed": .4,
+    "max_w": .35,
+    "horizon": .2,
+    "velocity_alpha": .5,
+    "min_speed": .12,
+    "min_w": .08,
+    "position_tolerance": .025,
+    "heading_tolerance_deg": 5.0,
+    "hold_ms": 600,
+}
+
+
 def wrap_angle(angle):
     return (angle + math.pi) % (2 * math.pi) - math.pi
 
@@ -13,21 +32,18 @@ def _ticks_diff(now, then):
 
 
 class OnboardController:
-    """Same field-to-robot control law as the calibrated laptop controller."""
+    """Predictive field-to-robot waypoint controller."""
 
-    def __init__(self, kp_dist=4.0, kp_heading=.55, max_speed=.4, max_w=.35,
-                 horizon=.2, velocity_alpha=.5, min_speed=.12, min_w=.08,
-                 position_tolerance=.025, heading_tolerance_deg=5., hold_ms=600):
-        self.kp_dist = kp_dist
-        self.kp_heading = kp_heading
-        self.max_speed = max_speed
-        self.max_w = max_w
-        self.horizon = horizon
-        self.velocity_alpha = velocity_alpha
-        self.min_speed, self.min_w = min_speed, min_w
-        self.position_tolerance = position_tolerance
-        self.heading_tolerance = math.radians(heading_tolerance_deg)
-        self.hold_ms = int(hold_ms)
+    def __init__(self, **overrides):
+        parameters = dict(DEFAULT_CONTROLLER)
+        unknown = set(overrides) - set(CONTROLLER_KEYS)
+        if unknown:
+            raise TypeError("unknown controller parameter: %s" % next(iter(unknown)))
+        parameters.update(overrides)
+        for key in CONTROLLER_KEYS:
+            setattr(self, key, parameters[key])
+        self.heading_tolerance = math.radians(self.heading_tolerance_deg)
+        self.hold_ms = int(self.hold_ms)
         self.target = None
         self.reset()
 

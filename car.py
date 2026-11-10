@@ -1,23 +1,8 @@
 """Student API: BLE commands and camera feedback for a numbered robot."""
-import json
 import math
-from pathlib import Path
 import time
 from gps import GPS
 from mecanum_client import MecanumBLEClient
-
-
-_CALIBRATIONS = Path(__file__).with_name('calibration') / 'cars.json'
-
-
-def _calibration_for(number):
-    """Return a saved per-car matrix, or None when that car is uncalibrated."""
-    try:
-        specification = json.loads(_CALIBRATIONS.read_text(encoding='utf-8'))
-        entry = specification.get(str(number))
-        return None if entry is None else entry['matrix']
-    except FileNotFoundError:
-        return None
 
 
 class Car:
@@ -36,9 +21,6 @@ class Car:
         try:
             self._client.connect()
             self._client.wait_until_connected(timeout)
-            calibration = _calibration_for(number)
-            if calibration is not None:
-                self._client.set_trim(calibration)
         except BaseException:
             self._client.disconnect()
             raise
@@ -98,10 +80,30 @@ class Car:
         """Replace the 3x3 correction matrix; no argument restores identity."""
         return self._client.set_trim(matrix)
 
+    def read_trim(self):
+        """Read the correction matrix currently stored on the robot."""
+        return self._client.read_trim()
+
     @property
     def trim_matrix(self):
         """Read-back rows are output x/y/w; columns are requested x/y/w."""
         return self._client.trim_matrix
+
+    def set_controller(self, parameters):
+        """Validate, store, and read back onboard controller parameters."""
+        return self._client.set_controller(parameters)
+
+    def read_controller(self):
+        """Read the controller parameters currently stored on the robot."""
+        return self._client.read_controller()
+
+    @property
+    def controller_config(self):
+        return self._client.controller_config
+
+    def read_status(self):
+        """Read current onboard mode, fault, pose, and telemetry counters."""
+        return self._client.read_status()
 
     def stop(self):
         self._client.stop()

@@ -14,6 +14,8 @@ class RobotConfigTests(unittest.TestCase):
             config = RobotConfig(str(path))
             self.assertEqual(config.data['car_id'], 1)
             self.assertEqual(config.data['trim_matrix'][0], 1.)
+            self.assertEqual(config.data['telemetry_host'], '192.168.12.1')
+            self.assertEqual(config.data['telemetry_port'], 5000)
 
     def test_trim_and_controller_survive_reload(self):
         with tempfile.TemporaryDirectory() as directory:
