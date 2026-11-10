@@ -5,13 +5,12 @@ See [BLE.md](BLE.md) for the robot/client code.
 
 ## Repository layout
 
-- `detection/`: lab-side camera service, marker/ball detection, plotting,
-  calibration, resources, and launch scripts.
+- Lab vision is maintained separately in TE2004B_AD26.
 - `car.py`, `gps.py`: unified student interface and shared position receiver.
 - `mecanum_client.py`, `ble_worker.py`, `user_input.py`: BLE control and manual input.
 - `telemetry_listener.py`: lightweight student-side position receiver/debugger.
 - `mp/`: ESP32 robot firmware.
-- `tests/`: regression tests for both sides.
+- `tests/`: robot, student API, and telemetry-client regression tests.
 - `tests/experiments/`: reusable recording, correction comparisons, strides, and waypoint
   experiments; see [the experiment guide](tests/experiments/README.md).
 - `calibration/runs/`: historical experiment recordings, retained at their original paths.
@@ -19,8 +18,7 @@ See [BLE.md](BLE.md) for the robot/client code.
 The root `main.py` is a minimal student starting point: it connects to car1,
 waits for its position, then rotates briefly and stops. Run `python main.py`
 on the lab hotspot. Replace its short control loop with your own logic. The
-vision entry point is `detection/main.py`; importing it cannot shadow a student's
-`main.py`. Vision dependencies are installed separately from root requirements.
+vision service runs from the separate TE2004B_AD26 repository.
 
 ## Student interface
 
@@ -148,44 +146,10 @@ power can remain off. The former three-gain API and BLE characteristic are remov
 
 ## Lab vision server
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r detection/requirements.txt
-bash detection/run.sh --setup setup_160cm --headless
-```
-
-`detection/run.sh` checks the existing lab hotspot, obtains its broadcast address, and
-launches camera capture, a browser viewer, and vision together. Without an
-explicit `--setup`, it offers a board-size menu. Omit `--headless` to show the
-camera and board windows on a graphical desktop. Ctrl+C stops owned processes.
-
-For the lowest telemetry latency when neither the ball nor a camera preview is
-needed, run the server as:
-
-```bash
-bash detection/run.sh --setup setup_160cm --headless --no-ball-detection --no-camera-viewer --rate 30
-```
-
-This skips ball processing and the HTTP/JPEG viewer and publishes every processed
-frame (up to 30 Hz). Omit `--no-ball-detection` when ball positions are required;
-omit `--no-camera-viewer` when the browser preview is required. These options do
-not change the packet format: disabled ball detection simply publishes an empty
-`balls` list.
-
-The lab copy is `/home/aavila/Desktop/VSSS`, beside `TE2004B_AD26`. VSSS uses
-its own `vsss-camera-<user>` frame buffer. Do not launch both projects against
-the same physical camera simultaneously; the default viewer port is also 8080.
-
-View the camera at `http://192.168.12.1:8080/` on the lab hotspot, or
-`http://100.87.82.76:8080/` through Tailscale. The viewer displays the camera
-feed; the local OpenCV windows add detection outlines and the board plot.
-
-For direct capture without the viewer/supervisor:
-
-```bash
-python -m detection.main --setup setup_160cm --camera-source direct --headless --broadcast 192.168.12.255
-```
+Camera capture, marker/ball detection, calibration, visualization, resources, and
+launch scripts have migrated to TE2004B_AD26. Install and run the vision service
+from that repository using its operator instructions. VSSS consumes its compact
+UDP telemetry and does not import its source.
 
 ## Position packets
 
@@ -201,11 +165,10 @@ python -m detection.main --setup setup_160cm --camera-source direct --headless -
 ```
 
 GPS clients receive packets by unicast on UDP **45888**. Legacy broadcasts on
-that port remain available for `telemetry_listener.py` (separate from TE2004B_AD26
-on 5000). Coordinates are metres in the board
+that port can be inspected with `telemetry_listener.py`. TE2004B_AD26 also
+supports legacy port-5000 broadcasts when configured. Coordinates are metres in the board
 frame, +Y up; marker headings are degrees, positive counterclockwise from +X.
-The default publication target is 10 Hz, limited by processing speed. Use
-`--rate 30` to publish every processed frame when vision runs below 30 FPS.
+Configure publication rate in the TE2004B_AD26 service.
 `frame_age_ms` measures capture-return to packet generation on the server,
 not end-to-end network delay. It is included when using the camera service.
 
@@ -215,35 +178,19 @@ Run this on a receiving computer on the hotspot:
 python telemetry_listener.py
 ```
 
-GPS handles subscription automatically; the ESP32 needs no WiFi connection. Autonomous controllers
-should stop when the board/target disappears or packets become stale.
-
-## Ball and marker calibration
-
-`detection/ball_det.py` restores the HSV/circularity-based BallDetector from `main`.
-`detection/ball_thresholds.txt` contains its lower/upper OpenCV HSV bounds; the current
-values were measured from the blue lab ball. Restart vision after editing
-these thresholds. The detector currently reports its best circular candidate.
-
-`--ball-height 0.02` is the default ball-centre height above the board, matching
-the old VSSS setup. Set it to the actual ball radius for parallax correction.
-Balls are detected before coloured overlays and only get world coordinates
-when the reference board is detected; otherwise `balls` is empty.
-
-`detection/marker_config.json` supports per-ID `height_m` overrides and optional display
-styles. Heights reload during operation. Flat markers should use height 0;
-markers mounted on robots should use their measured mounting height. The
-default robot marker height remains 0.12 m from the imported vision setup.
+GPS handles subscription automatically. ESP32 onboard waypoint control requires
+WiFi telemetry as well as BLE. Autonomous controllers should stop when the
+board/target disappears or packets become stale.
 
 ## Maintenance and tests
 
-`detection/configure_lab_network.sh` checks/repairs the lab's existing create_ap hotspot;
-it does not set up an arbitrary new network. `update_repo.sh` fast-forwards the
-current Git branch without discarding local work or switching to `main`.
+Manage camera, board, marker-height, and ball calibration in TE2004B_AD26.
+`update_repo.sh` fast-forwards the current Git branch without discarding local
+work or switching to `main`.
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The camera transport, marker tracking, and launchers were imported from
-TE2004B_AD26. Tests use synthetic camera frames and fake BLE; no motors move.
+Tests use synthetic UDP packets and fake BLE; no motors move. Vision-service
+regression tests belong to TE2004B_AD26.

@@ -1,26 +1,37 @@
-"""Real sockets: automatic renewal, multiple subscribers, cleanup and stale broadcasts."""
+"""Client UDP protocol checks, independent of the external vision service."""
 import json
 import socket
 import time
 import unittest
 
-from detection.telemetry import TelemetryPublisher, SUBSCRIBE, UNSUBSCRIBE
 from gps import GPS
 
 
 class DeliveryTests(unittest.TestCase):
     def setUp(self):
-        self.gps = GPS(port=0)
-        self.publisher = TelemetryPublisher(None, self.gps.port)
-        self.target = ('127.0.0.1', self.gps.port + 1)
+        # Reserve the adjacent protocol port before starting the receiver.
+        for _ in range(100):
+            self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.server.bind(('127.0.0.1', 0))
+            port = self.server.getsockname()[1] - 1
+            try:
+                self.gps = GPS(port=port)
+                break
+            except OSError:
+                self.server.close()
+        else:
+            self.fail('Could not reserve adjacent UDP ports')
+        self.server.settimeout(3)
+        self.target = ('127.0.0.1', self.gps.port)
         self.packet = dict(board_detected=True,
                            markers=[dict(id=1, x=.1, y=.2, angle=90)], balls=[])
 
     def tearDown(self):
         self.gps.close()
-        self.publisher.close()
+        self.server.close()
 
-    def receive_pose(self):
+    def send_pose(self):
+        self.server.sendto(json.dumps(self.packet).encode(), self.target)
         deadline = time.monotonic() + 1
         while self.gps.get_car(1) is None:
             if time.monotonic() > deadline:
@@ -28,53 +39,41 @@ class DeliveryTests(unittest.TestCase):
             time.sleep(.005)
 
     def test_subscription_renews_and_old_broadcast_cannot_replace_unicast(self):
-        # Seed discovery over loopback; subsequent renewals use the learned server.
-        self.gps._socket.sendto(SUBSCRIBE, self.target)
-        self.publisher.send(self.packet)
-        self.receive_pose()
-        self.assertEqual(self.gps._server, self.target)
-        address = next(iter(self.publisher._subscribers))
-        first_expiry = self.publisher._subscribers[address]
+        self.send_pose()
+        self.assertEqual(self.gps._server, self.server.getsockname())
+        data, address = self.server.recvfrom(65535)
+        self.assertEqual(data, b'VSSS_SUBSCRIBE')
+        self.assertEqual(address[1], self.gps.port)
+        self.send_pose()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as legacy:
-            old = dict(self.packet, markers=[])
-            legacy.sendto(json.dumps(old).encode(), ('127.0.0.1', self.gps.port))
+            legacy.sendto(json.dumps(dict(self.packet, markers=[])).encode(), self.target)
             time.sleep(.03)
         self.assertIsNotNone(self.gps.get_car(1))
-        time.sleep(1.1)
-        self.publisher.send(self.packet)
-        self.assertGreater(self.publisher._subscribers[address], first_expiry)
-        self.gps.close()
-        self.publisher.send(self.packet)
-        self.assertFalse(self.publisher._subscribers)
+        data, _ = self.server.recvfrom(65535)
+        self.assertEqual(data, b'VSSS_SUBSCRIBE')
 
-    def test_multiple_students_and_expiry(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as other:
-            other.bind(('127.0.0.1', 0))
-            other.settimeout(1)
-            other.sendto(SUBSCRIBE, self.target)
-            self.gps._socket.sendto(SUBSCRIBE, self.target)
-            self.publisher.send(self.packet)
-            self.receive_pose()
-            self.assertEqual(json.loads(other.recvfrom(65535)[0]), self.packet)
-            self.assertEqual(len(self.publisher._subscribers), 2)
-            address = other.getsockname()
-            self.publisher._subscribers[address] = time.monotonic() - 1
-            self.publisher.send(self.packet)
-            self.assertNotIn(address, self.publisher._subscribers)
-            other.sendto(UNSUBSCRIBE, self.target)
-            self.publisher.send(self.packet)
+    def test_close_unsubscribes(self):
+        self.send_pose()
+        self.gps.close()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            data, address = self.server.recvfrom(65535)
+            if data == b'VSSS_UNSUBSCRIBE':
+                self.assertEqual(address[1], self.gps.port)
+                return
+        self.fail('No unsubscribe datagram')
 
     def test_receiver_recovers_after_server_restart(self):
-        self.gps._socket.sendto(SUBSCRIBE, self.target)
-        self.publisher.send(self.packet)
-        self.receive_pose()
-        self.publisher.close()
+        self.send_pose()
+        address = self.server.getsockname()
+        self.server.close()
         time.sleep(1.2)
         self.assertTrue(self.gps._thread.is_alive())
         self.assertIsNone(self.gps.get_car(1))
-        self.publisher = TelemetryPublisher(None, self.gps.port)
-        deadline = time.monotonic() + 3
-        while self.gps.get_car(1) is None and time.monotonic() < deadline:
-            self.publisher.send(self.packet)
-            time.sleep(.02)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server.bind(address)
+        self.server.settimeout(3)
+        data, _ = self.server.recvfrom(65535)
+        self.assertEqual(data, b'VSSS_SUBSCRIBE')
+        self.send_pose()
         self.assertIsNotNone(self.gps.get_car(1))

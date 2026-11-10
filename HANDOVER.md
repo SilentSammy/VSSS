@@ -1,3 +1,7 @@
+> Historical snapshot of `overhaul`. On `cleanup`, the migrated `detection/`
+> stack and vision-only tests have been removed; TE2004B_AD26 owns lab vision.
+> Migration and deletion steps below describe the earlier state.
+
 # Overhaul branch handover
 
 This document describes the repository as it exists on the `overhaul` branch after
