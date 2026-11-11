@@ -144,6 +144,36 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Firmware rejected controller'):
             self.client.set_controller({'horizon': .15})
 
+    def test_reconnect_telemetry_stops_before_command(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.client.set_velocity({'x': .3})
+        self.client.reconnect_telemetry()
+        events = self.events()
+        index = next(i for i, event in enumerate(events) if event['event'] == 'control')
+        self.assertEqual(events[index]['data'], [2])
+        self.assertEqual(events[index-1]['data'], [0, 0, 0])
+
+    def test_restart_reconnects_without_resuming_motion(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        self.client.set_velocity({'x': .3})
+        self.client.restart_robot(timeout=4)
+        self.assertTrue(self.client.is_connected)
+        events = self.events()
+        index = next(i for i, event in enumerate(events) if event['event'] == 'control')
+        self.assertEqual(events[index]['data'], [3])
+        self.assertEqual(events[index-1]['data'], [0, 0, 0])
+        second_ready = [i for i, e in enumerate(events) if e['event'] == 'ready'][1]
+        self.assertEqual(next(e['data'] for e in events[second_ready:] if e['event'] == 'write'), [0, 0, 0])
+
+    def test_old_firmware_does_not_silently_accept_recovery(self):
+        with patch.dict(os.environ, {'BLE_TEST_OLD_CONTROL': '1'}):
+            self.client.connect()
+        self.client.wait_until_connected(4)
+        with self.assertRaisesRegex(RuntimeError, 'did not accept'):
+            self.client.reconnect_telemetry()
+
     def test_old_firmware_can_drive_but_configuration_requires_matrix_support(self):
         with patch.dict(os.environ,{'BLE_TEST_LEGACY_TRIM':'1'}):
             self.client.connect()

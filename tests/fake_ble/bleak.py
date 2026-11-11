@@ -37,6 +37,7 @@ class BleakClient:
         self.controller = struct.pack('<11f', 4., .55, .4, .35, .2, .5,
                                       .12, .08, .025, 5., 600.)
         self.status = struct.pack('<BBBBfffI', 0, 3, 0, 0, .1, .2, 90., 7)
+        self.control = bytes(2)
 
     async def connect(self):
         self.is_connected = True  # Physical connection can precede GATT readiness.
@@ -59,6 +60,13 @@ class BleakClient:
                 self.controller = bytes(data)
             record('controller_config', data=list(data))
             return
+        if uuid.endswith('def7'):
+            self.control = (bytes((0xa5, data[0])) if not os.environ.get('BLE_TEST_OLD_CONTROL')
+                            else bytes((0, 0)))
+            record('control', data=list(data))
+            if data == bytes((3,)) and not os.environ.get('BLE_TEST_OLD_CONTROL'):
+                asyncio.get_running_loop().call_later(.15, self._lose_connection)
+            return
         record('write', data=list(data))
         if any(data) and os.environ.get('BLE_TEST_DROP_ON_MOVE') and drop_once:
             drop_once = False
@@ -76,7 +84,15 @@ class BleakClient:
             return self.controller
         if uuid.endswith('def9'):
             return self.status
+        if uuid.endswith('def7'):
+            return self.control
         raise LookupError('Characteristic not found')
+
+    def _lose_connection(self):
+        if self.is_connected:
+            self.is_connected = False
+            record('lost')
+            self.callback(self)
 
     async def disconnect(self):
         self.is_connected = False

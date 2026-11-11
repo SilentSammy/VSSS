@@ -8,7 +8,8 @@ import json
 import sys
 from threading import Thread
 from bleak import BleakClient, BleakScanner
-from ble_protocol import (CONTROLLER_KEYS, CONTROLLER_STRUCT, CONTROLLER_UUID,
+from ble_protocol import (CONTROL_UUID, CONTROL_RECONNECT_TELEMETRY, CONTROL_RESTART,
+                          CONTROLLER_KEYS, CONTROLLER_STRUCT, CONTROLLER_UUID,
                           LEASE_UUID, STATUS_STRUCT, STATUS_UUID, TRIM_MATRIX_UUID,
                           TRIM_STRUCT, VELOCITY_UUID, WAYPOINT_STRUCT, WAYPOINT_UUID)
 HEARTBEAT_SECONDS = 0.2
@@ -152,6 +153,15 @@ async def control(client, commands):
                     actual = await asyncio.wait_for(
                         client.read_gatt_char(STATUS_UUID), WRITE_TIMEOUT)
                     commands.report(robot_status=STATUS_STRUCT.unpack(actual))
+                elif operation in ('reconnect_telemetry', 'restart'):
+                    code = (CONTROL_RECONNECT_TELEMETRY if operation == 'reconnect_telemetry'
+                            else CONTROL_RESTART)
+                    await asyncio.wait_for(client.write_gatt_char(
+                        CONTROL_UUID, bytes((code,)), response=True), WRITE_TIMEOUT)
+                    last_write = asyncio.get_running_loop().time()
+                    actual = await asyncio.wait_for(client.read_gatt_char(CONTROL_UUID), WRITE_TIMEOUT)
+                    if bytes(actual) != bytes((0xa5, code)):
+                        raise RuntimeError('Firmware did not accept the recovery command')
                 else:
                     raise ValueError('Unknown BLE operation')
                 commands.report(operation_done=message['request'])

@@ -191,6 +191,7 @@ class MecanumBLEClient:
         self._process = None
         self._reader = None
         self._ready = False
+        self._connection_generation = 0
         self._sequence = self._written = 0
         self._cached_velocity = None
         self._pipe_lock = Lock()
@@ -202,6 +203,11 @@ class MecanumBLEClient:
         """True only after GATT discovery and the initial stop command finish."""
         return self._ready and self._process is not None and self._process.poll() is None
 
+    @property
+    def connection_generation(self):
+        """Increase whenever the worker establishes a new ready BLE session."""
+        return self._connection_generation
+
     def _read_status(self, process):
         try:
             for line in process.stdout:
@@ -210,6 +216,8 @@ class MecanumBLEClient:
                     if process is not self._process:
                         return
                     if 'ready' in message:
+                        if message['ready'] and not self._ready:
+                            self._connection_generation += 1
                         self._ready = message['ready']
                         self._cached_velocity = None
                     if 'written' in message:
@@ -345,6 +353,22 @@ class MecanumBLEClient:
     def read_status(self):
         self._operation('read_status')
         return self.robot_status
+
+    def reconnect_telemetry(self):
+        """Stop motion and ask the robot to reconnect Wi-Fi and UDP telemetry."""
+        self.stop()
+        self._operation('reconnect_telemetry')
+
+    def restart_robot(self, timeout=45):
+        """Stop, request reboot, then wait for a fresh stopped connection."""
+        self.stop()
+        self._operation('restart')
+        # Some Windows BLE stacks leave is_connected true after the ESP32
+        # resets. Tear down our worker explicitly before starting a fresh one.
+        self.disconnect()
+        time.sleep(1)  # Firmware schedules reset 750 ms after acknowledgement.
+        self.connect()
+        self.wait_until_connected(timeout)
 
     def set_waypoint(self, x, y, angle):
         """Hand a field waypoint (metres, metres, degrees CCW) to onboard control."""

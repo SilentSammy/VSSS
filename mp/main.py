@@ -9,6 +9,7 @@ from mecanum import MecanumCar
 from onboard_controller import CONTROLLER_KEYS, OnboardController
 from pose_receiver import PoseReceiver
 from robot_config import RobotConfig, validate
+from telemetry_recovery import TelemetryRecovery
 
 VELOCITY_UUID = "12345678-1234-5678-1234-56789abcdef1"
 LEASE_UUID = "12345678-1234-5678-1234-56789abcdef2"
@@ -54,11 +55,7 @@ def main():
     car = MecanumCar()
     car.stop()
     wlan = connect_wifi(settings["wifi_ssid"], settings["wifi_password"])
-    receiver = (PoseReceiver(settings["car_id"],
-                             server=settings["telemetry_host"],
-                             port=settings["telemetry_port"],
-                             subscribe=True)
-                if wlan.isconnected() else None)
+    telemetry = TelemetryRecovery(wlan, settings, PoseReceiver)
 
     # Importing ble_server activates BLE, deliberately after WiFi association.
     import ble_server
@@ -67,6 +64,7 @@ def main():
         "waypoint": None, "deadline": None, "stop": False,
         "control_frame": None, "control_command": (0., 0., 0.),
         "save_trim": False, "save_controller": False,
+        "reconnect_at": None, "restart_at": None,
     }
 
     def trim_changed(_matrix):
@@ -80,6 +78,8 @@ def main():
         car.stop()
 
     def on_velocity(data):
+        if state["reconnect_at"] is not None or state["restart_at"] is not None:
+            return
         if len(data) == 3:
             state["velocity"] = tuple(ble_server.to_bipolar(value) for value in data)
             state["waypoint"] = None
@@ -90,6 +90,8 @@ def main():
             controller.clear_target()
 
     def on_waypoint(data):
+        if state["reconnect_at"] is not None or state["restart_at"] is not None:
+            return struct.pack("<fff", *(state["waypoint"] or (0., 0., 0.)))
         if len(data) == 12:
             x, y, angle = struct.unpack("<fff", data)
             if all(math.isfinite(v) for v in (x, y, angle)) and -0.8 <= x <= 0.8 and -1.5 <= y <= 1.5:
@@ -111,6 +113,13 @@ def main():
                 stop_requested()
             elif command == 1:
                 state["save_trim"] = state["save_controller"] = True
+            elif command in (2, 3):
+                stop_requested()
+                if command == 2:
+                    state["reconnect_at"] = time.ticks_add(time.ticks_ms(), 350)
+                else:
+                    state["restart_at"] = time.ticks_add(time.ticks_ms(), 750)
+                return bytes((0xa5, command))
         return bytes((state["mode"], state["fault"]))
 
     def on_controller(data):
@@ -154,8 +163,6 @@ def main():
         while True:
             now = time.ticks_ms()
             ble_server.poll()
-            if receiver is not None:
-                receiver.poll()
 
             if state["stop"]:
                 state["stop"] = False
@@ -166,6 +173,17 @@ def main():
                 state["deadline"] = None
                 controller.clear_target()
                 car.stop()
+
+            if state["restart_at"] is not None and time.ticks_diff(now, state["restart_at"]) >= 0:
+                car.stop()
+                import machine
+                machine.reset()
+
+            if state["reconnect_at"] is not None and time.ticks_diff(now, state["reconnect_at"]) >= 0:
+                state["reconnect_at"] = None
+                telemetry.reconnect()
+            telemetry.poll()
+            receiver = telemetry.receiver
 
             if state["save_trim"]:
                 state["save_trim"] = False
@@ -226,8 +244,7 @@ def main():
         pass
     finally:
         car.stop()
-        if receiver is not None:
-            receiver.close()
+        telemetry.close()
         ble_server.stop()
 
 

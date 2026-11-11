@@ -54,6 +54,11 @@ with Car(1) as car:
     print(status.mode_name, status.fault_name, status.pose_fresh)
 ```
 
+If telemetry needs recovery, `car.reconnect_telemetry()` stops the robot and
+restarts its Wi-Fi and UDP receiver. `car.restart()` stops and reboots it, then
+waits for BLE to reconnect in the stopped state. Both require a working BLE
+connection. Neither resumes a prior velocity or waypoint.
+
 Controller keys are `kp_dist`, `kp_heading`, `max_speed`, `max_w`, `horizon`,
 `velocity_alpha`, `min_speed`, `min_w`, `position_tolerance`,
 `heading_tolerance_deg`, and `hold_ms`.
@@ -78,6 +83,20 @@ python -m experiments.run --velocity .2 0 0 --duration 2 --execute
 python -m experiments.run --observe 10
 python -m experiments.run --trim trim.json --controller controller.json
 ```
+
+For the supervised upper-half track, the quick calibration runs short signed
+velocity pulses and saves its frames, original settings, and trim proposal:
+
+```powershell
+python -m experiments.calibrate --car 1
+python -m experiments.calibrate --car 1 --auto-apply
+python -m experiments.calibrate --car 1 --translation-level .5 --yaw-level .2 --pulse-seconds .8 --yaw-seconds .55
+python -m experiments.calibrate --car 1 --restore-trim experiments/runs/RUN/original.json
+```
+
+`--auto-apply` writes a trim only if the run and quality checks pass. The script
+stops on lost telemetry or boundary risk; controller gains are not retuned by
+these pulses. The restore command reads back the saved trim without moving.
 
 Velocity trials stop if pose telemetry becomes stale or the car crosses configured
 bounds. Waypoint trials send one target to the firmware and observe its BLE status;

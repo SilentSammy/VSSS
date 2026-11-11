@@ -63,6 +63,10 @@ class Car:
     def is_connected(self):
         return self._client.is_connected
 
+    @property
+    def connection_generation(self):
+        return self._client.connection_generation
+
     def set_velocity(self, x=0., y=0., w=0.):
         """Normalized robot-frame forward, left, CCW commands, each in [-1, 1]."""
         values = dict(x=x, y=y, w=w)
@@ -104,6 +108,14 @@ class Car:
     def read_status(self):
         """Read current onboard mode, fault, pose, and telemetry counters."""
         return self._client.read_status()
+
+    def reconnect_telemetry(self):
+        """Stop and restart the robot's Wi-Fi/telemetry connection."""
+        self._client.reconnect_telemetry()
+
+    def restart(self, timeout=45):
+        """Stop and reboot the robot, then wait for BLE to reconnect stopped."""
+        self._client.restart_robot(timeout)
 
     def stop(self):
         self._client.stop()
