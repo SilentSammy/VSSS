@@ -171,6 +171,28 @@ class ProviderIntegrationTests(unittest.TestCase):
         time.sleep(6)
         self.car('car1').stop()
 
+    def test_decorated_multicar_script_closes_sessions_without_starting_gps(self):
+        code = '''
+from time import sleep
+from vsss import Car, GPS, run
+
+@run
+def main():
+    first, second = Car(1), Car(2)
+    first.set_velocity(x=.2)
+    second.set_velocity(y=.2)
+    sleep(.2)
+    assert GPS._instance is None
+    return first, second
+
+cars = main()
+assert all(not car.is_connected for car in cars)
+assert GPS._instance is None
+'''
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

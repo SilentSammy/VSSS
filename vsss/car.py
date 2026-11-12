@@ -1,6 +1,8 @@
 """Student API: BLE commands and camera feedback for a numbered robot."""
 import math
+import sys
 import time
+from threading import Lock
 from vsss.gps import GPS
 from vsss._ble_client import MecanumBLEClient
 
@@ -9,21 +11,35 @@ class Car:
     """Car(4) connects to BLE name car4 and reads ArUco marker 4.
 
     Construction waits for BLE, but never waits for camera visibility.
-    Use a with block to stop/disconnect even when your script raises an error.
+    Use @run, a with block, or close_all() in finally to stop/disconnect.
     """
+    _cars = set()
+    _cars_lock = Lock()
+
     def __init__(self, number, *, timeout=15):
         if type(number) is not int or number < 0:
             raise ValueError('car number must be a nonnegative integer')
         self.number = number
-        self.gps = GPS()
+        self._closed = False
         self._pose_missing = None
         self._client = MecanumBLEClient(device_name=f'car{number}')
+        with Car._cars_lock:
+            Car._cars.add(self)
         try:
             self._client.connect()
             self._client.wait_until_connected(timeout)
         except BaseException:
-            self._client.disconnect()
+            try:
+                self.close()
+            except BaseException as error:
+                # Keep this partial connection registered for close_all retry.
+                print(f'[car{number}] Cleanup failed: {error}', file=sys.stderr)
             raise
+
+    @property
+    def gps(self):
+        """Shared GPS receiver, started only when field feedback is requested."""
+        return GPS()
 
     @property
     def pose(self):
@@ -121,7 +137,26 @@ class Car:
         self._client.stop()
 
     def close(self):
+        if self._closed:
+            return
         self._client.disconnect()
+        self._closed = True
+        with Car._cars_lock:
+            Car._cars.discard(self)
+
+    @classmethod
+    def close_all(cls):
+        """Stop/disconnect this process's cars, attempting all even if one fails."""
+        with Car._cars_lock:
+            cars = tuple(Car._cars)
+        errors = []
+        for car in cars:
+            try:
+                car.close()
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            raise errors[0]
 
     def __enter__(self):
         return self

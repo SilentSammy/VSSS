@@ -24,24 +24,60 @@ pip install -e .
 Join the `embedded` lab hotspot and enable Bluetooth. Car 1 advertises as `car1`
 and uses marker ID 1.
 
-The student API is in the `vsss` package: import `Car` and `GPS` from `vsss`.
+The student API is in the `vsss` package: import `Car`, `gps`, and `run` from `vsss`.
 Keyboard and gamepad helpers are available as `from vsss import input`.
 Legacy `from car import Car` and `from gps import GPS` imports remain available
 after installation for existing scripts.
 
 ```python
-from vsss import Car
+from time import sleep
+from vsss import Car, run
 
-with Car(1) as car:
-    print(car.pose)
-    print(car.read_status())
-    car.set_velocity(x=.2, y=0, w=0)
-    car.stop()
-    car.go_to(0, .5, 90)  # Onboard controller; the laptop only sends the target.
+@run
+def main():
+    car = Car(1)
+    car.set_velocity(x=.2)
+    sleep(1)
+
+main()
 ```
+
+`@run` stops/disconnects all cars created in this process and releases its GPS
+connection when the function returns, raises an error, or receives Ctrl+C. Call
+the decorated function normally; it is a synchronous script entry point. Multiple
+cars can be created in the same function. Cleanup does not affect other scripts.
+
+Car construction and velocity commands use BLE only. Position access (`car.pose`,
+`car.position`, or `car.gps`) starts the shared GPS receiver lazily. Missing camera
+telemetry does not prevent velocity control; a missing/stale pose returns `None`.
+
+For field-only observation, no car or BLE connection is needed:
+
+```python
+from time import sleep
+from vsss import gps, run
+
+@run
+def main():
+    while True:
+        print(gps.cars)   # {id: Pose(x, y, angle)}
+        print(gps.balls)  # tuple of Position(x, y)
+        sleep(.1)
+
+main()
+```
+
+Importing `gps` does not start reception; its first field access does.
+`GPS(...)` remains available for explicit configuration before first access.
+`Car.close()`, `with Car(...)`, and `Car.close_all()` in a `finally` block are
+also supported. `Car.close_all()` attempts every car even if one cleanup fails.
 
 `set_velocity` uses normalized robot-frame forward, left, and counterclockwise
 commands. `go_to` sends field X/Y metres and heading degrees to the firmware.
+Waypoint control requires healthy onboard telemetry and visibility of the car's
+own marker. `car.wait_for_position()` waits for desktop visibility when your
+planning code also needs field feedback; `car.read_status().pose_fresh` checks
+the robot's separate onboard reception.
 
 ## Stored robot configuration
 

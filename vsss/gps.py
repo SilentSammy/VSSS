@@ -230,3 +230,19 @@ class GPS:
             self._thread.join(timeout=1)
             if type(self)._instance is self:
                 type(self)._instance = None
+
+
+class _LazyGPS:
+    """Module-level field access without starting a receiver during import."""
+    def __getattr__(self, name):
+        return getattr(GPS(), name)
+
+    def close(self):
+        """Release an existing receiver without creating one."""
+        with GPS._instance_lock:
+            instance = GPS._instance
+        if instance is not None:
+            instance.close()
+
+
+gps = _LazyGPS()
