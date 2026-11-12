@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from ble_protocol import RobotStatus
-from experiments.calibrate import calibrate, assess, main, response_between
+from tools.calibrate import calibrate, assess, main, response_between, CalibrationQualityError
 from gps import Pose
 
 
@@ -16,7 +16,7 @@ class SimulatedRobot:
 
     def __init__(self):
         self.now = 0.
-        self.x, self.y, self.heading = 0., .75, 90.
+        self.x, self.y, self.heading = 0., 0., 90.
         self.command = (0., 0., 0.)
         self.yaw_gain = 60.
         self.yaw_coast_rate = 0.
@@ -77,8 +77,8 @@ class CalibrationTests(unittest.TestCase):
     def run_simulation(self, auto_apply, **pulse_settings):
         sim = SimulatedRobot()
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=sim.sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
             result = calibrate(sim, sim, Path(temporary), auto_apply, **pulse_settings)
             self.assertTrue((Path(temporary) / 'original.json').exists())
             self.assertTrue((Path(temporary) / 'frames.csv').exists())
@@ -111,12 +111,38 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(result['quality_errors'], [])
 
     def test_invalid_pulse_parameters_do_not_connect(self):
-        with patch('experiments.calibrate.Car') as car_type:
+        with patch('tools.calibrate.Car') as car_type:
             for arguments in (['--translation-level', '.9'], ['--yaw-level', '.17'],
-                              ['--pulse-seconds', '1.3'], ['--yaw-seconds', '0']):
+                              ['--pulse-seconds', '1.3'], ['--yaw-seconds', '0'],
+                              ['--center', '0', '1.5', '90']):
                 with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                     main(['--car', '1', *arguments])
             car_type.assert_not_called()
+
+    def test_upper_track_center_uses_upper_track_safety_region(self):
+        sim = SimulatedRobot()
+        sim.y = .75
+        sim.frame()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
+            result = calibrate(sim, sim, Path(temporary), center=(0, .75, 90))
+            self.assertEqual(result['quality_errors'], [])
+            self.assertGreater(sim.y, .2)
+            original = json.loads((Path(temporary) / 'original.json').read_text())
+            self.assertEqual(original['center'], [0, .75, 90])
+
+    def test_upper_track_center_rejects_start_below_inner_guard(self):
+        sim = SimulatedRobot()
+        sim.y = .19
+        sim.frame()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
+            with self.assertRaisesRegex(RuntimeError, 'inner boundary'):
+                calibrate(sim, sim, Path(temporary), center=(0, .75, 90))
+        self.assertEqual(sim.command, (0., 0., 0.))
+        self.assertFalse(sim.writes)
 
     def test_heading_wrap(self):
         self.assertEqual(response_between(Pose(0, 0, 179), Pose(0, 0, -179))[2], 2.)
@@ -135,8 +161,8 @@ class CalibrationTests(unittest.TestCase):
             if sim.now > 1.1:
                 sim.is_connected = False
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=interrupted_sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=interrupted_sleep):
             with self.assertRaisesRegex(RuntimeError, 'BLE disconnected'):
                 calibrate(sim, sim, Path(temporary), True)
             self.assertTrue((Path(temporary) / 'original.json').exists())
@@ -149,8 +175,8 @@ class CalibrationTests(unittest.TestCase):
         sim.x = .7
         sim.frame()
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=sim.sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
             with self.assertRaisesRegex(RuntimeError, 'boundary'):
                 calibrate(sim, sim, Path(temporary), True)
         self.assertEqual(sim.command, (0., 0., 0.))
@@ -160,8 +186,8 @@ class CalibrationTests(unittest.TestCase):
         sim = SimulatedRobot()
         sim.yaw_gain = 1000.
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=sim.sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
             with self.assertRaisesRegex(RuntimeError, 'rotation exceeded'):
                 calibrate(sim, sim, Path(temporary), True, yaw_level=.3, pulse_seconds=1.1)
             self.assertFalse((Path(temporary) / 'applied.json').exists())
@@ -172,8 +198,8 @@ class CalibrationTests(unittest.TestCase):
         sim = SimulatedRobot()
         sim.yaw_coast_rate = 150.
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=sim.sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
             with self.assertRaisesRegex(RuntimeError, 'rotation exceeded.*settling'):
                 calibrate(sim, sim, Path(temporary), True)
             self.assertFalse((Path(temporary) / 'applied.json').exists())
@@ -190,8 +216,8 @@ class CalibrationTests(unittest.TestCase):
                 triggered = True
                 sim.outage_until = sim.now + .3
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=interrupted_sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=interrupted_sleep):
             result = calibrate(sim, sim, Path(temporary), False)
         self.assertTrue(triggered)
         self.assertEqual(result['quality_errors'], [])
@@ -204,8 +230,8 @@ class CalibrationTests(unittest.TestCase):
             if any(sim.command):
                 sim.outage_until = sim.now + 1.
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=interrupted_sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=interrupted_sleep):
             with self.assertRaisesRegex(RuntimeError, 'lost telemetry'):
                 calibrate(sim, sim, Path(temporary), True)
         self.assertEqual(sim.command, (0., 0., 0.))
@@ -221,8 +247,8 @@ class CalibrationTests(unittest.TestCase):
                 triggered = True
                 sim.outage_until = sim.now + .2
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=interrupted_sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=interrupted_sleep):
             result = calibrate(sim, sim, Path(temporary), False)
         self.assertTrue(triggered)
         self.assertEqual(result['samples'], 6)
@@ -243,8 +269,8 @@ class CalibrationTests(unittest.TestCase):
             return status
         sim.read_status = status_with_reset
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=sim.sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=sim.sleep):
             with self.assertRaisesRegex(RuntimeError, 'counter reset'):
                 calibrate(sim, sim, Path(temporary), True)
             self.assertFalse((Path(temporary) / 'applied.json').exists())
@@ -259,8 +285,8 @@ class CalibrationTests(unittest.TestCase):
             if sim.now > 1.1:
                 sim.connection_generation = 2
         with tempfile.TemporaryDirectory() as temporary, \
-                patch('experiments.calibrate.time.monotonic', side_effect=lambda: sim.now), \
-                patch('experiments.calibrate.time.sleep', side_effect=reconnecting_sleep):
+                patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                patch('tools.calibrate.time.sleep', side_effect=reconnecting_sleep):
             with self.assertRaisesRegex(RuntimeError, 'session reconnected'):
                 calibrate(sim, sim, Path(temporary), True)
         self.assertEqual(sim.command, (0., 0., 0.))
@@ -271,7 +297,7 @@ class CalibrationTests(unittest.TestCase):
             path = Path(temporary) / 'original.json'
             matrix = ((1.1, 0, 0), (0, 1, 0), (0, 0, 1))
             path.write_text(json.dumps({'trim': matrix}), encoding='utf-8')
-            with patch('experiments.calibrate.Car') as car_type, patch('experiments.calibrate.GPS'):
+            with patch('tools.calibrate.Car') as car_type, patch('tools.calibrate.GPS'):
                 car = car_type.return_value.__enter__.return_value
                 car.set_trim.return_value = matrix
                 main(['--car', '1', '--restore-trim', str(path)])
@@ -284,10 +310,63 @@ class CalibrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'empty.json'
             path.write_text('{}', encoding='utf-8')
-            with patch('experiments.calibrate.Car') as car_type:
+            with patch('tools.calibrate.Car') as car_type:
                 with self.assertRaises(SystemExit):
                     main(['--car', '1', '--restore-trim', str(path)])
                 car_type.assert_not_called()
+
+    def test_apply_saved_proposal_and_reset_do_not_move(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'proposal.json'
+            matrix = ((1.1, 0, 0), (0, 1, 0), (0, 0, 1))
+            path.write_text(json.dumps({'matrix': matrix, 'quality_errors': []}), encoding='utf-8')
+            for args, expected in ((['--apply', str(path)], matrix),
+                                   (['--reset'], ((1, 0, 0), (0, 1, 0), (0, 0, 1)))):
+                with patch('tools.calibrate.Car') as car_type, patch('tools.calibrate.GPS'):
+                    car = car_type.return_value.__enter__.return_value
+                    car.set_trim.return_value = expected
+                    main(['--car', '1', *args])
+                    car.set_trim.assert_called_once_with(expected)
+                    car.set_velocity.assert_not_called()
+                    car.go_to.assert_not_called()
+
+    def test_apply_rejects_failed_proposal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'proposal.json'
+            path.write_text(json.dumps({'matrix': [[1,0,0],[0,1,0],[0,0,1]],
+                                        'quality_errors': ['bad fit']}), encoding='utf-8')
+            with patch('tools.calibrate.Car') as car_type:
+                with self.assertRaises(SystemExit):
+                    main(['--car', '1', '--apply', str(path)])
+                car_type.assert_not_called()
+
+    def test_prompt_and_extra_json(self):
+        for answer, should_apply in (('y', True), ('n', False)):
+            sim = SimulatedRobot()
+            with tempfile.TemporaryDirectory() as temporary, \
+                    patch('tools.calibrate.time.monotonic', side_effect=lambda: sim.now), \
+                    patch('tools.calibrate.time.sleep', side_effect=sim.sleep), \
+                    patch('builtins.input', return_value=answer):
+                directory = Path(temporary) / 'run'
+                directory.mkdir()
+                saved = Path(temporary) / 'saved.json'
+                result = calibrate(sim, sim, directory, ask_apply=True, save_json=saved)
+                self.assertEqual(json.loads(saved.read_text())['matrix'], [list(row) for row in result['matrix']])
+                self.assertEqual(bool(sim.writes), should_apply)
+
+    def test_quality_failure_has_clear_message_and_no_traceback(self):
+        import io
+        from contextlib import redirect_stderr
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch('tools.calibrate.Car'), patch('tools.calibrate.GPS'), \
+                patch('tools.calibrate.calibrate', side_effect=CalibrationQualityError('change 0.164 exceeds 0.15')):
+            output = io.StringIO()
+            with redirect_stderr(output), self.assertRaises(SystemExit) as error:
+                main(['--car', '1', '--output', str(Path(temporary) / 'run')])
+            self.assertEqual(error.exception.code, 1)
+            self.assertIn('No trim was applied', output.getvalue())
+            self.assertIn('change 0.164 exceeds 0.15', output.getvalue())
+            self.assertNotIn('Traceback', output.getvalue())
 
 
 if __name__ == '__main__':

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vsss-robot-client"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["bleak", "pynput", "inputs"]
+
+[project.scripts]
+calibrate = "tools.calibrate:main"
+
+[tool.setuptools]
+packages = ["tools"]
+py-modules = ["ble_protocol", "ble_worker", "car", "gps", "mecanum_client", "telemetry_listener", "user_input"]

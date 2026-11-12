@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VSSS blocks lab</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="node_modules/blockly/blockly_compressed.js"></script>
+  <script defer src="node_modules/blockly/blocks_compressed.js"></script>
+  <script defer src="node_modules/blockly/python_compressed.js"></script>
+  <script defer src="node_modules/blockly/msg/en.js"></script>
+  <script defer src="vsss_blocks.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header><div><span class="eyebrow">VSSS / STUDENT LAB</span><h1>Program your car with blocks.</h1><p>Connect blocks, run your car, and explore the Python behind it.</p></div><span class="badge">LIVE ROBOT</span></header>
+  <nav aria-label="Program actions"><button id="run">▶ Run live</button><button id="stop">■ Stop</button><button id="car-example">Car example</button><button id="example">Python example</button><button id="save">Save blocks</button><button id="load">Open blocks</button><button id="export">Export Python</button><input type="file" id="file" accept=".json" hidden><span id="status" role="status">Ready to run live</span></nav>
+  <main><section class="editor"><h2>01 / Your blocks</h2><div id="blocklyDiv"></div></section><aside><section><h2>02 / Generated Python</h2><p class="hint">Run live controls the selected real car. Check the car number and clear its path before running.</p><pre id="code"></pre></section><section><h2>03 / Live output</h2><pre id="output" aria-live="polite">Ready. Join the embedded lab Wi-Fi and enable Bluetooth.</pre></section><p class="hint">Stop ends the program, stops the car, and disconnects. Closing this page also ends the run. Fresh camera position is required for motion.</p></aside></main>
+</body>
+</html>

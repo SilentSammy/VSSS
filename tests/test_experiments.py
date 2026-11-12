@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from ble_protocol import RobotStatus
-from experiments.run import main
+from tools.run import main
 
 
 class ExperimentTests(unittest.TestCase):
@@ -15,9 +15,9 @@ class ExperimentTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.output = Path(self.directory.name) / 'samples.csv'
-        self.car_type = self.enterContext(patch('experiments.run.Car'))
-        self.gps_type = self.enterContext(patch('experiments.run.GPS'))
-        self.enterContext(patch('experiments.run.time.monotonic', return_value=0))
+        self.car_type = self.enterContext(patch('tools.run.Car'))
+        self.gps_type = self.enterContext(patch('tools.run.GPS'))
+        self.enterContext(patch('tools.run.time.monotonic', return_value=0))
         self.car = self.car_type.return_value.__enter__.return_value
         self.car.read_trim.return_value = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
         self.car.read_controller.return_value = {}

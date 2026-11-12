@@ -18,6 +18,7 @@ vision computer. The default service uses UDP `5000` for data and `5001` for
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -e .
 ```
 
 Join the `embedded` lab hotspot and enable Bluetooth. Car 1 advertises as `car1`
@@ -77,26 +78,36 @@ The experiment runner reads robot configuration/status and records pose plus
 firmware mode/fault. Motion is preview-only unless `--execute` is present:
 
 ```powershell
-python -m experiments.run --waypoint 0 .5 90
-python -m experiments.run --waypoint 0 .5 90 --execute
-python -m experiments.run --velocity .2 0 0 --duration 2 --execute
-python -m experiments.run --observe 10
-python -m experiments.run --trim trim.json --controller controller.json
+python -m tools.run --waypoint 0 .5 90
+python -m tools.run --waypoint 0 .5 90 --execute
+python -m tools.run --velocity .2 0 0 --duration 2 --execute
+python -m tools.run --observe 10
+python -m tools.run --trim trim.json --controller controller.json
 ```
 
-For the supervised upper-half track, the quick calibration runs short signed
-velocity pulses and saves its frames, original settings, and trim proposal:
+Calibration runs signed velocity pulses around the field center `(0, 0, 90)`
+by default and saves its frames, original settings, and trim proposal. For the
+supervised upper-half track, specify `--center 0 .75 90`:
 
 ```powershell
-python -m experiments.calibrate --car 1
-python -m experiments.calibrate --car 1 --auto-apply
-python -m experiments.calibrate --car 1 --translation-level .5 --yaw-level .2 --pulse-seconds .8 --yaw-seconds .55
-python -m experiments.calibrate --car 1 --restore-trim experiments/runs/RUN/original.json
+calibrate --car 1
+calibrate --car 1 --auto-apply
+calibrate --car 1 --ask-apply --save-json proposal.json
+calibrate --car 1 --center 0 .75 90 --translation-level .5 --yaw-level .2 --pulse-seconds .8 --yaw-seconds .7
+calibrate --car 1 --apply proposal.json
+calibrate --car 1 --apply tools/runs/RUN/original.json
+calibrate --car 1 --reset
 ```
 
-`--auto-apply` writes a trim only if the run and quality checks pass. The script
-stops on lost telemetry or boundary risk; controller gains are not retuned by
-these pulses. The restore command reads back the saved trim without moving.
+Each measurement prints the proposal and saves a recording in `tools/runs/`;
+`--save-json` also saves it at a chosen path. `--auto-apply` applies a passing
+proposal without prompting, while `--ask-apply` requests confirmation. Apply a
+saved proposal or original trim with `--apply`, or reset to the identity matrix
+with `--reset`; these actions do not move the car. The script stops on lost
+telemetry or boundary risk; controller gains are not retuned by these pulses.
+The guard follows the selected center within field margins; the car must start
+inside that guarded region. Rotation pulses default to 0.7 seconds and remain
+subject to the 70-degree rotation guard, including during settling.
 
 Velocity trials stop if pose telemetry becomes stale or the car crosses configured
 bounds. Waypoint trials send one target to the firmware and observe its BLE status;

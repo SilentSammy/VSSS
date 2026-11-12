@@ -1,0 +1,8 @@
+{
+  "name": "blockly-python-demo",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {"start": "python server.py", "test": "python -m unittest test_live_runtime -v && node smoke_test.cjs"},
+  "dependencies": {"blockly": "13.4.0"},
+  "devDependencies": {"playwright": "1.56.1"}
+}

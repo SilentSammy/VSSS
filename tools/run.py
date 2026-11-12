@@ -42,7 +42,7 @@ def parser():
     result.add_argument("--controller", type=Path,
                         help="JSON controller mapping to store; partial updates are allowed")
     result.add_argument("--output", type=Path,
-                        help="CSV path; default experiments/runs/<timestamp>.csv")
+                        help="CSV path; default tools/runs/<timestamp>.csv")
     result.add_argument("--execute", action="store_true",
                         help="enable the requested velocity or waypoint motion")
     return result

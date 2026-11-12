@@ -1,6 +1,6 @@
-"""Guarded, short trim calibration; never applies proposals without --auto-apply.
+"""Measure, apply, or reset a robot's trim calibration.
 
-The default motion region is the upper half of the 160 cm field. Run only with
+The default motion region is centered on the field. Run only with
 the marker attached and a clear, supervised track. Connection/preflight time is
 outside the 30-second motion budget. Interrupted runs keep their recordings.
 """
@@ -9,6 +9,7 @@ import csv
 from dataclasses import asdict
 import json
 import math
+import sys
 from pathlib import Path
 from queue import Empty, SimpleQueue
 import time
@@ -19,17 +20,23 @@ from mecanum_client import normalize_trim_matrix
 from .fit_trim import fit
 
 
-PULSE_SECONDS = .55
+PULSE_SECONDS = .8
 SETTLE_SECONDS = .85
 MOTION_BUDGET = 30.
 INNER_X = .60
-INNER_Y_MIN, INNER_Y_MAX = .20, 1.30
-CENTER = (0., .75, 90.)
+INNER_Y = 1.30
+LOCAL_Y_RADIUS = .55
+CENTER = (0., 0., 90.)
+YAW_SECONDS = .70
 MAX_PULSE_ROTATION_DEG = 70.
 
 
 class PoseUnavailable(RuntimeError):
     """The host does not currently have a usable, fresh robot pose."""
+
+
+class CalibrationQualityError(RuntimeError):
+    """Measurements produced a proposal that must not be applied."""
 
 
 def angle_delta(a, b):
@@ -71,16 +78,18 @@ def assess(rows, result, original):
             sum(abs(v) for v in row) for row in inv)
         if condition > 5:
             errors.append('response matrix is poorly conditioned (%.1f)' % condition)
-    change = max(abs(result['matrix'][r][c] - original[r][c])
-                 for r in range(3) for c in range(3))
+    change, r, c = max((abs(result['matrix'][r][c] - original[r][c]), r, c)
+                       for r in range(3) for c in range(3))
     if change > .15:
-        errors.append('proposed matrix change exceeds 0.15')
+        errors.append('proposed matrix change %.3f exceeds 0.15 at row %d, column %d (%.3f to %.3f)' %
+                      (change, r + 1, c + 1, original[r][c], result['matrix'][r][c]))
     return errors
 
 
 class Monitor:
-    def __init__(self, car, gps, writer, events, initial_packets):
+    def __init__(self, car, gps, writer, events, initial_packets, center=CENTER):
         self.car, self.gps, self.writer, self.events = car, gps, writer, events
+        self.center = center
         self.previous = None
         self.velocity = (0., 0.)
         self.phase = 'preflight'
@@ -135,8 +144,10 @@ class Monitor:
         if not self.previous or feedback.received_at != self.previous[0]:
             self.previous = (feedback.received_at, pose.x, pose.y)
         px, py = pose.x + .5*self.velocity[0], pose.y + .5*self.velocity[1]
-        if not (-INNER_X < pose.x < INNER_X and INNER_Y_MIN < pose.y < INNER_Y_MAX and
-                -INNER_X < px < INNER_X and INNER_Y_MIN < py < INNER_Y_MAX):
+        min_x, max_x = max(-INNER_X, self.center[0] - INNER_X), min(INNER_X, self.center[0] + INNER_X)
+        min_y, max_y = max(-INNER_Y, self.center[1] - LOCAL_Y_RADIUS), min(INNER_Y, self.center[1] + LOCAL_Y_RADIUS)
+        if not (min_x < pose.x < max_x and min_y < pose.y < max_y and
+                min_x < px < max_x and min_y < py < max_y):
             raise RuntimeError('actual or predicted position reached the inner boundary')
         return pose
 
@@ -191,7 +202,7 @@ def recenter(monitor, deadline):
     car = monitor.car
     monitor.phase = 'recenter'
     monitor.check(deadline)
-    car.go_to(*CENTER)
+    car.go_to(*monitor.center)
     saw_position = False
     until = min(deadline, time.monotonic() + 7.)
     next_status = 0.
@@ -211,8 +222,9 @@ def recenter(monitor, deadline):
         car.stop()
 
 
-def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
-              yaw_level=.15, pulse_seconds=PULSE_SECONDS, yaw_seconds=None):
+def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
+              yaw_level=.20, pulse_seconds=PULSE_SECONDS, yaw_seconds=YAW_SECONDS,
+              ask_apply=False, save_json=None, center=CENTER):
     if yaw_seconds is None:
         yaw_seconds = pulse_seconds
     original_trim = car.read_trim()
@@ -224,7 +236,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
         json.dump({'trim': original_trim, 'controller': original_controller,
                    'status': asdict(status), 'pulse_seconds': pulse_seconds,
                    'translation_level': translation_level, 'yaw_level': yaw_level,
-                   'yaw_seconds': yaw_seconds},
+                   'yaw_seconds': yaw_seconds, 'center': center},
                   destination, indent=2)
     events = SimpleQueue()
     with (directory / 'frames.csv').open('x', newline='', encoding='utf-8') as recording, \
@@ -234,10 +246,10 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
                          'usable', 'x_m', 'y_m', 'heading_deg'))
         pulse_writer = csv.DictWriter(pulse_file, fieldnames=(
             'axis', 'command', 'command_x', 'command_y', 'command_w',
-            'forward_m', 'left_m', 'heading_deg', 'frames'))
+            'forward_m', 'left_m', 'heading_deg', 'frames', 'duration_s'))
         pulse_writer.writeheader()
         pulse_file.flush()
-        monitor = Monitor(car, gps, writer, events, status.packet_count)
+        monitor = Monitor(car, gps, writer, events, status.packet_count, center)
         try:
             pose = car.wait_for_position(timeout=10)
             if math.hypot(pose.x-status.x, pose.y-status.y) > .15 or abs(angle_delta(pose.angle, status.angle)) > 20:
@@ -246,7 +258,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
             monitor.wait_stopped(.5, None)
             deadline = time.monotonic() + MOTION_BUDGET
             pose = monitor.check(deadline)
-            if math.hypot(pose.x-CENTER[0], pose.y-CENTER[1]) > .08 or abs(angle_delta(pose.angle, CENTER[2])) > 8:
+            if math.hypot(pose.x-center[0], pose.y-center[1]) > .08 or abs(angle_delta(pose.angle, center[2])) > 8:
                 print('recentering before pulses', flush=True)
                 recenter(monitor, deadline)
             rows = []
@@ -277,7 +289,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
                         if attempt == 2:
                             raise PoseUnavailable('active pulse lost telemetry on three attempts')
                         pose = monitor.wait_stopped(SETTLE_SECONDS, deadline, start_pose.angle)
-                        if math.hypot(pose.x-CENTER[0], pose.y-CENTER[1]) > .12:
+                        if math.hypot(pose.x-center[0], pose.y-center[1]) > .12:
                             recenter(monitor, deadline)
                     monitor.phase = 'settle'
                     end_pose = monitor.wait_stopped(SETTLE_SECONDS, deadline, start_pose.angle)
@@ -287,7 +299,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
                     row = dict(axis=axis, command=command[axis], command_x=command[0],
                                command_y=command[1], command_w=command[2],
                                forward_m=forward, left_m=left, heading_deg=heading,
-                               frames=len(samples))
+                               frames=len(samples), duration_s=duration)
                     rows.append(row)
                     pulse_writer.writerow(row)
                     pulse_file.flush()
@@ -295,7 +307,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
                           'frames', len(samples), flush=True)
                 # Counter-pulses ordinarily return close to center; recenter if not.
                 pose = monitor.check(deadline)
-                if math.hypot(pose.x-CENTER[0], pose.y-CENTER[1]) > .08 or abs(angle_delta(pose.angle, CENTER[2])) > 8:
+                if math.hypot(pose.x-center[0], pose.y-center[1]) > .08 or abs(angle_delta(pose.angle, center[2])) > 8:
                     print('recentering', flush=True)
                     recenter(monitor, deadline)
             monitor.phase = 'complete'
@@ -309,8 +321,17 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
             with (directory / 'proposal.json').open('x', encoding='utf-8') as destination:
                 json.dump(result, destination, indent=2)
             print(json.dumps(result, indent=2), flush=True)
+            if save_json is not None:
+                with save_json.open('x', encoding='utf-8') as destination:
+                    json.dump(result, destination, indent=2)
+                print('Saved proposal:', save_json, flush=True)
             if errors:
-                raise RuntimeError('calibration quality checks failed: ' + '; '.join(errors))
+                raise CalibrationQualityError('calibration quality checks failed: ' + '; '.join(errors))
+            if ask_apply:
+                try:
+                    auto_apply = input('Apply this trim to the car? [y/N] ').strip().lower() in ('y', 'yes')
+                except EOFError:
+                    print('No answer; proposal not applied.', flush=True)
             if auto_apply:
                 # Write only after saving the proposal and original for rollback.
                 monitor.check()
@@ -332,18 +353,24 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.35,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--car', type=int, required=True)
-    parser.add_argument('--auto-apply', action='store_true', help='apply a proposal that passes quality checks')
-    parser.add_argument('--restore-trim', type=Path,
-                        help='restore the trim in a saved original.json without moving')
-    parser.add_argument('--translation-level', type=float, default=.35,
-                        help='signed x/y pulse magnitude in .05 steps (default: .35, max: .70)')
-    parser.add_argument('--yaw-level', type=float, default=.15,
-                        help='signed yaw pulse magnitude in .05 steps (default: .15, max: .70)')
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--auto-apply', action='store_true', help='apply a proposal that passes quality checks')
+    action.add_argument('--ask-apply', action='store_true', help='ask whether to apply the measured proposal')
+    action.add_argument('--apply', '--restore-trim', dest='apply', type=Path, metavar='JSON',
+                        help='apply a saved proposal or original trim without moving')
+    action.add_argument('--reset', action='store_true', help='reset trim to the identity matrix without moving')
+    parser.add_argument('--save-json', type=Path, metavar='JSON', help='also save the proposal to this new file')
+    parser.add_argument('--translation-level', type=float, default=.50,
+                        help='signed x/y pulse magnitude in .05 steps (default: .50, max: .70)')
+    parser.add_argument('--yaw-level', type=float, default=.20,
+                        help='signed yaw pulse magnitude in .05 steps (default: .20, max: .70)')
     parser.add_argument('--pulse-seconds', type=float, default=PULSE_SECONDS,
-                        help='translation pulse duration (default: .55, max: 1.2 seconds)')
-    parser.add_argument('--yaw-seconds', type=float,
-                        help='yaw pulse duration (default: same as --pulse-seconds)')
-    parser.add_argument('--output', type=Path, help='new run directory (default: experiments/runs/timestamp)')
+                        help='translation pulse duration (default: .8, max: 1.2 seconds)')
+    parser.add_argument('--yaw-seconds', type=float, default=YAW_SECONDS,
+                        help='yaw pulse duration (default: .70 seconds)')
+    parser.add_argument('--center', type=float, nargs=3, metavar=('X', 'Y', 'ANGLE'), default=CENTER,
+                        help='calibration center in meters and degrees (default: 0 0 90)')
+    parser.add_argument('--output', type=Path, help='new run directory (default: tools/runs/timestamp)')
     args = parser.parse_args(argv)
     if args.car < 0:
         parser.error('car id must be nonnegative')
@@ -354,11 +381,15 @@ def main(argv=None):
         parser.error('pulse levels must be .10 to .70 in .05 steps and duration .10 to 1.20 seconds')
     if args.yaw_seconds is not None and (not math.isfinite(args.yaw_seconds) or not .1 <= args.yaw_seconds <= 1.2):
         parser.error('yaw duration must be .10 to 1.20 seconds')
-    if args.restore_trim:
-        if args.auto_apply or args.output:
-            parser.error('--restore-trim cannot be combined with --auto-apply or --output')
-        saved = json.loads(args.restore_trim.read_text(encoding='utf-8'))
+    if not all(math.isfinite(v) for v in args.center) or not (-INNER_X < args.center[0] < INNER_X and -INNER_Y < args.center[1] < INNER_Y):
+        parser.error('center must be finite and inside the field safety margins')
+    if args.apply or args.reset:
+        if args.output or args.save_json:
+            parser.error('--apply and --reset cannot be combined with --output or --save-json')
+        saved = ((1, 0, 0), (0, 1, 0), (0, 0, 1)) if args.reset else json.loads(args.apply.read_text(encoding='utf-8'))
         if isinstance(saved, dict):
+            if saved.get('quality_errors'):
+                parser.error('saved proposal failed quality checks')
             saved = saved.get('trim', saved.get('matrix'))
         if saved is None:
             parser.error('restore file must contain a trim matrix')
@@ -368,7 +399,7 @@ def main(argv=None):
             with Car(args.car, timeout=50) as car:
                 car.stop()
                 actual = car.set_trim(matrix)
-                print('Restored trim:', json.dumps(actual), flush=True)
+                print('Trim applied and read back:', json.dumps(actual), flush=True)
         finally:
             gps.close()
         return
@@ -378,9 +409,16 @@ def main(argv=None):
     gps = GPS(stale_after=.35)
     try:
         with Car(args.car, timeout=50) as car:
-            calibrate(car, gps, directory, args.auto_apply,
-                      translation_level=args.translation_level, yaw_level=args.yaw_level,
-                      pulse_seconds=args.pulse_seconds, yaw_seconds=args.yaw_seconds)
+            try:
+                calibrate(car, gps, directory, args.auto_apply,
+                          translation_level=args.translation_level, yaw_level=args.yaw_level,
+                          pulse_seconds=args.pulse_seconds, yaw_seconds=args.yaw_seconds,
+                          ask_apply=args.ask_apply, save_json=args.save_json, center=args.center)
+            except CalibrationQualityError as error:
+                print('\n%s\nNo trim was applied. Measurements are saved in %s. '
+                      'Check the track and repeat the calibration; avoid applying a failed proposal.'
+                      % (error, directory.resolve()), file=sys.stderr, flush=True)
+                raise SystemExit(1) from None
     finally:
         gps.close()
 

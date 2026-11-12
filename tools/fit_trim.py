@@ -1,7 +1,7 @@
 """Fit a proposed trim matrix from measured signed single-axis pulse responses.
 
 Input CSV columns: command_x, command_y, command_w, forward_m, left_m,
-heading_deg. Responses are net displacement after the car has stopped, rotated
+heading_deg, and optionally duration_s. Responses are net displacement after the car has stopped, rotated
 into its starting robot frame. Input pulses must use the same known trim matrix.
 This offline tool never connects to or moves the car.
 """
@@ -46,6 +46,14 @@ def fit(rows, current_trim):
             raise ValueError('each pulse needs numeric command and response columns') from error
         if not all(math.isfinite(value) for value in command + response):
             raise ValueError('pulse data must be finite')
+        try:
+            duration_value = row.get('duration_s', 1.)
+            duration = float(1. if duration_value in (None, '') else duration_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError('pulse duration must be positive and finite') from error
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError('pulse duration must be positive and finite')
+        response = [value / duration for value in response]
         active = [i for i, value in enumerate(command) if abs(value) > 1e-9]
         if len(active) != 1 or abs(command[active[0]]) > 1:
             raise ValueError('each pulse must command exactly one axis within [-1, 1]')
