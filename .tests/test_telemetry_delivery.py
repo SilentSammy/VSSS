@@ -4,7 +4,7 @@ import socket
 import time
 import unittest
 
-from gps import GPS
+from vsss.gps import GPS
 
 
 class DeliveryTests(unittest.TestCase):

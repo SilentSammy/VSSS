@@ -12,8 +12,8 @@ import math
 from pathlib import Path
 import time
 
-from car import Car
-from gps import GPS
+from vsss.car import Car
+from vsss.gps import GPS
 
 
 FIELDS = (

@@ -14,10 +14,10 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 import time
 
-from car import Car
-from gps import GPS
-from mecanum_client import normalize_trim_matrix
-from .fit_trim import fit
+from vsss.car import Car
+from vsss.gps import GPS
+from vsss._ble_client import normalize_trim_matrix
+from ._fit_trim import fit
 
 
 PULSE_SECONDS = .8
@@ -72,7 +72,7 @@ def assess(rows, result, original):
     else:
         # Normalize output units before measuring inverse conditioning.
         normalized = [[response[r][c] / response[r][r] for c in range(3)] for r in range(3)]
-        from .fit_trim import inverse
+        from ._fit_trim import inverse
         inv = inverse(normalized)
         condition = max(sum(abs(v) for v in row) for row in normalized) * max(
             sum(abs(v) for v in row) for row in inv)

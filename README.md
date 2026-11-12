@@ -24,8 +24,13 @@ pip install -e .
 Join the `embedded` lab hotspot and enable Bluetooth. Car 1 advertises as `car1`
 and uses marker ID 1.
 
+The student API is in the `vsss` package: import `Car` and `GPS` from `vsss`.
+Keyboard and gamepad helpers are available as `from vsss import input`.
+Legacy `from car import Car` and `from gps import GPS` imports remain available
+after installation for existing scripts.
+
 ```python
-from car import Car
+from vsss import Car
 
 with Car(1) as car:
     print(car.pose)
@@ -69,7 +74,7 @@ Controller keys are `kp_dist`, `kp_heading`, `max_speed`, `max_w`, `horizon`,
 The integrated manual controller remains available:
 
 ```powershell
-python mecanum_client.py
+vsss-manual
 ```
 
 `P` switches between keyboard/gamepad control and the onboard waypoint console.
@@ -116,10 +121,16 @@ they do not run a second controller on the laptop.
 ## Telemetry check
 
 ```powershell
-python telemetry_listener.py --server 192.168.12.1
+vsss-telemetry --server 192.168.12.1
+vsss-telemetry --server 192.168.12.1 --duration 30 --output telemetry.jsonl
+vsss-telemetry --port 5000 --duration 30 --output broadcast.jsonl
 ```
 
-Omit `--server` to listen for the legacy broadcast on UDP 5000.
+Omit `--server` to listen for broadcast on UDP 5000. Unicast uses an automatic
+local port unless `--listen-port` is supplied; `--subscription-port` overrides
+the server subscription port. Recordings contain one JSON object per valid
+packet, including the receive time, sender, and original packet. Use `--quiet`
+to suppress individual packets or `vsss-telemetry --help` for all options.
 
 ## Firmware and tests
 
@@ -130,5 +141,5 @@ modules first, `robot_config.json` next, and `main.py` last. The native USB-safe
 Safe fake-BLE and synthetic-telemetry tests never move a physical robot:
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s .tests -v
 ```

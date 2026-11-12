@@ -6,8 +6,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from car import Car
-from gps import GPS, Pose, Position
+from vsss.car import Car
+from vsss.gps import GPS, Pose, Position
 from mp.axis_trim import AxisTrim
 
 
@@ -149,7 +149,7 @@ class GPSTests(unittest.TestCase):
     def test_car_uses_same_gps_and_number_and_cleans_up(self):
         self.send(self.packet())
         self.wait_for(lambda: self.gps.board_detected)
-        with patch('car.MecanumBLEClient') as client_type:
+        with patch('vsss.car.MecanumBLEClient') as client_type:
             client = client_type.return_value
             client.is_connected = True
             with Car(4) as car:
@@ -171,14 +171,14 @@ class GPSTests(unittest.TestCase):
             client.disconnect.assert_called_once()
 
     def test_connect_does_not_overwrite_robot_configuration(self):
-        with patch('car.MecanumBLEClient') as client_type:
+        with patch('vsss.car.MecanumBLEClient') as client_type:
             client_type.return_value.is_connected = True
             with Car(1):
                 client_type.return_value.set_trim.assert_not_called()
                 client_type.return_value.set_controller.assert_not_called()
 
     def test_failed_connection_is_closed(self):
-        with patch('car.MecanumBLEClient') as client_type:
+        with patch('vsss.car.MecanumBLEClient') as client_type:
             client_type.return_value.wait_until_connected.side_effect = TimeoutError
             with self.assertRaises(TimeoutError):
                 Car(4)
@@ -202,7 +202,7 @@ class GPSTests(unittest.TestCase):
         self.gps.remove_listener(received.append)
 
     def test_position_diagnostics_are_reported_once_and_recover(self):
-        with patch('car.MecanumBLEClient'), patch('builtins.print') as output:
+        with patch('vsss.car.MecanumBLEClient'), patch('builtins.print') as output:
             with Car(4) as car:
                 self.assertIsNone(car.pose)
                 self.assertIsNone(car.pose)
@@ -219,7 +219,7 @@ class GPSTests(unittest.TestCase):
                 self.assertIn('Marker 4', output.call_args.args[0])
 
     def test_wait_for_position_timeout_cleans_up_connection(self):
-        with patch('car.MecanumBLEClient') as client_type:
+        with patch('vsss.car.MecanumBLEClient') as client_type:
             with self.assertRaisesRegex(TimeoutError, 'No camera telemetry'):
                 with Car(4) as car:
                     car.wait_for_position(.01)

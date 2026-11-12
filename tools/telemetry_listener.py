@@ -1,7 +1,10 @@
 """Receive pose telemetry by reliable unicast subscription or legacy broadcast."""
 
 import argparse
+from contextlib import ExitStack
 import json
+import math
+from pathlib import Path
 import socket
 import time
 
@@ -39,10 +42,18 @@ def format_packet(message, sender, received_at):
                 raise ValueError(f"invalid marker: {marker!r}") from error
         positions = " | ".join(formatted)
 
+    balls = message.get('balls')
+    if isinstance(balls, list) and balls:
+        try:
+            positions += ' | ' + ' | '.join(
+                f"ball: x={float(ball['x']):+.3f}m, y={float(ball['y']):+.3f}m"
+                for ball in balls)
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError('invalid ball coordinates') from error
     return f"{sender[0]} board={board}{age} | {positions}"
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--bind",
@@ -53,7 +64,7 @@ def main():
         "--port",
         type=int,
         default=DEFAULT_PORT,
-        help=f"telemetry UDP port (default: {DEFAULT_PORT})",
+        help=f"broadcast data port, or unicast service data port (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
         "--server",
@@ -64,33 +75,56 @@ def main():
         type=int,
         help="server subscription port (default: telemetry port + 1)",
     )
-    args = parser.parse_args()
+    parser.add_argument("--listen-port", type=int,
+                        help="local UDP port in unicast mode (default: automatic)")
+    parser.add_argument("--duration", type=float, metavar="SECONDS",
+                        help="stop after this many seconds (default: until Ctrl+C)")
+    parser.add_argument("--output", type=Path, metavar="FILE",
+                        help="record valid packets as JSON Lines in a new file")
+    parser.add_argument("--quiet", action="store_true", help="suppress individual packet output")
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error('--port must be between 1 and 65535')
+    if args.subscription_port is not None and not 1 <= args.subscription_port <= 65535:
+        parser.error('--subscription-port must be between 1 and 65535')
+    if args.server and args.subscription_port is None and args.port == 65535:
+        parser.error('--subscription-port is required when --port is 65535')
+    if args.listen_port is not None and (not args.server or not 0 <= args.listen_port <= 65535):
+        parser.error('--listen-port requires --server and must be between 0 and 65535')
+    if args.subscription_port is not None and not args.server:
+        parser.error('--subscription-port requires --server')
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
+        parser.error('--duration must be positive and finite')
 
     received = 0
     invalid = 0
 
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+    with ExitStack() as stack:
+        udp = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
         udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listen_port = 0 if args.server else args.port
+        listen_port = (args.listen_port or 0) if args.server else args.port
         try:
             udp.bind((args.bind, listen_port))
         except PermissionError as error:
             raise SystemExit(
-                f"Cannot listen on UDP port {args.port}: Windows denied the bind. "
-                "Another process may already own that port. Choose a free port, "
-                f"for example --port 5050, and give main.py the same --port value."
+                f"Cannot listen on UDP port {listen_port}: Windows denied the bind. "
+                "Another process may already own that port. Choose a free local port."
             ) from error
-        udp.settimeout(0.5 if args.server else None)
+        recording = stack.enter_context(args.output.open('x', encoding='utf-8')) if args.output else None
+        udp.settimeout(0.2)
         subscription_port = args.subscription_port or args.port + 1
         subscription = (args.server, subscription_port) if args.server else None
         next_renewal = 0.0
         if subscription:
-            print(f"Subscribing to {args.server}:{args.port}; Ctrl+C to stop.")
+            print(f"Subscribing to {args.server}:{subscription_port}; listening on UDP {udp.getsockname()[1]}; Ctrl+C to stop.")
         else:
             print(f"Listening for broadcast telemetry on {args.bind}:{args.port}. Ctrl+C to stop.")
 
+        deadline = time.monotonic() + args.duration if args.duration is not None else None
         try:
             while True:
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
                 if subscription and time.monotonic() >= next_renewal:
                     udp.sendto(b"POSE_SUBSCRIBE", subscription)
                     next_renewal = time.monotonic() + 1.0
@@ -103,7 +137,14 @@ def main():
                     message = json.loads(data)
                     if not isinstance(message, dict):
                         raise ValueError("packet is not a JSON object")
-                    print(format_packet(message, sender, received_at), flush=True)
+                    formatted = format_packet(message, sender, received_at)
+                    if not args.quiet:
+                        print(formatted, flush=True)
+                    if recording is not None:
+                        json.dump({'received_at': received_at, 'sender': sender[0],
+                                   'sender_port': sender[1], 'packet': message}, recording)
+                        recording.write('\n')
+                        recording.flush()
                     received += 1
                 except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
                     invalid += 1

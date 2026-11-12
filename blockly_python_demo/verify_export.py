@@ -15,8 +15,8 @@ def verify(source):
     transport = SimpleNamespace(MecanumBLEClient=MagicMock(return_value=client))
     # Install fake transport before loading car.py, so even its imports cannot
     # load the BLE/UI modules. GPS's class is imported but never instantiated.
-    with patch.dict(sys.modules, {'mecanum_client': transport}):
-        spec = importlib.util.spec_from_file_location('contract_car', root / 'car.py')
+    with patch.dict(sys.modules, {'vsss._ble_client': transport}):
+        spec = importlib.util.spec_from_file_location('contract_car', root / 'vsss' / 'car.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     gps = MagicMock()

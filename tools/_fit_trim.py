@@ -11,7 +11,7 @@ import json
 import math
 from pathlib import Path
 
-from mecanum_client import normalize_trim_matrix
+from vsss._ble_client import normalize_trim_matrix
 
 
 def inverse(matrix):

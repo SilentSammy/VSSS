@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from ble_protocol import RobotStatus
+from vsss._ble_protocol import RobotStatus
 from tools.calibrate import calibrate, assess, main, response_between, CalibrationQualityError
-from gps import Pose
+from vsss.gps import Pose
 
 
 class SimulatedRobot:

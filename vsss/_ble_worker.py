@@ -8,7 +8,7 @@ import json
 import sys
 from threading import Thread
 from bleak import BleakClient, BleakScanner
-from ble_protocol import (CONTROL_UUID, CONTROL_RECONNECT_TELEMETRY, CONTROL_RESTART,
+from vsss._ble_protocol import (CONTROL_UUID, CONTROL_RECONNECT_TELEMETRY, CONTROL_RESTART,
                           CONTROLLER_KEYS, CONTROLLER_STRUCT, CONTROLLER_UUID,
                           LEASE_UUID, STATUS_STRUCT, STATUS_UUID, TRIM_MATRIX_UUID,
                           TRIM_STRUCT, VELOCITY_UUID, WAYPOINT_STRUCT, WAYPOINT_UUID)

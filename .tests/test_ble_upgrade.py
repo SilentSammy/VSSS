@@ -1,6 +1,6 @@
 """Behavior tests for process cleanup, heartbeats, and the firmware lease.
 
-Run with: python -m unittest discover -s tests -v
+Run with: python -m unittest discover -s .tests -v
 No Bluetooth adapter or motor hardware is used.
 """
 import importlib.util
@@ -15,7 +15,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from mecanum_client import MecanumBLEClient, parse_waypoint_input
+from vsss._ble_client import MecanumBLEClient, parse_waypoint_input
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,7 +43,7 @@ class ProcessTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.log = Path(self.temp.name) / 'ble.jsonl'
         self.environment = patch.dict(os.environ, {
-            'PYTHONPATH': str(ROOT / 'tests/fake_ble') + os.pathsep + str(ROOT),
+            'PYTHONPATH': str(ROOT / '.tests/fake_ble') + os.pathsep + str(ROOT),
             'BLE_TEST_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
         })
         self.environment.start()
@@ -249,7 +249,7 @@ class ProcessTests(unittest.TestCase):
     def test_abrupt_parent_exit_stops_and_disconnects_worker(self):
         code = """
 import os, time
-from mecanum_client import MecanumBLEClient
+from vsss._ble_client import MecanumBLEClient
 car = MecanumBLEClient('test')
 car.connect()
 car.wait_until_connected(4)

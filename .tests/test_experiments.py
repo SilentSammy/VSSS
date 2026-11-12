@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from ble_protocol import RobotStatus
+from vsss._ble_protocol import RobotStatus
 from tools.run import main
 
 

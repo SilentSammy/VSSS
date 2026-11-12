@@ -8,7 +8,7 @@ import sys
 from threading import Condition, Lock, Thread
 import time
 
-from ble_protocol import CONTROLLER_KEYS, RobotStatus, normalize_controller
+from vsss._ble_protocol import CONTROLLER_KEYS, RobotStatus, normalize_controller
 
 def to_byte(val):
     """Convert -1.0 to +1.0 range to 0-255 byte using two's complement"""
@@ -39,7 +39,7 @@ def merge_proportional(cmd_primary, cmd_secondary):
     return cmd_final
 
 def get_user_cmd(gamepad_index: int = 0):
-    import user_input as inp
+    from vsss import input as inp
 
     keymappings = [
         ('w', 's', 'd', 'a', 'e', 'q', 'c'),  # Gamepad 0
@@ -139,7 +139,7 @@ def run_waypoint_console(cars):
 
 def run_manual_demo(cars):
     """Run sampled keyboard/gamepad control until P switches modes."""
-    import user_input as inp
+    from vsss import input as inp
 
     # Discard a P edge captured while the user was typing in the waypoint
     # console (for example, the final letter in "stop").
@@ -257,7 +257,7 @@ class MecanumBLEClient:
         self._ready = False
         self._cached_velocity = None
         self._process = subprocess.Popen(
-            [sys.executable, '-u', str(Path(__file__).with_name('ble_worker.py')), self.device_name],
+            [sys.executable, '-u', '-m', 'vsss._ble_worker', self.device_name],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, encoding='utf-8', bufsize=1, close_fds=True)
         self._reader = Thread(target=self._read_status, args=(self._process,), daemon=True)
@@ -427,7 +427,7 @@ class MecanumBLEClient:
     def __exit__(self, *exc):
         self.disconnect()
 
-if __name__ == "__main__":
+def main():
     import time
 
     print("Mecanum BLE Manual Control Demo")
@@ -464,3 +464,7 @@ if __name__ == "__main__":
     finally:
         for car, _ in cars:
             car.disconnect()  # The worker sends stop before disconnecting.
+
+
+if __name__ == "__main__":
+    main()

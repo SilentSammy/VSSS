@@ -1,6 +1,6 @@
 # Tests and robot experiments
 
-`python -m unittest discover -s tests -v` runs regression tests with simulated
+`python -m unittest discover -s .tests -v` runs regression tests with simulated
 robots and fake BLE. It never moves a physical car.
 
 Robot experiments live in [experiments/run.py](../experiments/run.py).

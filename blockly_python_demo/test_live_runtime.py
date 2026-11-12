@@ -287,11 +287,11 @@ class RealAPIPipelineTests(unittest.TestCase):
         runner = LiveRunner(lease_seconds=2, max_seconds=5)
         try:
             with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
-                    'PYTHONPATH': str(root / 'tests/fake_ble') + os.pathsep + str(root),
+                    'PYTHONPATH': str(root / '.tests/fake_ble') + os.pathsep + str(root),
                     'BLE_TEST_LOG': str(Path(folder) / 'ble.jsonl')}):
                 radio = subprocess.check_output([sys.executable, '-c', 'import bleak; print(bleak.__file__)'],
                                                 cwd=root, text=True).strip()
-                self.assertEqual(Path(radio).resolve(), (root / 'tests/fake_ble/bleak.py').resolve())
+                self.assertEqual(Path(radio).resolve(), (root / '.tests/fake_ble/bleak.py').resolve())
                 publisher.start()
                 run_id = runner.start(PREFIX + '    car.wait_for_position(timeout=1)\n'
                                       '    car.set_velocity(.2, 0, 0)\n'

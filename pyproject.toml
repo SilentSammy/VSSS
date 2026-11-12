@@ -10,7 +10,14 @@ dependencies = ["bleak", "pynput", "inputs"]
 
 [project.scripts]
 calibrate = "tools.calibrate:main"
+vsss-manual = "vsss._ble_client:main"
+vsss-telemetry = "tools.telemetry_listener:main"
 
 [tool.setuptools]
-packages = ["tools"]
-py-modules = ["ble_protocol", "ble_worker", "car", "gps", "mecanum_client", "telemetry_listener", "user_input"]
+packages = ["vsss", "tools"]
+py-modules = ["car", "gps", "mecanum_client"]
+
+[tool.setuptools.package-dir]
+"" = "compat"
+vsss = "vsss"
+tools = "tools"

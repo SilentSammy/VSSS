@@ -1,6 +1,6 @@
 import unittest
 
-from tools.fit_trim import fit
+from tools._fit_trim import fit
 
 
 class TrimFitTests(unittest.TestCase):

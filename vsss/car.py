@@ -1,8 +1,8 @@
 """Student API: BLE commands and camera feedback for a numbered robot."""
 import math
 import time
-from gps import GPS
-from mecanum_client import MecanumBLEClient
+from vsss.gps import GPS
+from vsss._ble_client import MecanumBLEClient
 
 
 class Car:

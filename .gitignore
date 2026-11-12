@@ -1,4 +1,7 @@
 .venv/
+build/
+dist/
+*.egg-info/
 __pycache__/
 *.py[cod]
 vision.log
@@ -7,7 +10,7 @@ telemetry_sample.json
 scene.jpg
 scene_full.jpg
 calibration/runs/
-tests/experiments/runs/
+.tests/experiments/runs/
 .hardware_backup/
 experiments/runs/
 

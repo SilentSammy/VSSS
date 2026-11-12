@@ -1,6 +1,6 @@
 import unittest
 
-from telemetry_listener import format_packet
+from tools.telemetry_listener import format_packet
 
 
 class BallFeedbackTests(unittest.TestCase):
@@ -9,6 +9,7 @@ class BallFeedbackTests(unittest.TestCase):
                   "balls": [{"x": .3, "y": .4}]}
         text = format_packet(packet, ('127.0.0.1', 5000), 0)
         self.assertIn('ID 4', text)
+        self.assertIn('ball: x=+0.300m, y=+0.400m', text)
 
 
 if __name__ == '__main__':
