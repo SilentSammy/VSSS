@@ -29,6 +29,11 @@ Keyboard and gamepad helpers are available as `from vsss import input`.
 Legacy `from car import Car` and `from gps import GPS` imports remain available
 after installation for existing scripts.
 
+Root-level starting scripts: [velocity only](boilerplate_velocity.py),
+[field observation](boilerplate_observe.py), and
+[autonomous control](boilerplate_autonomous.py). The velocity and autonomous
+examples move car 1 when run; edit their commands/target for your exercise.
+
 ```python
 from time import sleep
 from vsss import Car, run
