@@ -140,6 +140,37 @@ class ProviderIntegrationTests(unittest.TestCase):
             server.close()
             sender.join(6)
 
+    def test_concurrent_first_clients_share_provider(self):
+        barrier = threading.Barrier(2)
+        errors = []
+        clients = []
+        def start(name):
+            try:
+                client = MecanumBLEClient(name)
+                clients.append(client)
+                barrier.wait(timeout=5)
+                client.connect()
+                client.wait_until_connected(10)
+            except Exception as error:
+                errors.append(error)
+        threads = [threading.Thread(target=start, args=(name,)) for name in ('car1', 'car2')]
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(15)
+            self.assertFalse(errors, errors)
+            self.assertTrue(all(client.is_connected for client in clients))
+            self.assertEqual(len(clients), 2)
+        finally:
+            for client in clients:
+                client.disconnect()
+
+    def test_provider_restarts_after_idle_shutdown(self):
+        self.car('car1').disconnect()
+        time.sleep(6)
+        self.car('car1').stop()
+
 
 if __name__ == '__main__':
     unittest.main()

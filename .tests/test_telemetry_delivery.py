@@ -1,6 +1,8 @@
 """Client UDP protocol checks, independent of the external vision service."""
 import json
 import socket
+import subprocess
+import sys
 import time
 import unittest
 
@@ -49,6 +51,7 @@ class DeliveryTests(unittest.TestCase):
             legacy.sendto(json.dumps(dict(self.packet, markers=[])).encode(), self.target)
             time.sleep(.03)
         self.assertIsNotNone(self.gps.get_car(1))
+
         data, _ = self.server.recvfrom(65535)
         self.assertEqual(data, b'POSE_SUBSCRIBE')
 
@@ -77,3 +80,22 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(data, b'POSE_SUBSCRIBE')
         self.send_pose()
         self.assertIsNotNone(self.gps.get_car(1))
+
+
+class MultipleReceiverTests(unittest.TestCase):
+    def test_default_subscriptions_from_separate_processes_use_distinct_ports(self):
+        code = ("from vsss import GPS; g=GPS(); print(g.port, flush=True); "
+                "input(); g.close()")
+        processes = []
+        try:
+            for _ in range(2):
+                process = subprocess.Popen([sys.executable, '-u', '-c', code],
+                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, text=True)
+                processes.append(process)
+            ports = [int(process.stdout.readline().strip()) for process in processes]
+            self.assertNotEqual(ports[0], ports[1])
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.communicate('\n', timeout=5)
