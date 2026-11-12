@@ -1,14 +1,13 @@
-"""Student-facing robot client. BLE runs in ble_worker.py on Windows or Linux."""
+"""Student-facing robot client backed by the shared local BLE provider."""
 import atexit
 import json
 import math
-from pathlib import Path
 import subprocess
-import sys
 from threading import Condition, Lock, Thread
 import time
 
 from vsss._ble_protocol import CONTROLLER_KEYS, RobotStatus, normalize_controller
+from vsss._provider_connection import ProviderConnection
 
 def to_byte(val):
     """Convert -1.0 to +1.0 range to 0-255 byte using two's complement"""
@@ -242,6 +241,7 @@ class MecanumBLEClient:
                         print(f"[{self.device_name}] {message['message']}")
                     self._status.notify_all()
         finally:
+            process.mark_done()
             with self._status:
                 if process is self._process:
                     self._ready = False
@@ -256,10 +256,7 @@ class MecanumBLEClient:
         self.last_error = None
         self._ready = False
         self._cached_velocity = None
-        self._process = subprocess.Popen(
-            [sys.executable, '-u', '-m', 'vsss._ble_worker', self.device_name],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True, encoding='utf-8', bufsize=1, close_fds=True)
+        self._process = ProviderConnection(self.device_name)
         self._reader = Thread(target=self._read_status, args=(self._process,), daemon=True)
         self._reader.start()
 

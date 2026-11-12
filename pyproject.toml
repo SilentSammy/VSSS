@@ -12,6 +12,7 @@ dependencies = ["bleak", "pynput", "inputs"]
 calibrate = "tools.calibrate:main"
 vsss-manual = "vsss._ble_client:main"
 vsss-telemetry = "tools.telemetry_listener:main"
+vsss-record = "tools.vsss_recorder:main"
 
 [tool.setuptools]
 packages = ["vsss", "tools"]

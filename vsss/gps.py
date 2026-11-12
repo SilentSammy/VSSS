@@ -51,7 +51,7 @@ class GPS:
                                 .5 if stale_after is None else stale_after,
                                 True if subscribe is None else subscribe)
                 cls._instance = instance
-            elif ((port is not None and port != cls._instance.port) or
+            elif ((port is not None and port != cls._instance.configured_port) or
                   (stale_after is not None and stale_after != cls._instance.stale_after) or
                   (subscribe is not None and subscribe != cls._instance.subscribe)):
                 raise ValueError('GPS is already running with different settings')
@@ -64,6 +64,7 @@ class GPS:
         if type(subscribe) is not bool:
             raise ValueError('subscribe must be a boolean')
         self.subscribe = subscribe
+        self.configured_port = port
         self._lock = Lock()
         self._received = None
         self._latest = None
@@ -76,13 +77,15 @@ class GPS:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            self._socket.bind(('', port))
+            # Subscriptions receive unicast on the sender's local port, so each
+            # process can use a separate socket without competing for UDP 5000.
+            self._socket.bind(('', 0 if subscribe else port))
             self._socket.settimeout(.2)
         except Exception:
             self._socket.close()
             raise
         self.port = self._socket.getsockname()[1]
-        self._subscription_port = self.port + 1
+        self._subscription_port = (port if port else self.port) + 1
         # The canonical lab service is fixed and direct subscription avoids
         # relying on WiFi broadcast discovery. Custom ports still discover.
         self._server = ('192.168.12.1', self._subscription_port) if subscribe and port == 5000 else None

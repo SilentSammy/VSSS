@@ -6,6 +6,9 @@ including os._exit() or an IDE stop, so we stop and disconnect immediately.
 import asyncio
 import json
 import sys
+import time
+import uuid as uuid_module
+import struct
 from threading import Thread
 from bleak import BleakClient, BleakScanner
 from vsss._ble_protocol import (CONTROL_UUID, CONTROL_RECONNECT_TELEMETRY, CONTROL_RESTART,
@@ -53,6 +56,71 @@ class Commands:
             self.closed.set()
 
 
+class TracedBLE:
+    """Report actual GATT operations without changing their ordering."""
+    def __init__(self, client, commands):
+        self.client, self.commands = client, commands
+        self.sequence = 0
+        self.connection_id = uuid_module.uuid4().hex
+
+    @property
+    def is_connected(self):
+        return self.client.is_connected
+
+    async def connect(self):
+        return await self.client.connect()
+
+    async def disconnect(self):
+        return await self.client.disconnect()
+
+    def event(self, phase, operation, uuid, request, **details):
+        names = {VELOCITY_UUID: 'velocity', LEASE_UUID: 'lease', TRIM_MATRIX_UUID: 'trim',
+                 WAYPOINT_UUID: 'waypoint', CONTROL_UUID: 'recovery',
+                 CONTROLLER_UUID: 'controller', STATUS_UUID: 'status'}
+        self.commands.report(event=dict(type='ble', phase=phase, operation=operation,
+                                       uuid=str(uuid), request=request,
+                                       connection_id=self.connection_id,
+                                       characteristic=names.get(uuid, 'unknown'),
+                                       monotonic_ns=time.monotonic_ns(), wall_time_ns=time.time_ns(),
+                                       **details))
+
+    async def write_gatt_char(self, uuid, payload, response=True, reason=None):
+        self.sequence += 1
+        request = self.sequence
+        details = dict(payload_hex=bytes(payload).hex(), response=response, reason=reason or 'command')
+        try:
+            if uuid == VELOCITY_UUID:
+                details['value'] = dict(zip(('x', 'y', 'w'), (v / 128 for v in struct.unpack('<bbb', payload))))
+            elif uuid == WAYPOINT_UUID:
+                details['value'] = dict(zip(('x', 'y', 'angle'), WAYPOINT_STRUCT.unpack(payload)))
+            elif uuid == TRIM_MATRIX_UUID:
+                details['value'] = list(TRIM_STRUCT.unpack(payload))
+            elif uuid == CONTROLLER_UUID:
+                details['value'] = dict(zip(CONTROLLER_KEYS, CONTROLLER_STRUCT.unpack(payload)))
+        except (ValueError, struct.error):
+            pass
+        self.event('start', 'write', uuid, request, **details)
+        try:
+            result = await self.client.write_gatt_char(uuid, payload, response=response)
+        except BaseException as error:
+            self.event('error', 'write', uuid, request, error=str(error) or type(error).__name__)
+            raise
+        self.event('complete', 'write', uuid, request)
+        return result
+
+    async def read_gatt_char(self, uuid):
+        self.sequence += 1
+        request = self.sequence
+        self.event('start', 'read', uuid, request)
+        try:
+            result = await self.client.read_gatt_char(uuid)
+        except BaseException as error:
+            self.event('error', 'read', uuid, request, error=str(error) or type(error).__name__)
+            raise
+        self.event('complete', 'read', uuid, request, payload_hex=bytes(result).hex())
+        return result
+
+
 def read_commands(loop, commands):
     try:
         for line in sys.stdin:
@@ -65,9 +133,9 @@ def read_commands(loop, commands):
             pass  # The event loop has already finished shutting down.
 
 
-async def write(client, velocity):
+async def write(client, velocity, reason='command'):
     await asyncio.wait_for(
-        client.write_gatt_char(VELOCITY_UUID, velocity, response=True), WRITE_TIMEOUT)
+        client.write_gatt_char(VELOCITY_UUID, velocity, response=True, reason=reason), WRITE_TIMEOUT)
 
 
 async def control(client, commands):
@@ -76,7 +144,7 @@ async def control(client, commands):
     commands.sequence = 0
     commands.force = False
     commands.position_mode = False
-    await write(client, bytes(3))
+    await write(client, bytes(3), reason='initial_stop')
     while not commands.operations.empty():
         commands.report(operation_done=commands.operations.get_nowait()['request'],
                         operation_error='Connection lost before completing BLE operation')
@@ -110,11 +178,13 @@ async def control(client, commands):
         if commands.position_mode:
             if elapsed >= HEARTBEAT_SECONDS:
                 await asyncio.wait_for(
-                    client.write_gatt_char(LEASE_UUID, bytes(1), response=True), WRITE_TIMEOUT)
+                    client.write_gatt_char(LEASE_UUID, bytes(1), response=True, reason='heartbeat'), WRITE_TIMEOUT)
                 last_write = asyncio.get_running_loop().time()
         elif (velocity != last_velocity or elapsed >= HEARTBEAT_SECONDS
               or (commands.force and sequence != last_sequence)):
-            await write(client, velocity)
+            reason = ('command' if velocity != last_velocity else
+                      'forced' if commands.force and sequence != last_sequence else 'heartbeat')
+            await write(client, velocity, reason=reason)
             last_velocity, last_sequence = velocity, sequence
             last_write = asyncio.get_running_loop().time()
             commands.report(written=sequence)
@@ -193,7 +263,7 @@ async def connect_and_control(name, commands):
             device = await BleakScanner.find_device_by_name(name, timeout=10)
             if device is None:
                 raise RuntimeError('Robot not found')
-            client = BleakClient(device, disconnected_callback=lambda _: commands.changed.set())
+            client = TracedBLE(BleakClient(device, disconnected_callback=lambda _: commands.changed.set()), commands)
             await asyncio.wait_for(client.connect(), timeout=10)
             await control(client, commands)
         except Exception as error:
@@ -206,7 +276,7 @@ async def connect_and_control(name, commands):
             if client is not None:
                 try:
                     if client.is_connected:
-                        await write(client, bytes(3))
+                        await write(client, bytes(3), reason='disconnect_stop')
                 except Exception:
                     pass  # The robot's timeout also stops it if the link is gone.
                 try:

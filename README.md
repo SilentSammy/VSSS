@@ -132,6 +132,30 @@ the server subscription port. Recordings contain one JSON object per valid
 packet, including the receive time, sender, and original packet. Use `--quiet`
 to suppress individual packets or `vsss-telemetry --help` for all options.
 
+## Research recording
+
+The shared local BLE provider starts automatically when a car client or the
+recorder needs it. Each car has one controller at a time; if that controller
+exits, the provider stops and releases the car even when a recorder is watching.
+The provider exits after its last client leaves and a short idle period.
+
+Start a recorder before the programs whose BLE traffic you want to capture:
+
+```powershell
+vsss-record --output session.jsonl
+vsss-record --output session.jsonl --server 192.168.12.1 --duration 60
+```
+
+The JSON Lines file combines UDP datagrams with local provider BLE reads,
+writes, acknowledgements and errors. BLE events include a car, control session,
+connection and request ID; velocity writes distinguish commands, heartbeats,
+and stops. Timestamps use the local monotonic and wall clocks in nanoseconds.
+`session_end.complete` is false if recording ends due to an error; an abrupt
+termination can leave no end event. The recorder sees BLE traffic from VSSS
+clients on this computer, not other computers or applications that bypass the
+provider. It does not replay operations sent before it starts. Run
+`vsss-record --help` for UDP port, broadcast, and duration options.
+
 ## Firmware and tests
 
 Production firmware files under `mp/` are copied to the ESP32 root. Copy support
