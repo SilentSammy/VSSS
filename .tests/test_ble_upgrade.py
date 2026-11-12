@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import tempfile
 import time
@@ -42,9 +43,13 @@ class ProcessTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.log = Path(self.temp.name) / 'ble.jsonl'
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
         self.environment = patch.dict(os.environ, {
             'PYTHONPATH': str(ROOT / '.tests/fake_ble') + os.pathsep + str(ROOT),
             'BLE_TEST_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
+            'VSSS_PROVIDER_PORT': str(port),
         })
         self.environment.start()
         self.client = MecanumBLEClient('test')
