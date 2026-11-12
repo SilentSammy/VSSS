@@ -272,10 +272,13 @@ class RealAPIPipelineTests(unittest.TestCase):
         from gps import GPS
         # The actual UDP receiver is restricted to localhost test packets and
         # passive mode; the radio substitute is verified before constructing Car.
-        gps = GPS(port=0, subscribe=False)
+        gps = None
         sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         stop_sending = Event()
-        port = gps.port
+        port = None
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            provider_port = probe.getsockname()[1]
         packet = json.dumps(dict(board_detected=True, markers=[dict(id=1, x=.1, y=.2, angle=90)])).encode()
 
         def publish():
@@ -287,11 +290,14 @@ class RealAPIPipelineTests(unittest.TestCase):
         runner = LiveRunner(lease_seconds=2, max_seconds=5)
         try:
             with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                    'VSSS_PROVIDER_PORT': str(provider_port),
                     'PYTHONPATH': str(root / '.tests/fake_ble') + os.pathsep + str(root),
                     'BLE_TEST_LOG': str(Path(folder) / 'ble.jsonl')}):
                 radio = subprocess.check_output([sys.executable, '-c', 'import bleak; print(bleak.__file__)'],
                                                 cwd=root, text=True).strip()
                 self.assertEqual(Path(radio).resolve(), (root / '.tests/fake_ble/bleak.py').resolve())
+                gps = GPS(port=0, subscribe=False)
+                port = gps.port
                 publisher.start()
                 run_id = runner.start(PREFIX + '    car.wait_for_position(timeout=1)\n'
                                       '    car.set_velocity(.2, 0, 0)\n'
@@ -318,7 +324,8 @@ class RealAPIPipelineTests(unittest.TestCase):
             if publisher.ident:
                 publisher.join(timeout=1)
             sender.close()
-            gps.close()
+            if gps:
+                gps.close()
 
 
 if __name__ == '__main__':

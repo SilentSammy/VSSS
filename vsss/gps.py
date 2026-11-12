@@ -1,11 +1,11 @@
-"""Shared, background UDP receiver. Coordinates are metres; angles are degrees."""
+"""World state from VSSS Provider. Coordinates are metres; angles are degrees."""
 from dataclasses import dataclass
-import json
 import math
-import socket
 from threading import Lock, Thread
 import time
 from types import MappingProxyType
+
+from ._provider_observer import ProviderObserver
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,9 @@ class Feedback:
 
 
 class GPS:
-    """One receiver per process. Missing/stale objects are never reported as current.
+    """One world model per process, backed by the shared local VSSS Provider.
+
+    Missing/stale objects are never reported as current.
 
     Configure GPS(port=..., stale_after=...) before creating any Cars if needed.
     All later GPS() calls return that same receiver.
@@ -74,20 +76,11 @@ class GPS:
         self._delivery_problem = None
         self._listeners = set()
         self._cars, self._balls, self._board = {}, (), False
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            # Subscriptions receive unicast on the sender's local port, so each
-            # process can use a separate socket without competing for UDP 5000.
-            self._socket.bind(('', 0 if subscribe else port))
-            self._socket.settimeout(.2)
-        except Exception:
-            self._socket.close()
-            raise
-        self.port = self._socket.getsockname()[1]
+        self._vision = dict(port=port, server=('192.168.12.1' if port == 5000 else '255.255.255.255') if subscribe else None,
+                            listen_port=0 if subscribe else port)
+        self._observer = ProviderObserver(topics=('udp',), vision=self._vision)
+        self.port = self._observer.snapshot['vision']['local_port']
         self._subscription_port = (port if port else self.port) + 1
-        # The canonical lab service is fixed and direct subscription avoids
-        # relying on WiFi broadcast discovery. Custom ports still discover.
         self._server = ('192.168.12.1', self._subscription_port) if subscribe and port == 5000 else None
         self._unicast_received = None
         self._closed = False
@@ -95,35 +88,23 @@ class GPS:
         self._thread.start()
 
     def _receive(self):
-        next_subscription = 0
         while not self._closed:
-            now = time.monotonic()
-            if self.subscribe and now >= next_subscription:
-                # Outbound discovery reaches the AP directly; regular feedback
-                # then comes back as acknowledged WiFi unicast frames.
-                targets = [self._server] if self._server else []
-                if self._unicast_received is None or now - self._unicast_received >= 2:
-                    targets.append(('255.255.255.255', self._subscription_port))
-                for target in targets:
-                    try:
-                        self._socket.sendto(b'POSE_SUBSCRIBE', target)
-                    except OSError:
-                        pass
-                next_subscription = now + 1
             try:
-                data, address = self._socket.recvfrom(65535)
-                packet = json.loads(data)
-                if type(packet['board_detected']) is not bool:
+                event = self._observer.read()
+                if event is None:
                     continue
+                if event['type'] == 'observer_overflow':
+                    raise ConnectionError(event['error'])
+                if event['type'] != 'udp' or not event.get('valid'):
+                    continue
+                address = tuple(event['sender'])
+                packet = event['packet']
                 cars = {int(p['id']): Pose(float(p['x']), float(p['y']), float(p['angle']))
                         for p in packet['markers']}
                 balls = tuple(Position(float(p['x']), float(p['y'])) for p in packet.get('balls', []))
-                values = [v for p in (*cars.values(), *balls) for v in vars(p).values()]
-                if not all(math.isfinite(v) for v in values):
-                    continue
                 # Legacy broadcast may arrive late. Once subscribed, accept
                 # only our server's stream until it has been silent for 2s.
-                now = time.monotonic()
+                now = event['monotonic_ns'] / 1e9
                 is_unicast = self.subscribe and address[1] == self._subscription_port
                 if not is_unicast and self.subscribe and self._unicast_received is not None and now - self._unicast_received < 2:
                     continue
@@ -132,12 +113,8 @@ class GPS:
                 frame_age_ms = packet.get('frame_age_ms')
                 if server_timestamp is not None:
                     server_timestamp = float(server_timestamp)
-                    if not math.isfinite(server_timestamp):
-                        continue
                 if frame_age_ms is not None:
                     frame_age_ms = float(frame_age_ms)
-                    if not math.isfinite(frame_age_ms) or frame_age_ms < 0:
-                        continue
                 if self._timing_source != address[0]:
                     self._timing_source = address[0]
                     self._best_offset = self._last_source_timestamp = None
@@ -175,14 +152,26 @@ class GPS:
                     except Exception as error:
                         print(f'[GPS] Removing failed feedback listener: {error}', flush=True)
                         self.remove_listener(listener)
-            except socket.timeout:
-                pass
-            except ConnectionResetError:
-                pass  # Windows can report an ICMP error while the server restarts.
-            except OSError:
-                break
-            except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
-                pass  # Ignore malformed datagrams; they do not renew freshness.
+            except (OSError, ValueError):
+                if self._closed:
+                    break
+                with self._lock:
+                    self._received = None
+                    self._delivery_problem = 'Camera provider interrupted; reconnecting.'
+                self._observer.close()
+                while not self._closed:
+                    try:
+                        observer = ProviderObserver(topics=('udp',), vision=self._vision)
+                        if self._closed:
+                            observer.close()
+                            break
+                        self._observer = observer
+                        self.port = observer.snapshot['vision']['local_port']
+                        self._timing_source = self._best_offset = self._last_source_timestamp = None
+                        self._unicast_received = None
+                        break
+                    except (OSError, ValueError):
+                        time.sleep(.2)
 
     def _snapshot(self):
         with self._lock:
@@ -237,12 +226,7 @@ class GPS:
         """Release the shared receiver, usually only needed by tools/tests."""
         with type(self)._instance_lock:
             self._closed = True
-            if self._server:
-                try:
-                    self._socket.sendto(b'POSE_UNSUBSCRIBE', self._server)
-                except OSError:
-                    pass
-            self._socket.close()
+            self._observer.close()
             self._thread.join(timeout=1)
             if type(self)._instance is self:
                 type(self)._instance = None

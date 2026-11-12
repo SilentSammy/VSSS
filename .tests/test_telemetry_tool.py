@@ -53,7 +53,7 @@ class TelemetryToolTests(unittest.TestCase):
     def test_invalid_options_fail_before_opening_socket(self):
         for args in (['--port', '0'], ['--server', '127.0.0.1', '--port', '65535'],
                      ['--listen-port', '5'], ['--duration', 'nan']):
-            with self.subTest(args=args), patch('tools.telemetry_listener.socket.socket') as sock, \
+            with self.subTest(args=args), patch('tools.telemetry_listener.ProviderObserver') as sock, \
                     contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     main(args)

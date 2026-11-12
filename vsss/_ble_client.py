@@ -1,4 +1,4 @@
-"""Student-facing robot client backed by the shared local BLE provider."""
+"""Student-facing robot client backed by the shared local VSSS Provider."""
 import atexit
 import json
 import math

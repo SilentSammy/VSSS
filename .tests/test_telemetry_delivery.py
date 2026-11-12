@@ -83,7 +83,7 @@ class DeliveryTests(unittest.TestCase):
 
 
 class MultipleReceiverTests(unittest.TestCase):
-    def test_default_subscriptions_from_separate_processes_use_distinct_ports(self):
+    def test_default_subscriptions_from_separate_processes_share_provider_port(self):
         code = ("from vsss import GPS; g=GPS(); print(g.port, flush=True); "
                 "input(); g.close()")
         processes = []
@@ -94,7 +94,7 @@ class MultipleReceiverTests(unittest.TestCase):
                                            stderr=subprocess.PIPE, text=True)
                 processes.append(process)
             ports = [int(process.stdout.readline().strip()) for process in processes]
-            self.assertNotEqual(ports[0], ports[1])
+            self.assertEqual(ports[0], ports[1])
         finally:
             for process in processes:
                 if process.poll() is None:

@@ -5,8 +5,9 @@ from contextlib import ExitStack
 import json
 import math
 from pathlib import Path
-import socket
 import time
+
+from vsss._provider_observer import ProviderObserver
 
 
 DEFAULT_PORT = 5000
@@ -100,43 +101,31 @@ def main(argv=None):
     invalid = 0
 
     with ExitStack() as stack:
-        udp = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
-        udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listen_port = (args.listen_port or 0) if args.server else args.port
-        try:
-            udp.bind((args.bind, listen_port))
-        except PermissionError as error:
-            raise SystemExit(
-                f"Cannot listen on UDP port {listen_port}: Windows denied the bind. "
-                "Another process may already own that port. Choose a free local port."
-            ) from error
         recording = stack.enter_context(args.output.open('x', encoding='utf-8')) if args.output else None
-        udp.settimeout(0.2)
         subscription_port = args.subscription_port or args.port + 1
-        subscription = (args.server, subscription_port) if args.server else None
-        next_renewal = 0.0
-        if subscription:
-            print(f"Subscribing to {args.server}:{subscription_port}; listening on UDP {udp.getsockname()[1]}; Ctrl+C to stop.")
-        else:
-            print(f"Listening for broadcast telemetry on {args.bind}:{args.port}. Ctrl+C to stop.")
+        observer = stack.enter_context(ProviderObserver(('udp',), dict(server=args.server,
+            port=args.port, bind=args.bind, subscription_port=subscription_port,
+            listen_port=(args.listen_port or 0) if args.server else args.port)))
+        print(f"Observing telemetry through VSSS Provider on UDP {observer.snapshot['vision']['local_port']}; Ctrl+C to stop.")
 
         deadline = time.monotonic() + args.duration if args.duration is not None else None
         try:
             while True:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
-                if subscription and time.monotonic() >= next_renewal:
-                    udp.sendto(b"POSE_SUBSCRIBE", subscription)
-                    next_renewal = time.monotonic() + 1.0
-                try:
-                    data, sender = udp.recvfrom(65535)
-                except socket.timeout:
+                event = observer.read()
+                if event is None:
                     continue
-                received_at = time.time()
+                if event['type'] == 'observer_overflow':
+                    raise RuntimeError('Provider observation overflow; telemetry stream incomplete')
+                if event['type'] != 'udp':
+                    continue
+                sender = event['sender']
+                received_at = event['wall_time_ns'] / 1e9
                 try:
-                    message = json.loads(data)
-                    if not isinstance(message, dict):
-                        raise ValueError("packet is not a JSON object")
+                    if not event['valid']:
+                        raise ValueError(event['error'])
+                    message = event['packet']
                     formatted = format_packet(message, sender, received_at)
                     if not args.quiet:
                         print(formatted, flush=True)
@@ -151,12 +140,6 @@ def main(argv=None):
                     print(f"Invalid packet from {sender[0]}: {error}", flush=True)
         except KeyboardInterrupt:
             pass
-        finally:
-            if subscription:
-                try:
-                    udp.sendto(b"POSE_UNSUBSCRIBE", subscription)
-                except OSError:
-                    pass
 
     print(f"\nReceived {received} valid packet(s); {invalid} invalid packet(s).")
 

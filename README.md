@@ -134,10 +134,15 @@ to suppress individual packets or `vsss-telemetry --help` for all options.
 
 ## Research recording
 
-The shared local BLE provider starts automatically when a car client or the
-recorder needs it. Each car has one controller at a time; if that controller
+The shared local VSSS Provider starts automatically when a car client, GPS, or
+observation tool needs it. Each car has one controller at a time; if that controller
 exits, the provider stops and releases the car even when a recorder is watching.
 The provider exits after its last client leaves and a short idle period.
+
+The provider owns the BLE connections and UDP sockets. GPS and tools using the
+same vision source settings share one subscription. GPS turns those packets
+into student-facing poses and ball positions; recording tools observe original
+datagrams and BLE operations through private, independent event streams.
 
 Start a recorder before the programs whose BLE traffic you want to capture:
 
@@ -146,15 +151,24 @@ vsss-record --output session.jsonl
 vsss-record --output session.jsonl --server 192.168.12.1 --duration 60
 ```
 
-The JSON Lines file combines UDP datagrams with local provider BLE reads,
+The JSON Lines file combines original UDP datagrams with local provider BLE reads,
 writes, acknowledgements and errors. BLE events include a car, control session,
 connection and request ID; velocity writes distinguish commands, heartbeats,
 and stops. Timestamps use the local monotonic and wall clocks in nanoseconds.
+UDP events include the exact bytes in `payload_base64`, sender, provider receive
+timestamps, source ID, sequence, and validation result. Invalid packets are
+preserved too. All observers of a source receive the same event timestamps and
+sequence numbers. A sequence starts with each new source, not each recording.
+
 `session_end.complete` is false if recording ends due to an error; an abrupt
 termination can leave no end event. The recorder sees BLE traffic from VSSS
 clients on this computer, not other computers or applications that bypass the
-provider. It does not replay operations sent before it starts. Run
-`vsss-record --help` for UDP port, broadcast, and duration options.
+provider. It does not replay operations sent before it starts. A slow observer
+gets an overflow event or disconnect; it cannot block car control or other
+observers. GPS automatically reconnects after provider interruption and expires
+old positions; a recorder ends incomplete so interruptions remain visible.
+Run `vsss-record --help` for UDP port, broadcast, duration, and `--topics udp`
+or `--topics ble` filtering. The recorder is an ordinary provider consumer.
 
 ## Firmware and tests
 

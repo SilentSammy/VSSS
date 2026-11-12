@@ -1,4 +1,4 @@
-﻿"""Local shared BLE provider: exclusive control sessions and passive observers."""
+"""Shared local BLE control and original UDP/BLE observation streams."""
 import json
 import os
 from pathlib import Path
@@ -12,6 +12,8 @@ from threading import Lock, Thread
 import time
 import uuid
 
+from ._provider_vision import VisionSource, source_settings
+
 PORT = int(os.environ.get('VSSS_PROVIDER_PORT', '38475'))
 TOKEN_PATH = Path(tempfile.gettempdir()) / ('vsss-provider-%d.token' % PORT)
 IDLE_SECONDS = 5.
@@ -24,28 +26,39 @@ def stamp(kind, **values):
 class Provider:
     def __init__(self):
         self.lock = Lock()
+        self.publish_lock = Lock()
         self.controllers = {}
         self.observers = set()
+        self.sources = {}
         self.clients = 0
         self.last_empty = time.monotonic()
         self.token = secrets.token_urlsafe(32)
 
-    def publish(self, event):
+    def publish(self, event, source=None):
+        with self.publish_lock:
+            self._publish(event, source)
+
+    def _publish(self, event, source):
         with self.lock:
             observers = tuple(self.observers)
-        for observer in observers:
+        for observer, topics, selected in observers:
+            if event['type'] == 'udp':
+                if 'udp' not in topics or selected != source:
+                    continue
+            elif 'ble' not in topics:
+                continue
             try:
                 observer.put_nowait(event)
             except Full:
                 # End the observer rather than silently losing records.
                 try:
-                    observer.get_nowait()
-                    observer.put_nowait(stamp('recorder_overflow', error='observer queue full'))
-                    observer.put_nowait(None)
-                except (Empty, Full):
+                    while True:
+                        observer.get_nowait()
+                except Empty:
                     pass
+                observer.put_nowait(stamp('observer_overflow', error='observer queue full; stream incomplete'))
                 with self.lock:
-                    self.observers.discard(observer)
+                    self.observers.discard((observer, topics, selected))
 
     def handle(self, conn):
         with self.lock:
@@ -60,14 +73,17 @@ class Provider:
             conn.settimeout(None)
             role = hello.get('role')
             if role == 'observe':
-                self.observe(conn)
+                self.observe(conn, hello)
             elif role == 'control':
                 name = hello.get('name')
                 if not isinstance(name, str) or not name or len(name) > 128:
                     return
                 self.control(conn, reader, name)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            pass
+        except (OSError, ValueError, TypeError) as error:
+            try:
+                conn.sendall((json.dumps({'provider': 'error', 'error': str(error)}) + '\n').encode())
+            except OSError:
+                pass
         finally:
             reader.close()
             conn.close()
@@ -76,22 +92,36 @@ class Provider:
                 if self.clients == 0:
                     self.last_empty = time.monotonic()
 
-    def observe(self, conn):
+    def observe(self, conn, hello):
         import select
+        conn.settimeout(2)  # A stalled consumer must not hold a session forever.
         queue = Queue(maxsize=4096)
+        topics = frozenset(hello.get('topics', ['ble']))
+        if not topics or not topics <= {'udp', 'ble'}:
+            raise ValueError('Unknown observation topics')
+        key = source_settings(hello.get('vision', {})) if 'udp' in topics else None
         with self.lock:
-            self.observers.add(queue)
+            source = self.sources.get(key) if key is not None else None
+            if key is not None and source is None:
+                source = VisionSource(key, lambda event: self.publish(event, (key, event['source_id'])))
+                self.sources[key] = source
+            if source:
+                source.users += 1
+            selected = (key, source.info['source_id']) if source else None
+            entry = (queue, topics, selected)
+            self.observers.add(entry)
             cars = list(self.controllers)
         try:
             conn.sendall(b'{"provider":"observing"}\n')
-            conn.sendall((json.dumps(stamp('provider_snapshot', controlled_cars=cars)) + '\n').encode())
+            conn.sendall((json.dumps(stamp('provider_snapshot', controlled_cars=cars,
+                                         vision=source.info if source else None)) + '\n').encode())
             while True:
                 try:
                     event = queue.get(timeout=.1)
                     if event is None:
                         break
                     conn.sendall((json.dumps(event) + '\n').encode())
-                    if event.get('type') == 'recorder_overflow':
+                    if event.get('type') == 'observer_overflow':
                         break
                 except Empty:
                     pass
@@ -100,7 +130,12 @@ class Provider:
                     break
         finally:
             with self.lock:
-                self.observers.discard(queue)
+                self.observers.discard(entry)
+                if source:
+                    source.users -= 1
+                    if source.users == 0:
+                        self.sources.pop(key)
+                        source.close()
 
     def control(self, conn, reader, name):
         session_id = uuid.uuid4().hex

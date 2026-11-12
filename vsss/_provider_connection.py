@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Event, Thread
 import time
 
-def connect(role, name=None, timeout=8):
+def connect(role, name=None, timeout=8, **options):
     port = int(os.environ.get('VSSS_PROVIDER_PORT', '38475'))
     token_path = Path(tempfile.gettempdir()) / ('vsss-provider-%d.token' % port)
     deadline = time.monotonic() + timeout
@@ -19,15 +19,15 @@ def connect(role, name=None, timeout=8):
         try:
             token = token_path.read_text(encoding='ascii')
             sock = socket.create_connection(('127.0.0.1', port), timeout=.5)
-            sock.sendall((json.dumps(dict(token=token, role=role, name=name)) + '\n').encode())
+            sock.sendall((json.dumps(dict(token=token, role=role, name=name, **options)) + '\n').encode())
             reply = b''
             while not reply.endswith(b'\n'):
                 part = sock.recv(1)
                 if not part or len(reply) > 1024:
-                    raise ConnectionError('BLE provider handshake failed')
+                    raise ConnectionError('VSSS provider handshake failed')
                 reply += part
             if json.loads(reply) != {'provider': 'accepted'}:
-                raise ConnectionError('BLE provider rejected connection')
+                raise ConnectionError('VSSS provider rejected connection')
             sock.settimeout(None)
             return sock
         except (OSError, ValueError):
@@ -37,14 +37,14 @@ def connect(role, name=None, timeout=8):
                 flags = (getattr(subprocess, 'DETACHED_PROCESS', 0) |
                          getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) |
                          getattr(subprocess, 'CREATE_NO_WINDOW', 0)) if os.name == 'nt' else 0
-                process = subprocess.Popen([sys.executable, '-u', '-m', 'vsss._ble_provider'],
+                process = subprocess.Popen([sys.executable, '-u', '-m', 'vsss._provider'],
                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                            stderr=subprocess.DEVNULL, creationflags=flags,
                                            start_new_session=(os.name != 'nt'), close_fds=True)
                 Thread(target=process.wait, daemon=True).start()
                 started = True
             time.sleep(.05)
-    raise ConnectionError('Could not start or connect to the local BLE provider')
+    raise ConnectionError('Could not start or connect to the local VSSS provider')
 
 
 class _Writer:
