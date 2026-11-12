@@ -118,21 +118,24 @@ Velocity trials stop if pose telemetry becomes stale or the car crosses configur
 bounds. Waypoint trials send one target to the firmware and observe its BLE status;
 they do not run a second controller on the laptop.
 
-## Telemetry check
+## Observation and recording
+
+`vsss-observer` shows a readable UDP/BLE feed. Add `--output` to also record
+full events, or `--quiet --output` to record without displaying each event.
+Both topics are observed by default; `--topics udp` or `--topics ble` selects one.
 
 ```powershell
-vsss-telemetry --server 192.168.12.1
-vsss-telemetry --server 192.168.12.1 --duration 30 --output telemetry.jsonl
-vsss-telemetry --port 5000 --duration 30 --output broadcast.jsonl
+vsss-observer
+vsss-observer --topics udp --duration 10
+vsss-observer --topics ble
+vsss-observer --quiet --output session.jsonl --duration 60
+vsss-observer --topics udp --broadcast --port 5000
 ```
 
-Omit `--server` to listen for broadcast on UDP 5000. Unicast uses an automatic
-local port unless `--listen-port` is supplied; `--subscription-port` overrides
-the server subscription port. Recordings contain one JSON object per valid
-packet, including the receive time, sender, and original packet. Use `--quiet`
-to suppress individual packets or `vsss-telemetry --help` for all options.
-
-## Research recording
+UDP defaults to unicast from `192.168.12.1`; use `--server` for another host
+or `--broadcast` for passive broadcast reception. Unicast uses an automatic
+local port unless `--listen-port` is supplied. `--subscription-port` overrides
+the server subscription port (default: data port + 1).
 
 The shared local VSSS Provider starts automatically when a car client, GPS, or
 observation tool needs it. Each car has one controller at a time; if that controller
@@ -144,12 +147,7 @@ same vision source settings share one subscription. GPS turns those packets
 into student-facing poses and ball positions; recording tools observe original
 datagrams and BLE operations through private, independent event streams.
 
-Start a recorder before the programs whose BLE traffic you want to capture:
-
-```powershell
-vsss-record --output session.jsonl
-vsss-record --output session.jsonl --server 192.168.12.1 --duration 60
-```
+Start the observer before the programs whose BLE traffic you want to capture.
 
 The JSON Lines file combines original UDP datagrams with local provider BLE reads,
 writes, acknowledgements and errors. BLE events include a car, control session,
@@ -167,8 +165,8 @@ provider. It does not replay operations sent before it starts. A slow observer
 gets an overflow event or disconnect; it cannot block car control or other
 observers. GPS automatically reconnects after provider interruption and expires
 old positions; a recorder ends incomplete so interruptions remain visible.
-Run `vsss-record --help` for UDP port, broadcast, duration, and `--topics udp`
-or `--topics ble` filtering. The recorder is an ordinary provider consumer.
+Run `vsss-observer --help` for all options. The observer is an ordinary
+provider consumer.
 
 ## Firmware and tests
 

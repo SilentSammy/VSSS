@@ -114,7 +114,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         sender = threading.Thread(target=serve, daemon=True)
         sender.start()
         path = Path(self.temp.name) / 'session.jsonl'
-        process = subprocess.Popen([sys.executable, '-u', '-m', 'tools.vsss_recorder',
+        process = subprocess.Popen([sys.executable, '-u', '-m', 'tools.vsss_observer',
                                     '--server', '127.0.0.1', '--subscription-port', str(server.getsockname()[1]),
                                     '--duration', '4', '--output', str(path)],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

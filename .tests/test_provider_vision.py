@@ -157,16 +157,16 @@ class VisionProviderTests(unittest.TestCase):
 
     def test_recorder_marks_stream_failure_incomplete(self):
         # A synthetic observer failure verifies the recorder's on-disk contract.
-        from tools.vsss_recorder import main
+        from tools.vsss_observer import main
         from unittest.mock import Mock
         observer = Mock()
         observer.__enter__ = Mock(return_value=observer)
         observer.__exit__ = Mock(return_value=False)
-        observer.snapshot = dict(type='provider_snapshot', vision=None)
+        observer.snapshot = dict(type='provider_snapshot', vision=None, controlled_cars=[])
         observer.read.side_effect = ConnectionError('provider interrupted')
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'interrupted.jsonl'
-            with patch('tools.vsss_recorder.ProviderObserver', return_value=observer):
+            with patch('tools.vsss_observer.ProviderObserver', return_value=observer):
                 with self.assertRaises(ConnectionError):
                     main(['--output', str(output), '--topics', 'ble'])
             rows = [json.loads(line) for line in output.read_text().splitlines()]
