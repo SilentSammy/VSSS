@@ -1,120 +1,147 @@
-﻿// All browser runs use an explicit fake-hardware fixture, never server.py.
+// Explicit fake device fixture. These checks never open native input or BLE.
 const {chromium} = require('playwright');
 const assert = require('node:assert/strict');
-const {spawn, spawnSync} = require('node:child_process');
-const path = require('node:path');
+const {spawn,spawnSync} = require('node:child_process');
 const fs = require('node:fs');
+const path = require('node:path');
 
-(async () => {
-  const server = spawn(process.env.PYTHON || 'python', ['test_http_server.py', '8766'], {cwd: __dirname});
+(async()=>{
+  const server=spawn(process.env.PYTHON||'python',['test_http_server.py','8766'],{cwd:__dirname});
   let browser;
-  try {
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Server did not start')), 10000);
-      server.once('error', reject);
-      server.stdout.on('data', () => {clearTimeout(timeout); resolve();});
-      server.stderr.on('data', data => process.stderr.write(data));
+  try{
+    await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error('Server did not start')),10000);
+      server.once('error',reject);
+      server.once('exit',code=>{if(code)reject(new Error('Server exited '+code));});
+      server.stdout.once('data',()=>{clearTimeout(timer);resolve();});
+      server.stderr.on('data',data=>process.stderr.write(data));
     });
-    browser = await chromium.launch({channel: 'msedge', headless: true});
-    const page = await browser.newPage({viewport: {width: 1400, height: 900}});
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
+    browser=await chromium.launch({channel:'msedge',headless:true});
+    const page=await browser.newPage({viewport:{width:1500,height:980}});
+    const errors=[];
+    page.on('pageerror',error=>{errors.push(error.message);process.stderr.write(error.stack+'\n');});
     await page.goto('http://127.0.0.1:8766');
-    await page.waitForFunction(() => document.querySelector('#code').textContent.includes('with Car(1)'));
-    assert.equal(await page.locator('#field').count(), 0);
-    assert.match(await page.locator('#run').innerText(), /Run live/);
-    await page.click('#run');
-    await page.waitForFunction(() => document.querySelector('#output').textContent.includes('Connected.'));
-    assert.equal(await page.locator('#run').isDisabled(), true);
-    assert.equal(await page.locator('#stop').isEnabled(), true);
-    await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Finished'));
-    assert.match(await page.locator('#output').innerText(), /Pose\(x=0.1, y=0.2/);
-    assert.match(await page.locator('#code').innerText(), /car\.set_velocity\(x=0.2, y=0, w=0\)/);
-    const downloaded = page.waitForEvent('download');
-    await page.click('#export');
-    const download = await downloaded;
-    const exported = fs.readFileSync(await download.path(), 'utf8');
-    assert.match(exported, /from car import Car/);
-    assert.match(exported, /from time import sleep/);
-    assert.doesNotMatch(exported, /simulator/);
-    const contract = spawnSync(process.env.PYTHON || 'python', ['verify_export.py', await download.path()], {cwd: __dirname, encoding: 'utf8'});
-    assert.equal(contract.status, 0, contract.stdout + contract.stderr);
-    process.stdout.write(contract.stdout);
-    // Stop must interrupt a long program through the actual browser control.
-    await page.evaluate(() => {
-      workspace.getAllBlocks(false).find(b => b.type === 'math_number' && b.getFieldValue('NUM') === 1).setFieldValue(60, 'NUM');
-      updateCode();
-    });
-    await page.click('#run');
-    await page.waitForFunction(() => document.querySelector('#output').textContent.includes('Connected.'));
-    await page.click('#stop');
-    await page.waitForFunction(() => document.querySelector('#status').textContent === 'Stopped by user.');
-    assert.equal(await page.locator('#run').isEnabled(), true);
-    await page.screenshot({path: path.join(__dirname, 'vsss-preview.png'), fullPage: true});
-    // Car blocks outside a session fail before any hardware command.
-    await page.evaluate(() => {
-      workspace.clear(); workspace.newBlock('vsss_stop').initSvg(); updateCode();
-    });
-    await page.click('#run');
-    assert.match(await page.locator('#output').innerText(), /inside the/);
-    await page.click('#example');
-    await page.waitForFunction(() => document.querySelector('#code').textContent.includes('range(3)'));
-    await page.click('#run');
-    await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Finished'));
-    assert.equal(await page.locator('#output').innerText(), 'Hello from Python!\nHello from Python!\nHello from Python!\n12\n');
-    await page.evaluate(() => {
-      workspace.getAllBlocks(false).find(b => b.type === 'math_number' && b.getFieldValue('NUM') === 3).setFieldValue(2, 'NUM');
-      updateCode();
-    });
-    await page.click('#run');
-    await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Finished'));
-    assert.equal(await page.locator('#output').innerText(), 'Hello from Python!\nHello from Python!\n12\n');
-    assert.equal(await page.evaluate(() => {
-      const code = generatedCode();
-      const saved = Blockly.serialization.workspaces.save(workspace);
-      workspace.clear();
-      Blockly.serialization.workspaces.load(saved, workspace);
-      return generatedCode() === code;
-    }), true);
-    // API validation and worker runtime errors still reach the live UI.
-    const failed = await page.evaluate(async () => {
-      const started = await request('/run', {code: 'print(1 / 0)'});
+    await page.waitForFunction(()=>typeof workspace!=='undefined'&&workspace&&document.querySelector('#code').textContent.includes('Hello, Python!'));
+    assert.equal(await page.locator('#field').count(),0);
+    const initial=await page.locator('#code').innerText();
+    assert.match(initial,/print\('Hello, Python!'\)/);
+    assert.match(initial,/print\(7 \+ 5\)/);
+    assert.doesNotMatch(initial,/from vsss|@run|Car\(/);
+    const exposed=await page.evaluate(()=>JSON.stringify(vsssToolbox));
+    for(const removed of ['Car settings','set_trim','set_controller','read_trim','read_controller','restart','reconnect_telemetry','gps_config','vsss_invert_y','vsss_data','connection_generation','latest']) assert.ok(!exposed.includes(removed),removed+' is still exposed');
+    assert.ok(exposed.includes('Advanced lessons'));
+    const runUI=async()=>{
+      await page.click('#run');
+      await page.waitForFunction(()=>!document.querySelector('#run').disabled&&document.querySelector('#status').textContent.startsWith('Finished'));
+    };
+    const runCode=code=>page.evaluate(async code=>{
+      const started=await request('/run',{code});
       let result;
-      do {
-        await new Promise(resolve => setTimeout(resolve, 50));
-        result = await request('/status', {run_id: started.run_id});
-      } while (['running', 'stopping'].includes(result.state));
+      do{
+        await new Promise(resolve=>setTimeout(resolve,30));
+        result=await request('/status',{run_id:started.run_id});
+      }while(['running','stopping'].includes(result.state));
       return result;
+    },code);
+    await page.evaluate(()=>loadLesson('velocity'));
+    const downloadPromise=page.waitForEvent('download');
+    await page.click('#export');
+    const download=await downloadPromise;
+    const file=await download.path();
+    const exported=fs.readFileSync(file,'utf8');
+    const contract=spawnSync(process.env.PYTHON||'python',['verify_export.py',file],{cwd:__dirname,encoding:'utf8'});
+    assert.equal(contract.status,0,contract.stdout+contract.stderr);
+    process.stdout.write(contract.stdout);
+    await runUI();
+    assert.match(await page.locator('#output').innerText(),/car1 connected/);
+    assert.equal((await runCode(exported)).state,'finished');
+    for(const lesson of ['printing','variables','multi']){
+      await page.selectOption('#lesson',lesson);
+      const code=await page.locator('#code').innerText();
+      if(lesson==='multi')assert.match(code,/car2 = Car\(2/);
+      const result=await runCode(code);
+      assert.equal(result.state,'finished',JSON.stringify(result));
+    }
+    // Both gamepads and keyboard exports must be valid live programs, stoppable
+    // despite their intentionally endless read/control loops.
+    for(const lesson of ['rotation','position','waypoints','gamepads','keyboard','observe']){
+      await page.selectOption('#lesson',lesson);
+      const code=await page.locator('#code').innerText();
+      if(lesson==='gamepads'){
+        assert.match(code,/input.get_axis\("LY0"\)/);
+        assert.match(code,/input.get_axis\("LY1"\)/);
+        assert.match(code,/car2.set_velocity/);
+      }
+      if(['observe','position'].includes(lesson))assert.doesNotMatch(code,/ = Car\(/);
+      if(lesson==='rotation'){assert.match(code,/w=0.2/);assert.match(code,/w=-0.2/);assert.match(code,/while True:/);}
+      if(lesson==='waypoints'){assert.match(code,/y=0.5/);assert.match(code,/y=-0.5/);assert.match(code,/arrival_status.mode_name == 'reached'/);}
+      await page.click('#run');
+      await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running live');
+      await page.waitForTimeout(350);
+      assert.equal(await page.locator('#stop').isEnabled(),true);
+      await page.click('#stop');
+      await page.waitForFunction(()=>document.querySelector('#status').textContent==='Stopped by user.');
+    }
+    await page.selectOption('#lesson','gamepads');
+    assert.equal(await page.evaluate(()=>{
+      const code=generatedCode();
+      const saved=Blockly.serialization.workspaces.save(workspace);
+      workspace.clear();Blockly.serialization.workspaces.load(saved,workspace);updateCode();
+      return code===generatedCode();
+    }),true);
+    // Existing single-car block JSON remains loadable and exports the new API.
+    const legacyCode=await page.evaluate(()=>{
+      Blockly.serialization.workspaces.load({blocks:{languageVersion:0,blocks:[{
+        type:'vsss_car',fields:{NUMBER:1},inputs:{DO:{block:{type:'vsss_velocity',inputs:{
+          X:{shadow:{type:'math_number',fields:{NUM:.2}}},Y:{shadow:{type:'math_number',fields:{NUM:0}}},W:{shadow:{type:'math_number',fields:{NUM:0}}}
+        },next:{block:{type:'vsss_stop'}}}}}
+      }]}},workspace);
+      checkCarBlocks(workspace);return generatedCode();
     });
-    assert.equal(failed.state, 'failed');
-    assert.match(failed.error, /ZeroDivisionError/);
-    const rejected = await page.evaluate(async () => {
-      const response = await fetch('/run', {method: 'POST', headers: {
-        'Content-Type': 'application/json', 'X-Blockly-Demo': '1'
-      }, body: JSON.stringify({code: 'import os'})});
-      return response.status;
+    assert.match(legacyCode,/@run/);
+    assert.equal((await runCode(legacyCode)).state,'finished');
+    await page.selectOption('#lesson','gamepads');
+    // Exercise every generated API block and toolbox flyout: signature discovery
+    // must never create malformed definitions or mismatched argument fields.
+    const generated=await page.evaluate(()=>{
+      const results=[];
+      for(const spec of vsssSchema.blocks){
+        const block=workspace.newBlock(spec.id);block.initSvg();block.render();
+        try{results.push({id:spec.id,code:generatedCode()});}finally{block.dispose();}
+      }
+      for(const item of workspace.getToolbox().getToolboxItems()){
+        if(item.getName&&item.getName()!=='Variables') workspace.getToolbox().setSelectedItem(item);
+      }
+      workspace.getToolbox().clearSelection();
+      return results;
     });
-    assert.equal(rejected, 400);
-    assert.equal(await page.evaluate(async () => (await fetch('/run', {method: 'POST', body: '{}'})).status), 403);
-    // Closing the owning page must end a live run, with lease expiry as fallback.
-    const owner = await browser.newPage();
+    for(const item of generated){
+      const response=await page.evaluate(async code=>{
+        // Validate without running any of the advanced configuration blocks.
+        return (await fetch('/validate',{method:'POST',headers:{'Content-Type':'application/json','X-Blockly-Demo':'1'},body:JSON.stringify({code})})).status;
+      },item.code);
+      assert.equal(response,200,item.id+' did not validate');
+    }
+    await page.selectOption('#lesson','gamepads');
+    await page.screenshot({path:path.join(__dirname,'vsss-preview.png'),fullPage:true});
+    await page.click('#example');
+    await runUI();
+    assert.equal(await page.locator('#output').innerText(),'Hello, Python!\n12\n');
+    const invalid=await page.evaluate(async()=> (await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json','X-Blockly-Demo':'1'},body:JSON.stringify({code:'import os'})})).status);
+    assert.equal(invalid,400);
+    assert.equal(await page.evaluate(async()=> (await fetch('/run',{method:'POST',body:'{}'})).status),403);
+    const owner=await browser.newPage();
     await owner.goto('http://127.0.0.1:8766');
-    await owner.waitForFunction(() => document.querySelector('#code').textContent.includes('with Car(1)'));
-    await owner.evaluate(() => {
-      workspace.getAllBlocks(false).find(b => b.type === 'math_number' && b.getFieldValue('NUM') === 1).setFieldValue(60, 'NUM');
-      updateCode();
-    });
+    await owner.waitForFunction(()=>typeof workspace!=='undefined'&&workspace);
+    await owner.selectOption('#lesson','gamepads');
     await owner.click('#run');
-    await owner.waitForFunction(() => document.querySelector('#output').textContent.includes('Connected.'));
+    await owner.waitForFunction(()=>document.querySelector('#output').textContent.includes('car2 connected'));
     await owner.close();
-    await page.waitForFunction(async () => {
-      const result = await request('/status'); // Observer does not renew the lease.
-      return result.state === 'stopped';
-    }, null, {timeout: 10000});
-    assert.deepEqual(errors, []);
-    console.log('PASS: live UI, real-time execution protocol with fake I/O, Stop, page close, Python export, car scope, block edits, save/load, errors, request guards; no simulator view.');
-  } finally {
-    if (browser) await browser.close();
+    await page.waitForFunction(async()=> (await request('/status')).state==='stopped',null,{timeout:10000});
+    assert.deepEqual(errors,[]);
+    console.log('PASS: simplified student permissions/toolbox, Python basics, infinite rotation/waypoints, position reading, multi-car/input examples, export, save/load, Stop and page closure.');
+  }finally{
+    if(browser)await browser.close();
     server.kill();
   }
-})().catch(error => {console.error(error); process.exitCode = 1;});
+})().catch(error=>{console.error(error);process.exitCode=1;});

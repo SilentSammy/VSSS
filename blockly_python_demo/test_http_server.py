@@ -1,8 +1,7 @@
-"""Browser-test fixture only. Production server.py always uses the real Car."""
+"""Browser-test fixture only. Production always uses real vsss devices."""
 import sys
-from live_runtime import LiveRunner
+from fake_devices import Devices
 from server import serve
-from test_live_runtime import FakeCar
 
 if __name__ == '__main__':
-    serve(int(sys.argv[1]), LiveRunner(FakeCar))
+    serve(int(sys.argv[1]), Devices().runner())

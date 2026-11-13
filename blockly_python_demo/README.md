@@ -1,155 +1,135 @@
-﻿# VSSS student blocks - live robot control
+﻿# VSSS student blocks
 
-Students build programs with Blockly, view the generated Python, and run them
-against the real VSSS `Car` API. The track view and teaching simulator have been
-removed. There is no simulation mode in the application.
+A student toolbox for programming real VSSS cars. The default example is plain
+Python printing and addition, so opening the editor and running that example does
+not connect to hardware. There is no track simulator.
 
-## Launch
+## Start
 
-From the VSSS repository root, use the existing VSSS Python environment:
+From the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe blockly_python_demo\server.py
 ```
 
-Open **http://127.0.0.1:8765**. Join the `embedded` lab Wi-Fi and enable Bluetooth.
-Make sure the camera service is publishing pose and the selected marker is visible.
-Check the car number in the `with car` block, then click **Run live**.
-The starter car program contains motion commands. Nothing connects or moves merely
-from opening the editor; execution begins only when Run live is clicked.
+Open **http://127.0.0.1:8765**. Restart an older server and refresh the browser after
+updating. The server uses the existing VSSS environment. A fresh copy needs the
+parent Python requirements and `npm.cmd ci` in this folder. No sign-in or API key
+is required. Use `--port 8767` if needed.
 
-If needed, install the parent project's Python requirements in that environment:
+## Examples
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+Every requested example is available in the example selector and as a Python file:
 
-For a fresh checkout, install the pinned Blockly/browser-test dependencies once:
-
-```powershell
-cd blockly_python_demo
-npm.cmd ci
-```
-
-No account, sign-in, API key, or cloud service is required. The editor's assets
-are local and work offline. Lab Wi-Fi is still required for camera feedback.
-Use `--port 8767` to change the editor port. Ctrl+C stops the server and cleans up
-the active run. Run the server with the Python interpreter that has `bleak` installed.
-
-## Controls
-
-- **Run live** starts the current program. There is one active run per server.
-- **Stop** interrupts the program, sends a stop command, and disconnects the car.
-  It remains usable during long waits, camera waits, and endless Python loops.
-- **Car example / Python example** restore the robot or original print/loop demo.
-- **Save blocks / Open blocks** save and restore local JSON workspaces.
-- **Export Python** downloads ordinary `Car` Python code for use outside the editor.
-
-Output streams into the page while a program runs. Run is disabled until the
-previous program finishes cleanup. Blocks can be edited during a run; edits apply
-to the next run. Nothing is autosaved.
-
-## Student block mapping
-
-| Block | Generated Python | Meaning |
+| Example | Python file | Behavior |
 | --- | --- | --- |
-| with car N / do | `with Car(N) as car:` | Connect to carN and clean up on exit |
-| velocity forward / left / turn CCW | `car.set_velocity(x=..., y=..., w=...)` | Normalized robot-frame commands, each in [-1, 1] |
-| go to field X / Y / heading | `car.go_to(x, y, angle)` | Field metres and heading degrees; onboard waypoint control |
-| wait N seconds | `sleep(N)` | Wait actual seconds while an active command continues |
-| stop car | `car.stop()` | Stop motion and continue the rest of the program |
-| wait for camera position | `car.wait_for_position(timeout=...)` | Wait for fresh feedback or fail on timeout |
-| camera pose | `car.pose` | Pose(x, y, angle), or None if missing/stale |
-| camera position | `car.position` | (x, y), or None if missing/stale |
-| camera position available? | `car.pose is not None` | Check pose freshness and marker visibility |
-| robot status | `car.read_status()` | Read actual onboard mode, flags, fault and pose |
+| Print and add | [01_print_and_add.py](examples/01_print_and_add.py) | Print a greeting and 7 + 5. No robot. |
+| Variables and loops | [02_variables_and_loops.py](examples/02_variables_and_loops.py) | Add 2 to a running total five times and print 2, 4, 6, 8, 10. No robot. |
+| Rotate back and forth | [03_rotate_back_and_forth.py](examples/03_rotate_back_and_forth.py) | Car 1: w=0.2 for one second, w=-0.2 for one second, repeat forever. No translation or GPS requirement. |
+| Read car position | [04_read_car_position.py](examples/04_read_car_position.py) | Print marker 1's Pose(x, y, angle) every .25 seconds, or None if missing/stale. GPS only: no BLE connection or motion commands. |
+| Alternate waypoints | [05_alternate_waypoints.py](examples/05_alternate_waypoints.py) | Car 1: alternate (0, .5, 90) and (0, -.5, 90) forever, waiting for arrival at each. |
 
-Use one `with car` block per program. Place car and sensor blocks inside it.
-Loops, variables, print, arithmetic and comparisons can be used inside the session.
-A waypoint returns when acknowledged, **not when the car arrives**. A wait is a
-duration, not an arrival check. Exiting the session stops/disconnects the car.
-Normalized velocity is not a physical speed in metres per second.
+The rotation and waypoint examples move a physical car when Run live is clicked.
+Check the car number and available space first. Waypoints use field X/Y metres
+and heading degrees; yaw velocity is a normalized CCW command, not degrees/s.
+The waypoint example checks onboard feedback/fault state and fails after ten
+seconds without arrival rather than repeatedly overwriting an unfinished target.
 
-## Live execution and stopping
+Use **Stop** in the editor, or Ctrl+C for a separately executed Python example.
+There is no default two-minute run cutoff. Infinite examples continue until Stop,
+page closure, loss of the browser heartbeat, robot disconnection, or an error.
+The output pane keeps the latest 16,000 characters instead of ending a long
+position-reading program when the output fills up.
 
-The browser sends generated Python to a local threaded HTTP server. A disposable
-Python subprocess executes the student logic. Its Car proxy sends requests over
-private parent/child pipes to the supervisor, which owns the **real Car instance**
-and its BLE connection. The supervisor calls the existing public Car methods;
-real GPS/UDP supplies feedback. No hardware connection is held by the disposable
-student interpreter, so killing an endless loop does not orphan a moving BLE client.
-
-The supervisor stops/disconnects on normal completion, runtime/API error, Stop,
-server shutdown, and these conditions:
-
-- The owning browser closes or stops sending heartbeats for 5 seconds.
-- The run exceeds 120 seconds, including connection setup.
-- The robot disconnects or its connection generation changes; motion never resumes
-  automatically after reconnection.
-- Camera pose becomes missing/stale during motion. Fresh pose is also required
-  before any nonzero velocity or waypoint command is accepted.
-
-Stop first revokes further commands and ends the student process. The supervisor
-then sends stop and closes BLE and the camera receiver. The UI shows **Stopping**
-until cleanup completes. An already-running BLE operation can take its existing
-API timeout to return before cleanup; stopping during initial discovery may wait
-for the connection attempt to finish (normally bounded by Car's 15-second timeout).
-Stop/cleanup errors appear in the output rather than reporting successful completion.
-
-This is a software stop through BLE, not a physical emergency-stop circuit. If the
-link or server process is lost, stopping also relies on the existing firmware
-lease/timeout behavior. This editor does not add field-boundary protection or a
-new onboard controller. The track limits and firmware behavior remain unchanged.
-
-The local runner accepts a restricted Python subset, limits output to 16,000
-characters, and accepts only the Car/sleep imports and initial student API methods.
-It is for a trusted local classroom machine, not an untrusted-code hosting service.
-Do not expose the localhost server on a network.
-
-## Exported Python
-
-The export remains ordinary Python:
-
-```python
-from car import Car
-from time import sleep
-
-with Car(1) as car:
-    car.wait_for_position(timeout=10)
-    car.set_velocity(x=0.2, y=0, w=0)
-    sleep(1)
-    car.stop()
-```
-
-To run an export separately, place it in the repository root or install VSSS with
-`pip install -e .`, and run it with the configured environment. Exported scripts
-can move hardware and do not include the editor's supervisor, heartbeat, runtime
-limit or additional pose guard. The existing Car/transport/firmware rules apply.
-
-## Verification
+For example, run a standalone script from the repository root with:
 
 ```powershell
-cd blockly_python_demo
+.\.venv\Scripts\python.exe blockly_python_demo\examples\03_rotate_back_and_forth.py
+```
+
+For standalone robot scripts, VSSS must be installed in that environment
+(`pip install -e .`). The two basic Python scripts need no VSSS dependency.
+Other examples retained under More examples cover two cars, two gamepads,
+keyboard control and field observation.
+
+## Student toolbox
+
+Core blocks cover selecting/naming cars, velocity, waypoints, stop, position and
+heading, other cars and balls, held keyboard/gamepad buttons, normalized axes,
+print, variables, arithmetic, conditions, loops, waits and lists.
+
+Multiple named cars can be commanded in one loop or placed in a list for a
+for-each loop. Commands are sequential, while each car independently continues
+its most recent command. Velocity uses BLE only. Field reads start GPS lazily;
+waypoint control needs the robot's separate onboard position reception.
+
+**Advanced lessons** groups input edges/toggles, combined keyboard/gamepad
+controls, clock/timeouts, waiting for camera position and readable robot checks:
+
+- target reached?
+- onboard position available?
+- robot fault?
+- wait until the target is reached (with a timeout)
+
+Students select X, Y or angle from pose values. They do not need raw firmware
+flags, packet counters or transport state. The wait-for-arrival block generates
+ordinary Python polling code with fault/freshness/timeout checks.
+
+Removed from both the student toolbox and approved live execution surface:
+
+- Trim matrices and controller configuration/readbacks.
+- Reboot, telemetry recovery, connection-generation and individual-disconnect APIs.
+- GPS ports, subscriptions, stale-time configuration, shutdown and packet metadata.
+- Raw axes, global inversion settings and keyboard-availability plumbing.
+- Generic JSON configuration blocks.
+
+These operations remain available to the instructor through the normal VSSS
+Python API and command-line tools. Parent VSSS modules are unchanged. Cleanup
+remains an internal supervisor responsibility, not a student configuration block.
+
+## Input and cleanup
+
+Input reads use `vsss.input` on the server computer. Keyboard names include `w`
+and `Key.space`. Gamepads are numbered from 0; helper blocks generate names such
+as `LX0`, `LY1`, `A1` and `L31`. The input parser currently supports device suffixes
+0-9. The module's native watchers are loaded only on the first input read and are
+reused for the server lifetime. No browser input emulation is added.
+
+Robot/input/field programs export with a synchronous `@run` entry point. Basic
+print/arithmetic/variable examples export as plain Python. In live mode a disposable
+interpreter sends approved requests to the supervisor, which owns the real cars.
+Stop kills the student program and stops/disconnects all cars independently.
+A blocked call on one car does not delay sending Stop to the others; the blocked
+car must finish its existing API timeout before its own cleanup completes.
+
+Closing the owning page also stops the program, with a five-second heartbeat
+expiry as fallback. Losing/replacing any car's connection ends the entire run.
+GPS is released after run cleanup. Stop/cleanup errors are displayed while cleanup
+of other cars is still attempted. This is a software BLE stop, not a physical
+emergency-stop circuit; existing provider/firmware stopping behavior still applies.
+
+Exports and separately executed example files use native `vsss.run` cleanup but
+do not include the editor's independent Stop button or browser heartbeat.
+
+## Maintenance and checks
+
+`api_registry.py` is the explicit student approval list. It reads current parameter
+names/defaults/docstrings from the approved source files without importing device
+modules. New APIs still need approval, and semantic changes can need an adapter.
+Restart the server and refresh after Python API changes. Old motion-only single-car
+block JSON is supported; saved instructor/configuration blocks are no longer
+approved and need to be removed from student workspaces.
+
+From this folder:
+
+```powershell
 npm.cmd test
 ```
 
-Thirteen Python tests cover real-duration command execution, stop during waits or
-CPU loops, runtime errors, heartbeat expiry, run limits, missing/stale pose,
-disconnect/reconnection, overlapping runs, stale Stop requests, cancellation during
-connection and camera waits, output limits, and failed stop acknowledgement.
-
-One integration test uses the actual `Car`, actual BLE worker subprocess and actual
-UDP receiver, with the repository's fake radio and synthetic localhost camera
-packets. It verifies an encoded velocity command, a subsequent zero command, and
-BLE disconnection. No radio adapter or physical robot is used by these tests.
-
-Browser checks use `test_http_server.py`, an explicit test-only fake-I/O fixture.
-They cover the live controls, streamed output, real-time waits, Stop, page closure,
-Python export, orphan-block rejection, edits, save/load, runtime errors and request
-guards, and assert that the simulator view is absent. Export is also checked against
-the real Car class with mocked I/O. `server.py` always selects the real Car path.
-Physical motion and live radio delivery still require a supervised lab check.
-
-Key files: `vsss_blocks.js` (blocks/generators), `app.js` (editor/live controls),
-`server.py` (HTTP), `live_runtime.py` (hardware owner/watchdog), `worker.py` (student
-interpreter). Existing parent Car, GPS, transport and firmware files are unchanged.
+Tests use fake devices and actual input API functions with seeded state. They
+check multi-car routing/cleanup, instructor-operation rejection, source-driven
+schema, each Python example, opposite rotation commands, repeated waypoint targets,
+position-only observation, generated blocks, export, save/load, Stop and page
+closure. Physical Bluetooth, gamepads and motion still need a supervised lab check.
+Save blocks explicitly before closing; there is no autosave. This localhost runner
+is intended for a trusted classroom computer, not untrusted-code hosting.

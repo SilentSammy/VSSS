@@ -1,5 +1,11 @@
 /* Blockly creates source text; /run executes it using real local CPython. */
-const workspace = Blockly.inject('blocklyDiv', {
+let workspace;
+async function startEditor() {
+  const response = await fetch('/api/schema');
+  const schema = await response.json();
+  if (!response.ok) throw new Error(schema.error || 'Could not discover the VSSS API.');
+  installVsssBlocks(schema);
+  workspace = Blockly.inject('blocklyDiv', {
   media: 'node_modules/blockly/media/',
   toolbox: {kind: 'categoryToolbox', contents: [
     ...vsssToolbox,
@@ -7,21 +13,45 @@ const workspace = Blockly.inject('blocklyDiv', {
       {kind: 'block', type: 'text_print', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'Hello from Python!'}}}}},
       {kind: 'block', type: 'text'}]},
     {kind: 'category', name: 'Loops', colour: 120, contents: [
+      {kind: 'block', type: 'vsss_wait', inputs: {SECONDS: {shadow: {type: 'math_number', fields: {NUM: 1}}}}},
       {kind: 'block', type: 'controls_repeat_ext', inputs: {TIMES: {shadow: {type: 'math_number', fields: {NUM: 3}}}}},
-      {kind: 'block', type: 'controls_whileUntil'}]},
+      {kind: 'block', type: 'controls_whileUntil'}, {kind: 'block', type: 'controls_forEach'},
+      {kind: 'block', type: 'controls_flow_statements'}]},
     {kind: 'category', name: 'Math', colour: 230, contents: [
       {kind: 'block', type: 'math_number'},
       {kind: 'block', type: 'math_arithmetic', fields: {OP: 'ADD'}}]},
     {kind: 'category', name: 'Logic', colour: 210, contents: [
       {kind: 'block', type: 'controls_if'}, {kind: 'block', type: 'logic_compare'},
-      {kind: 'block', type: 'logic_boolean'}]},
+      {kind: 'block', type: 'logic_boolean'}, {kind: 'block', type: 'logic_null'},
+      {kind: 'block', type: 'logic_operation'}, {kind: 'block', type: 'logic_negate'}]},
+    {kind: 'category', name: 'Lists', colour: 260, contents: [
+      {kind: 'block', type: 'vsss_index'},
+      {kind: 'block', type: 'lists_create_with'}, {kind: 'block', type: 'lists_length'},
+      {kind: 'block', type: 'lists_isEmpty'}]},
     {kind: 'category', name: 'Variables', colour: 330, custom: 'VARIABLE'}
   ]},
   trashcan: true, grid: {spacing: 24, length: 2, colour: '#d6deeb', snap: true},
   zoom: {controls: true, wheel: true, startScale: 0.95}
 });
+  workspace.addChangeListener(updateCode);
+  loadLesson('printing');
+}
 
-function generatedCode() { return python.pythonGenerator.workspaceToCode(workspace); }
+function generatedCode() {
+  const raw = python.pythonGenerator.workspaceToCode(workspace).trim() || 'pass';
+  const types = workspace.getAllBlocks(false).map(b => b.type);
+  const carTypes = ['vsss_connect','vsss_car','vsss_velocity','vsss_waypoint','vsss_stop','vsss_wait_pose','vsss_pose','vsss_position','vsss_visible','vsss_status','vsss_target_reached','vsss_onboard_ready','vsss_robot_fault','vsss_wait_arrival'];
+  const imports = [];
+  if(types.some(t => t.startsWith('api_car_') || carTypes.includes(t))) imports.push('Car');
+  if(types.some(t => t.startsWith('api_gps_'))) imports.push('gps');
+  if(types.some(t => t.startsWith('api_input_') || ['vsss_key','vsss_key_held','vsss_pad_held','vsss_pad_axis','vsss_pad_button'].includes(t))) imports.push('input');
+  const times = ['sleep','monotonic'].filter(name => new RegExp('\\b' + name + '\\(').test(raw));
+  let header = times.length ? `from time import ${times.join(', ')}\n` : '';
+  if(!imports.length) return header + (header ? '\n' : '') + raw + '\n';
+  header = `from vsss import ${[...imports,'run'].join(', ')}\n` + header;
+  return header + '\n\n@run\ndef main():\n' + raw.split('\n').map(line=>'    '+line).join('\n') + '\n\n\nif __name__ == "__main__":\n    main()\n';
+}
+
 let activeRun = null;
 let busy = false;
 function updateCode() {
@@ -32,24 +62,11 @@ function updateCode() {
     if (!busy) document.getElementById('status').textContent = 'Ready to run live';
   } catch (error) { document.getElementById('status').textContent = error.message; }
 }
-workspace.addChangeListener(updateCode);
+function loadExample() {loadLesson('printing');}
 
-function loadExample() {
-  Blockly.serialization.workspaces.load({blocks: {languageVersion: 0, blocks: [
-    {type: 'controls_repeat_ext', x: 35, y: 35, inputs: {
-      TIMES: {shadow: {type: 'math_number', fields: {NUM: 3}}},
-      DO: {block: {type: 'text_print', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'Hello from Python!'}}}}}}
-    }, next: {block: {type: 'text_print', inputs: {TEXT: {block: {
-      type: 'math_arithmetic', fields: {OP: 'ADD'}, inputs: {
-        A: {shadow: {type: 'math_number', fields: {NUM: 7}}},
-        B: {shadow: {type: 'math_number', fields: {NUM: 5}}}
-      }
-    }}}}}}
-  ]}}, workspace);
-  updateCode();
-}
 document.getElementById('example').onclick = loadExample;
 document.getElementById('car-example').onclick = loadCarExample;
+document.getElementById('lesson').onchange = event => {if(event.target.value) loadLesson(event.target.value);};
 async function request(path, payload = {}, options = {}) {
   const response = await fetch(path, {method: 'POST', headers: {
     'Content-Type': 'application/json', 'X-Blockly-Demo': '1'
@@ -60,7 +77,7 @@ async function request(path, payload = {}, options = {}) {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['run', 'car-example', 'example', 'load']) document.getElementById(id).disabled = value;
+  for (const id of ['run', 'car-example', 'example', 'load', 'lesson']) document.getElementById(id).disabled = value;
 }
 function showRun(result) {
   document.getElementById('output').textContent = result.output + (result.error ? '\n' + result.error : '') || '(No output yet.)';
@@ -143,4 +160,8 @@ document.getElementById('export').onclick = () => {
     document.getElementById('status').textContent = 'Python exported — running it separately can move a real robot';
   } catch (error) { document.getElementById('status').textContent = error.message; }
 };
-loadCarExample();
+startEditor().catch(error => {
+  document.getElementById('status').textContent = 'Editor could not start';
+  document.getElementById('output').textContent = error.message;
+  document.getElementById('run').disabled = true;
+});

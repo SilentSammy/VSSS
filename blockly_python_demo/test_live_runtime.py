@@ -1,332 +1,327 @@
-"""Exercise the live supervisor/worker protocol with fake hardware, never BLE."""
-from dataclasses import dataclass
+"""Hardware-free checks of the current VSSS API and live supervisor."""
+import ast
 import json
-import os
 from pathlib import Path
-import socket
-import subprocess
-import sys
 import tempfile
-from threading import Event, Thread
+from threading import Event
 import time
 import unittest
 from unittest.mock import patch
 
+from api_registry import schema, SOURCES
+from fake_devices import Devices
 from live_runtime import LiveRunner
 from server import validate
 
-
-@dataclass
-class Pose:
-    x: float = .1
-    y: float = .2
-    angle: float = 90.
+ROOT=Path(__file__).resolve().parent.parent
 
 
-@dataclass
-class Status:
-    mode: int = 0
-    flags: int = 3
-    fault: int = 0
-    reserved: int = 0
-    x: float = .1
-    y: float = .2
-    angle: float = 90.
-    packet_count: int = 10
-
-
-class FakeCar:
-    def __init__(self, number):
-        self.number = number
-        self.pose = Pose()
-        self.is_connected = True
-        self.connection_generation = 1
-        self.events = [('connect', number)]
-        self.moving = Event()
-        self.gps = self
-
-    @property
-    def position(self):
-        return None if self.pose is None else (self.pose.x, self.pose.y)
-
-    def set_velocity(self, x=0., y=0., w=0.):
-        if not all(-1 <= v <= 1 for v in (x, y, w)):
-            raise ValueError('velocity must be within [-1, 1]')
-        self.events.append(('velocity', x, y, w))
-        self.moving.set()
-
-    def go_to(self, x, y, angle):
-        self.events.append(('waypoint', x, y, angle))
-        self.moving.set()
-        return x, y, angle
-
-    def read_status(self):
-        self.events.append(('status',))
-        return Status()
-
-    def stop(self):
-        self.events.append(('stop',))
-
-    def close(self):
-        self.events.append(('close',))
-        self.is_connected = False
-
-
-PREFIX = 'from car import Car\nfrom time import sleep\nwith Car(1) as car:\n'
+def program(body):
+    return 'from vsss import Car, gps, run, input\nfrom time import sleep, monotonic\n@run\ndef main():\n' + ''.join('    '+line+'\n' for line in body.splitlines()) + '\nif __name__ == "__main__":\n    main()\n'
 
 
 class LiveTests(unittest.TestCase):
     def setUp(self):
-        self.cars = []
-
-        def factory(number):
-            car = FakeCar(number)
-            self.cars.append(car)
-            return car
-
-        self.factory = factory
-        self.runner = LiveRunner(factory, lease_seconds=2, max_seconds=5)
+        self.devices=Devices()
+        self.runner=self.devices.runner(lease_seconds=2,max_seconds=8)
 
     def tearDown(self):
         self.runner.shutdown()
 
-    def start(self, body):
-        code = PREFIX + body
+    def start(self,body):
+        code=program(body)
         validate(code)
         return self.runner.start(code)['run_id']
 
-    def finish(self, run_id, renew=True, timeout=4):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            result = self.runner.status(run_id if renew else None)
-            if result['state'] not in {'running', 'stopping'}:
-                return result
+    def finish(self,run,renew=True,timeout=5):
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            result=self.runner.status(run if renew else None)
+            if result['state'] not in {'running','stopping'}: return result
             time.sleep(.02)
-        self.fail('Run did not finish: ' + str(self.runner.status()))
+        self.fail('Run did not finish: '+str(self.runner.status()))
 
-    def wait_car(self):
-        deadline = time.monotonic() + 2
-        while not self.cars:
-            if time.monotonic() > deadline:
-                self.fail('No connection attempt')
+    def wait_for(self,predicate,timeout=3):
+        deadline=time.monotonic()+timeout
+        while not predicate():
+            if time.monotonic()>deadline: self.fail('Condition did not become true')
             time.sleep(.01)
-        return self.cars[0]
 
     def assert_closed(self):
-        events = self.cars[0].events
-        self.assertIn(('stop',), events)
-        self.assertIn(('close',), events)
-        last_motion = max((i for i, e in enumerate(events) if e[0] in {'velocity', 'waypoint'}), default=-1)
-        self.assertGreater(events.index(('stop',)), last_motion)
+        self.assertTrue(self.devices.cars)
+        for car in self.devices.cars:
+            self.assertIn(('stop',),car.events)
+            self.assertIn(('close',),car.events)
 
-    def test_live_commands_output_and_real_duration(self):
-        began = time.monotonic()
-        run = self.start('    car.wait_for_position(timeout=1)\n'
-                         '    print(car.pose)\n'
-                         '    print(car.position)\n'
-                         '    car.set_velocity(x=.2, y=0, w=0)\n'
-                         '    sleep(.15)\n'
-                         '    car.go_to(0, .5, 90)\n'
-                         '    print(car.read_status())\n')
-        result = self.finish(run)
-        self.assertEqual(result['state'], 'finished', result)
-        self.assertIn('Pose(x=0.1, y=0.2', result['output'])
-        self.assertIn('(0.1, 0.2)', result['output'])
-        self.assertGreaterEqual(time.monotonic() - began, .15)
-        self.assertIn(('velocity', .2, 0, 0), self.cars[0].events)
-        self.assertIn(('waypoint', 0, .5, 90), self.cars[0].events)
+    def test_multiple_cars_and_two_native_gamepads_in_one_loop_without_gps(self):
+        run=self.start('a = Car(1)\nb = Car(2)\nfor i in range(3):\n    a.set_velocity(x=input.get_axis("LY0"))\n    b.set_velocity(x=input.get_axis("LY1"))\n    sleep(.01)\nprint(input.is_pressed("A0"), input.is_pressed("B1"))')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertIn('True True',result['output'])
+        self.assertEqual([e[1] for e in self.devices.cars[0].events if e[0]=='velocity'],[.5]*3)
+        self.assertEqual([e[1] for e in self.devices.cars[1].events if e[0]=='velocity'],[-.5]*3)
+        self.assertEqual(self.devices.field_reads,0)
+        self.assertEqual(self.devices.input_reads,1)
         self.assert_closed()
 
-    def test_stop_interrupts_long_sleep_and_no_later_commands(self):
-        run = self.start('    car.set_velocity(.2, 0, 0)\n    sleep(60)\n    car.go_to(0, .5, 90)\n')
-        self.assertTrue(self.wait_car().moving.wait(2))
-        self.runner.stop(run)
-        self.assertEqual(self.finish(run)['state'], 'stopped')
-        self.assertFalse(any(e[0] == 'waypoint' for e in self.cars[0].events))
+    def test_keyboard_edges_and_bipolar_controls_use_actual_api_functions(self):
+        run=self.start('print(input.is_pressed("w"))\nprint(input.rising_edge("w"), input.rising_edge("w"))\nprint(input.falling_edge("s"), input.falling_edge("s"))\nprint(input.get_bipolar_ctrl(high_key="w", low_key="s", keyboard_scale=.3))\nprint(input.get_axis("LY1"))')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertEqual(result['output'],'True\nTrue False\nTrue False\n0.3\n-0.5\n')
+        self.assertFalse(self.devices.cars)
+        self.assertEqual(self.devices.field_reads,0)
+
+    def test_iterating_a_list_of_car_objects(self):
+        run=self.start('fleet=[Car(1),Car(2),Car(3)]\nfor tick in range(2):\n    for robot in fleet:\n        robot.set_velocity(x=.1*robot.number)\n    sleep(.01)')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertEqual(len(self.devices.cars),3)
+        for car in self.devices.cars:
+            values=[event[1] for event in car.events if event[0]=='velocity']
+            self.assertEqual(len(values),2)
+            self.assertAlmostEqual(values[0],.1*car.number)
         self.assert_closed()
 
-    def test_stop_interrupts_cpu_loop(self):
-        run = self.start('    car.set_velocity(.2, 0, 0)\n    while True:\n        pass\n')
-        self.assertTrue(self.wait_car().moving.wait(2))
-        self.runner.stop(run)
-        self.assertEqual(self.finish(run)['state'], 'stopped')
-        self.assert_closed()
+    def test_field_without_car_and_lossless_pose_status_records(self):
+        run=self.start('cars = gps.cars\nballs = gps.balls\nprint(cars[1].x, cars.get(2).angle, balls[0].y)\nprint(gps.get_car(9) is None, gps.board_detected)')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertEqual(result['output'],'0.1 90.0 0.4\nTrue True\n')
+        self.assertFalse(self.devices.cars)
+        self.assertEqual(self.devices.field_reads,1)
+        self.assertGreater(self.devices.gps.closes,0)
 
-    def test_error_stops_and_disconnects(self):
-        run = self.start('    car.set_velocity(.2, 0, 0)\n    print(1 / 0)\n')
-        result = self.finish(run)
-        self.assertEqual(result['state'], 'failed')
-        self.assertIn('ZeroDivisionError', result['error'])
-        self.assert_closed()
-
-    def test_browser_lease_and_run_time_limit(self):
-        for lease, limit, expected in ((.3, 5, 'Editor disconnected'), (2, .4, 'Run time limit')):
-            with self.subTest(expected=expected):
-                self.cars.clear()
-                self.runner = LiveRunner(self.factory, lease_seconds=lease, max_seconds=limit)
-                run = self.start('    car.set_velocity(.2, 0, 0)\n    sleep(60)\n')
-                result = self.finish(run, renew=False)
-                self.assertEqual(result['state'], 'stopped', result)
-                self.assertIn(expected, result['reason'])
-                self.assert_closed()
-
-    def test_missing_pose_blocks_motion_and_stale_pose_stops_motion(self):
-        def unavailable(number):
-            car = self.factory(number)
-            car.pose = None
-            return car
-        self.runner = LiveRunner(unavailable)
-        run = self.start('    car.set_velocity(.2, 0, 0)\n')
-        self.assertEqual(self.finish(run)['state'], 'failed')
-        self.assertFalse(self.cars[0].moving.is_set())
-        self.cars.clear()
-        self.runner = LiveRunner(self.factory)
-        run = self.start('    car.set_velocity(.2, 0, 0)\n    sleep(60)\n')
-        car = self.wait_car()
-        self.assertTrue(car.moving.wait(2))
-        car.pose = None
-        result = self.finish(run)
-        self.assertIn('stale', result['reason'])
-        self.assert_closed()
-
-    def test_lost_connection_and_reconnection_end_run(self):
-        for changed in ('is_connected', 'connection_generation'):
-            with self.subTest(changed=changed):
-                self.cars.clear()
-                run = self.start('    car.set_velocity(.2, 0, 0)\n    sleep(60)\n')
-                car = self.wait_car()
-                self.assertTrue(car.moving.wait(2))
-                setattr(car, changed, False if changed == 'is_connected' else 2)
-                self.assertEqual(self.finish(run)['state'], 'stopped')
-                self.assert_closed()
-
-    def test_busy_and_stale_stop_do_not_replace_active_run(self):
-        run = self.start('    sleep(60)\n')
-        with self.assertRaises(ValueError):
-            self.runner.start('print(1)')
-        self.runner.stop('old-run-id')
-        self.assertEqual(self.runner.status(run)['state'], 'running')
-        self.runner.stop(run)
-        self.assertEqual(self.finish(run)['state'], 'stopped')
-
-    def test_stop_during_connection_never_allows_motion(self):
-        connecting, release = Event(), Event()
-
-        def slow_factory(number):
-            connecting.set()
-            release.wait(2)
-            return self.factory(number)
-
-        self.runner = LiveRunner(slow_factory)
-        run = self.start('    car.set_velocity(.2, 0, 0)\n')
-        self.assertTrue(connecting.wait(2))
-        self.runner.stop(run)
-        release.set()
-        self.assertEqual(self.finish(run)['state'], 'stopped')
-        self.assertFalse(self.cars[0].moving.is_set())
-        self.assert_closed()
-
-    def test_camera_wait_is_cancellable(self):
-        def unavailable(number):
-            car = self.factory(number)
-            car.pose = None
-            return car
-        self.runner = LiveRunner(unavailable)
-        run = self.start('    car.wait_for_position(timeout=60)\n')
-        self.wait_car()
-        self.runner.stop(run)
-        self.assertEqual(self.finish(run)['state'], 'stopped')
-        self.assert_closed()
-
-    def test_output_limit_and_stop_ack_failure_are_visible(self):
-        run = self.start('    for i in range(20000):\n        print("hello")\n')
-        self.assertEqual(self.finish(run)['state'], 'failed')
-        self.assert_closed()
-        self.cars.clear()
-
-        def failing_stop(number):
-            car = self.factory(number)
-            def stop():
-                raise TimeoutError('fake acknowledgement timeout')
-            car.stop = stop
-            return car
-
-        self.runner = LiveRunner(failing_stop)
-        run = self.start('    print(car.pose)\n')
-        result = self.finish(run)
-        self.assertEqual(result['state'], 'failed')
-        self.assertIn('Stop was not acknowledged', result['error'])
-        self.assertIn(('close',), self.cars[0].events)
-
-    def test_validation_rejects_other_imports_and_unguarded_constructor(self):
-        for code in ('import os', 'from car import GPS', 'Car(1)', 'car.restart()',
-                     'print(car._client)', 'car.pose = 1'):
-            with self.subTest(code=code), self.assertRaises(ValueError):
+    def test_current_boilerplates_execute_unchanged(self):
+        for name in ('velocity',):
+            with self.subTest(name=name):
+                code=(ROOT/f'boilerplate_{name}.py').read_text(encoding='utf-8-sig')
                 validate(code)
+                result=self.finish(self.runner.start(code)['run_id'])
+                self.assertEqual(result['state'],'finished',result)
+                self.assert_closed()
+        code=(ROOT/'boilerplate_observe.py').read_text(encoding='utf-8-sig')
+        validate(code)
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:'Balls:' in self.runner.status(run)['output'])
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+
+    def test_readable_status_and_pose(self):
+        run=self.start('car=Car(1)\nprint(car.number)\nprint(car.wait_for_position(timeout=.1).angle)\ncar.go_to(0,.5,90)\ns=car.read_status()\nprint(s.mode_name,s.fault_name,s.pose_fresh)')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertIn('reached none True',result['output'])
+        self.assertIn(('waypoint',0,.5,90),self.devices.cars[0].events)
+
+    def test_stop_interrupts_wait_and_cpu_loop_for_all_cars(self):
+        for tail in ('sleep(60)','while True:\n    pass'):
+            with self.subTest(tail=tail):
+                self.devices.cars.clear()
+                run=self.start('a=Car(1)\nb=Car(2)\na.set_velocity(.2)\nb.set_velocity(.3)\n'+tail+'\na.go_to(0,.5,90)')
+                self.wait_for(lambda:len(self.devices.cars)==2 and any(e[0]=='velocity' for e in self.devices.cars[1].events))
+                self.runner.stop(run)
+                self.assertEqual(self.finish(run)['state'],'stopped')
+                self.assert_closed()
+                self.assertFalse(any(e[0]=='waypoint' for c in self.devices.cars for e in c.events))
+
+    def test_error_stops_all_and_preserves_original_error(self):
+        run=self.start('a=Car(1)\nb=Car(2)\na.set_velocity(.2)\nb.set_velocity(.2)\nraise RuntimeError("student failure")')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'failed')
+        self.assertIn('student failure',result['error'])
+        self.assert_closed()
+
+    def test_stop_other_car_while_second_connection_is_blocked(self):
+        entered,release=Event(),Event()
+        def factory(number,**kwargs):
+            if number==2:
+                entered.set(); release.wait(3)
+            return self.devices.car(number,**kwargs)
+        self.runner=LiveRunner(factory,gps_factory=self.devices.field,input_factory=self.devices.inputs,cleanup=self.devices.cleanup)
+        run=self.start('a=Car(1)\na.set_velocity(.2)\nb=Car(2)\nb.set_velocity(.2)')
+        self.assertTrue(entered.wait(2))
+        self.runner.stop(run)
+        self.wait_for(lambda:('close',) in self.devices.cars[0].events,timeout=1)
+        release.set()
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assertFalse(any(e[0]=='velocity' for e in self.devices.cars[1].events))
+        self.assert_closed()
+
+    def test_failed_second_connection_and_failed_first_cleanup_still_stop_others(self):
+        def factory(number,**kwargs):
+            if number==2: raise TimeoutError('second car missing')
+            return self.devices.car(number,**kwargs)
+        self.runner=LiveRunner(factory,cleanup=lambda:None)
+        result=self.finish(self.start('a=Car(1)\na.set_velocity(.2)\nb=Car(2)'))
+        self.assertIn('second car missing',result['error'])
+        self.assert_closed()
+        self.devices.cars.clear()
+        def broken_stop(number,**kwargs):
+            car=self.devices.car(number,**kwargs)
+            if number==1:
+                def stop(): raise TimeoutError('no stop acknowledgement')
+                car.stop=stop
+            return car
+        self.runner=LiveRunner(broken_stop,cleanup=lambda:None)
+        result=self.finish(self.start('a=Car(1)\nb=Car(2)\nraise ValueError("original")'))
+        self.assertIn('original',result['error'])
+        self.assertIn('no stop acknowledgement',result['error'])
+        for car in self.devices.cars: self.assertIn(('close',),car.events)
+        self.assertIn(('stop',),self.devices.cars[1].events)
+
+    def test_disconnect_any_car_stops_all(self):
+        run=self.start('a=Car(1)\nb=Car(2)\na.set_velocity(.2)\nb.set_velocity(.2)\nsleep(60)')
+        self.wait_for(lambda:len(self.devices.cars)==2 and any(e[0]=='velocity' for e in self.devices.cars[1].events))
+        self.devices.cars[1].connection_generation+=1
+        result=self.finish(run)
+        self.assertEqual(result['state'],'stopped')
+        self.assertIn('car2',result['reason'])
+        self.assert_closed()
+
+    def test_gps_is_optional_for_velocity_even_when_pose_missing(self):
+        def factory(number,**kwargs):
+            car=self.devices.car(number,**kwargs); car.pose=None; return car
+        self.runner=LiveRunner(factory,gps_factory=lambda: self.fail('GPS must remain lazy'),cleanup=lambda:None)
+        result=self.finish(self.start('a=Car(1)\na.set_velocity(.2)\nsleep(.05)'))
+        self.assertEqual(result['state'],'finished',result)
+        self.assert_closed()
+
+    def test_lease_limit_busy_and_stale_stop(self):
+        self.runner=self.devices.runner(lease_seconds=.3,max_seconds=2)
+        run=self.start('a=Car(1)\nb=Car(2)\nsleep(60)')
+        with self.assertRaises(ValueError): self.runner.start('print(1)')
+        self.runner.stop('old-run')
+        self.assertEqual(self.runner.status()['state'],'running')
+        result=self.finish(run,renew=False)
+        self.assertIn('Editor disconnected',result['reason'])
+        self.assert_closed()
+        self.runner=self.devices.runner(lease_seconds=2,max_seconds=.3)
+        result=self.finish(self.start('while True:\n    pass'))
+        self.assertIn('time limit',result['reason'])
+
+    def test_instructor_operations_are_denied_by_validator_and_runner(self):
+        forbidden = ['a.set_trim()', 'a.read_trim()', 'a.set_controller({"horizon":.2})',
+                     'a.read_controller()', 'a.restart()', 'a.reconnect_telemetry()',
+                     'a.close()', 'Car.close_all()', 'gps.close()', 'print(gps.latest)',
+                     'print(gps.port)', 'print(a.connection_generation)',
+                     'input.INVERT_Y_AXIS=True', 'from vsss import GPS']
+        for statement in forbidden:
+            with self.subTest(statement=statement),self.assertRaises(ValueError):
+                validate(program('a=Car(1)\n'+statement))
+        # Bypass the HTTP validator deliberately: the RPC surface must also deny
+        # configuration and unnormalized axes.
+        for statement in ['a.set_trim()', 'a.set_controller({})', 'a.restart()', 'input.get_axis("LX0",normalize=False)']:
+            with self.subTest(statement=statement):
+                result=self.finish(self.runner.start(program('a=Car(1)\n'+statement))['run_id'])
+                self.assertEqual(result['state'],'failed',result)
+        result=self.finish(self.start('a=Car(1)\nb=Car(1)'))
+        self.assertIn('already has a connection',result['error'])
+
+    def test_camera_wait_output_limit_and_legacy_context(self):
+        def factory(number,**kwargs):
+            car=self.devices.car(number,**kwargs); car.pose=None; return car
+        self.runner=LiveRunner(factory,cleanup=lambda:None)
+        run=self.start('a=Car(1)\na.wait_for_position(timeout=60)')
+        self.wait_for(lambda:len(self.devices.cars)==1)
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assert_closed()
+        self.runner=self.devices.runner()
+        result=self.finish(self.start('a=Car(1)\nprint("x" * 20000)'))
+        self.assertEqual(result['state'],'finished',result)
+        self.assertLessEqual(len(result['output']),16000)
+        legacy='from car import Car\nwith Car(1) as car:\n    car.set_velocity(.2)\n'
+        validate(legacy)
+        self.assertEqual(self.finish(self.runner.start(legacy)['run_id'])['state'],'finished')
+
+    def test_python_basics_examples(self):
+        expected={'01_print_and_add.py':'Hello, Python!\n12\n',
+                  '02_variables_and_loops.py':'2\n4\n6\n8\n10\n'}
+        for name,output in expected.items():
+            code=(ROOT/'blockly_python_demo/examples'/name).read_text()
+            validate(code)
+            result=self.finish(self.runner.start(code)['run_id'])
+            self.assertEqual(result['state'],'finished',result)
+            self.assertEqual(result['output'],output)
+        self.assertFalse(self.devices.cars)
+        self.assertEqual(self.devices.field_reads,0)
+
+    def test_infinite_rotation_alternates_until_stopped(self):
+        self.runner=self.devices.runner()
+        self.assertIsNone(self.runner.max_seconds)
+        code=(ROOT/'blockly_python_demo/examples/03_rotate_back_and_forth.py').read_text()
+        validate(code)
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='velocity'])>=3)
+        events=[e for e in self.devices.cars[0].events if e[0]=='velocity']
+        self.assertEqual(events[:3],[('velocity',0,0,.2),('velocity',0,0,-.2),('velocity',0,0,.2)])
+        self.assertEqual(self.runner.status(run)['state'],'running')
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assertEqual(self.devices.field_reads,0)
+        self.assert_closed()
+
+    def test_position_example_only_reads_field(self):
+        code=(ROOT/'blockly_python_demo/examples/04_read_car_position.py').read_text()
+        validate(code)
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:'Pose(' in self.runner.status(run)['output'])
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assertFalse(self.devices.cars)
+        self.assertEqual(self.devices.field_reads,1)
+
+    def test_alternating_waypoints_wait_and_can_be_stopped(self):
+        code=(ROOT/'blockly_python_demo/examples/05_alternate_waypoints.py').read_text()
+        validate(code)
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='waypoint'])>=3)
+        events=[e for e in self.devices.cars[0].events if e[0]=='waypoint']
+        self.assertEqual(events[:3],[('waypoint',0,.5,90),('waypoint',0,-.5,90),('waypoint',0,.5,90)])
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assert_closed()
+
+    def test_waypoint_fault_or_timeout_does_not_send_the_next_target(self):
+        from vsss._ble_protocol import RobotStatus
+        code=(ROOT/'blockly_python_demo/examples/05_alternate_waypoints.py').read_text()
+        for fault,expected in ((1,'Onboard position/control unavailable'),(0,'Waypoint timed out')):
+            with self.subTest(fault=fault):
+                self.devices.cars.clear()
+                def factory(number,**kwargs):
+                    car=self.devices.car(number,**kwargs)
+                    car.read_status=lambda:RobotStatus(2,3,fault,0,.1,.2,90.,10)
+                    return car
+                self.runner=LiveRunner(factory,cleanup=self.devices.cleanup)
+                test_code=code.replace('monotonic() + 10','monotonic() + 0.15')
+                result=self.finish(self.runner.start(test_code)['run_id'])
+                self.assertEqual(result['state'],'failed',result)
+                self.assertIn(expected,result['error'])
+                self.assertEqual(len([e for e in self.devices.cars[0].events if e[0]=='waypoint']),1)
+                self.assert_closed()
 
 
-class RealAPIPipelineTests(unittest.TestCase):
-    def test_live_supervisor_through_real_car_and_ble_worker_with_fake_radio(self):
-        root = Path(__file__).resolve().parent.parent
-        sys.path.insert(0, str(root))
-        from gps import GPS
-        # The actual UDP receiver is restricted to localhost test packets and
-        # passive mode; the radio substitute is verified before constructing Car.
-        gps = None
-        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        stop_sending = Event()
-        port = None
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0))
-            provider_port = probe.getsockname()[1]
-        packet = json.dumps(dict(board_detected=True, markers=[dict(id=1, x=.1, y=.2, angle=90)])).encode()
 
-        def publish():
-            while not stop_sending.is_set():
-                sender.sendto(packet, ('127.0.0.1', port))
-                stop_sending.wait(.03)
+class SchemaTests(unittest.TestCase):
+    def test_discovery_uses_current_signatures_and_never_imports_input(self):
+        data=schema()
+        axis=next(b for b in data['blocks'] if b['id']=='api_input_get_axis')
+        self.assertEqual([(a['name'],a['default']) for a in axis['args']],[('axis_name',None)])
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'car.py'
+            path.write_text(SOURCES['car'].read_text(encoding='utf-8-sig').replace('def set_velocity(self, x=0., y=0., w=0.):','def set_velocity(self, x=0., y=0., w=0., gain=0.7):'),encoding='utf-8')
+            with patch.dict(SOURCES,{'car':path}):
+                velocity=next(b for b in schema()['blocks'] if b['id']=='api_car_set_velocity')
+                self.assertEqual(velocity['args'][-1]['name'],'gain')
+                self.assertEqual(velocity['args'][-1]['default'],.7)
+        import sys
+        self.assertNotIn('vsss.input',sys.modules)
 
-        publisher = Thread(target=publish, daemon=True)
-        runner = LiveRunner(lease_seconds=2, max_seconds=5)
-        try:
-            with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
-                    'VSSS_PROVIDER_PORT': str(provider_port),
-                    'PYTHONPATH': str(root / '.tests/fake_ble') + os.pathsep + str(root),
-                    'BLE_TEST_LOG': str(Path(folder) / 'ble.jsonl')}):
-                radio = subprocess.check_output([sys.executable, '-c', 'import bleak; print(bleak.__file__)'],
-                                                cwd=root, text=True).strip()
-                self.assertEqual(Path(radio).resolve(), (root / '.tests/fake_ble/bleak.py').resolve())
-                gps = GPS(port=0, subscribe=False)
-                port = gps.port
-                publisher.start()
-                run_id = runner.start(PREFIX + '    car.wait_for_position(timeout=1)\n'
-                                      '    car.set_velocity(.2, 0, 0)\n'
-                                      '    sleep(.2)\n'
-                                      '    print(car.read_status())\n')['run_id']
-                deadline = time.monotonic() + 6
-                while time.monotonic() < deadline:
-                    result = runner.status(run_id)
-                    if result['state'] not in {'running', 'stopping'}:
-                        break
-                    time.sleep(.02)
-                self.assertEqual(result['state'], 'finished', result)
-                self.assertIn('RobotStatus(', result['output'])
-                events = [json.loads(line) for line in (Path(folder) / 'ble.jsonl').read_text().splitlines()]
-                self.assertTrue(any(e['event'] == 'scan' and e['name'] == 'car1' for e in events))
-                moving = [i for i, e in enumerate(events) if e['event'] == 'write' and e['data'] == [25, 0, 0]]
-                self.assertTrue(moving, events)
-                self.assertTrue(any(e['event'] == 'write' and e['data'] == [0, 0, 0]
-                                    for e in events[max(moving) + 1:]))
-                self.assertTrue(any(e['event'] == 'disconnect' for e in events))
-        finally:
-            runner.shutdown()
-            stop_sending.set()
-            if publisher.ident:
-                publisher.join(timeout=1)
-            sender.close()
-            if gps:
-                gps.close()
+    def test_validation_limits_exposure(self):
+        for code in ('import os','from vsss import _provider','print(input._axis_states)','car._client.stop()',
+                     'car.unknown()','gps.add_listener(print)','input.pressed_keys.clear()','car.pose=1'):
+            with self.subTest(code=code),self.assertRaises(ValueError): validate(code)
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__=='__main__': unittest.main()
