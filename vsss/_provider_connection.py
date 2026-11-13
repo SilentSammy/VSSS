@@ -34,8 +34,10 @@ def connect(role, name=None, timeout=8, **options):
             if sock:
                 sock.close()
             if not started:
-                flags = (getattr(subprocess, 'DETACHED_PROCESS', 0) |
-                         getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) |
+                # DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW. In a
+                # venv the Python launcher can then give the real interpreter
+                # a new console. NO_WINDOW alone also survives that launcher.
+                flags = (getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) |
                          getattr(subprocess, 'CREATE_NO_WINDOW', 0)) if os.name == 'nt' else 0
                 process = subprocess.Popen([sys.executable, '-u', '-m', 'vsss._provider'],
                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

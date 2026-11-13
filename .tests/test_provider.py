@@ -171,6 +171,40 @@ class ProviderIntegrationTests(unittest.TestCase):
         time.sleep(6)
         self.car('car1').stop()
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows console regression')
+    def test_first_provider_start_has_no_console_through_venv_launcher(self):
+        from vsss._provider_observer import ProviderObserver
+        original_popen = subprocess.Popen
+        launched = []
+
+        def probe_console(command, **options):
+            self.assertEqual(command[-1], 'vsss._provider')
+            # Probe the real interpreter after the venv redirector, using the
+            # production flags, then run the actual provider in that process.
+            probe = (
+                "import ctypes,runpy; "
+                "ctypes.windll.kernel32.GetConsoleWindow.restype=ctypes.c_void_p; "
+                "print(ctypes.windll.kernel32.GetConsoleWindow() or 0,flush=True); "
+                "runpy.run_module('vsss._provider',run_name='__main__')")
+            options['stdout'] = subprocess.PIPE
+            process = original_popen([command[0], '-u', '-c', probe], **options)
+            launched.append(process)
+            return process
+
+        try:
+            with patch('vsss._provider_connection.subprocess.Popen', side_effect=probe_console):
+                with ProviderObserver(('ble',)):
+                    self.assertEqual(len(launched), 1)
+                    self.assertEqual(launched[0].stdout.readline().strip(), b'0')
+        finally:
+            for process in launched:
+                try:
+                    process.wait(timeout=8)  # Normal idle shutdown remains intact.
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                process.stdout.close()
+
     def test_decorated_multicar_script_closes_sessions_without_starting_gps(self):
         code = '''
 from time import sleep

@@ -227,7 +227,8 @@ class LiveRun:
         try:
             process = subprocess.Popen([sys.executable, '-I', '-u', str(ROOT / 'worker.py')],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding='utf-8', errors='replace', cwd=ROOT)
+                text=True, encoding='utf-8', errors='replace', cwd=ROOT,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             with self.lock:
                 self.process = process
             Thread(target=self.watch, daemon=True, name='Blockly-watchdog').start()
