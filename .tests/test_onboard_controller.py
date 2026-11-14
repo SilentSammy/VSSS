@@ -48,6 +48,36 @@ class OnboardControllerTests(unittest.TestCase):
         _, _, w = controller.update((0, 0, 0), 0)
         self.assertAlmostEqual(w, math.radians(.6))
 
+    def test_logged_fast_pass_through_arrival_band_keeps_braking(self):
+        controller = OnboardController()
+        controller.set_target(0, .5, math.pi / 2)
+        controller.velocity = [.0217, .2415, .5471]
+        x, _, w = controller.update((.01, .5, 91), 4709)
+        self.assertLess(x, 0)
+        self.assertLess(w, 0)
+        self.assertIsNone(controller.stable_since)
+        self.assertFalse(controller.reached(5400))
+
+    def test_arrival_hold_starts_only_after_estimated_speed_settles(self):
+        controller = OnboardController()
+        controller.set_target(0, 0, 0)
+        controller.previous = (0, -.04, 0, 0)
+        x, _, _ = controller.update((0, 0, 0), 100)
+        self.assertLess(x, 0)
+        self.assertIsNone(controller.stable_since)
+        for now in range(200, 1001, 100):
+            controller.update((0, 0, 0), now)
+            if now < 1000:
+                self.assertFalse(controller.reached(now))
+        self.assertTrue(controller.reached(1000))
+
+    def test_missing_pose_cancels_arrival_hold(self):
+        controller = OnboardController()
+        controller.set_target(0, 0, 0)
+        controller.update((0, 0, 0), 100)
+        controller.update(None, 200)
+        self.assertFalse(controller.reached(1000))
+
 
 if __name__ == "__main__":
     unittest.main()

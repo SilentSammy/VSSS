@@ -9,7 +9,7 @@ from mecanum import MecanumCar
 from onboard_controller import CONTROLLER_KEYS, OnboardController
 from pose_receiver import PoseReceiver
 from robot_config import RobotConfig, validate
-from telemetry_recovery import TelemetryRecovery
+from telemetry_recovery import TelemetryRecovery, low_latency_wifi
 
 VELOCITY_UUID = "12345678-1234-5678-1234-56789abcdef1"
 LEASE_UUID = "12345678-1234-5678-1234-56789abcdef2"
@@ -33,10 +33,12 @@ WAYPOINT_TIMEOUT_MS = 30000
 def connect_wifi(ssid, password, timeout_ms=20000):
     wlan = network.WLAN(network.STA_IF)
     if wlan.isconnected():
+        low_latency_wifi(wlan)
         return wlan
     wlan.active(False)
     time.sleep_ms(500)
     wlan.active(True)
+    low_latency_wifi(wlan)
     wlan.config(txpower=5, reconnects=3)
     wlan.connect(ssid, password)
     deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
@@ -168,6 +170,13 @@ def main():
         # Fully start Wi-Fi and GATT before allocating optional diagnostic RAM.
         from navigation_log import NavigationLog
         nav_log = NavigationLog(settings)
+        nav_log.event('navigation_policy', wifi_pm=wlan.config('pm'),
+                      freshness='frame_age_plus_time_since_unique_frame', stale_ms=500,
+                      settle_speed=controller.settle_speed,
+                      settle_yaw_rad_s=controller.settle_yaw_rate)
+        nav_log.flush()  # Startup is stopped; no flash writes during motion.
+        import gc
+        gc.collect()  # Release startup serialization/GATT temporaries before RX.
         print("car%d ready; WiFi %s; control onboard" % (
             settings["car_id"], wlan.ifconfig()[0] if wlan.isconnected() else "unavailable"))
         last_status = 0
@@ -230,6 +239,9 @@ def main():
                 if receiver is None or not wlan.isconnected() or not receiver.fresh:
                     car.stop()
                     state["mode"], state["fault"] = MODE_FAULT, FAULT_TELEMETRY
+                    nav_log.event('telemetry_fault',
+                                  age_ms=receiver.age_ms if receiver else None,
+                                  memory_errors=receiver.memory_errors if receiver else 0)
                 elif time.ticks_diff(now, state["deadline"]) >= 0:
                     car.stop()
                     state["mode"], state["fault"] = MODE_FAULT, FAULT_TIMEOUT
@@ -238,7 +250,7 @@ def main():
                     # Re-estimating velocity from the same pose at 100 Hz makes
                     # the next real displacement look as if it occurred in
                     # 10 ms, producing a large, noisy predictive correction.
-                    frame = (receiver.frame_sequence if receiver.frame_sequence is not None
+                    frame = (receiver.stream_id, receiver.frame_sequence if receiver.frame_sequence is not None
                              else receiver.packets)
                     if frame != state["control_frame"]:
                         state["control_frame"] = frame

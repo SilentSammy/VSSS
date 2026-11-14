@@ -38,14 +38,14 @@ class NavigationLog:
 
     navigation.jsonl is newest; .1.jsonl and .2.jsonl are older. Every segment
     has a schema/configuration header. Append across boots, never truncate on
-    startup. A preallocated ring retains up to 128 samples (about 25 seconds),
-    reduced if needed to leave 20 KiB of free heap for control and networking.
+    startup. A preallocated ring retains up to 64 samples (about 13 seconds),
+    reduced if needed to leave 32 KiB of free heap for control and networking.
     No filesystem writes occur during active navigation: persist only once
     stopped, reached, faulted, or shutting down. Power loss during motion can
     lose the current RAM trace; earlier flushed waypoints remain on flash.
     """
     def __init__(self, settings, prefix='navigation', max_bytes=128 * 1024,
-                 sample_ms=200, buffer_bytes=2048, sample_slots=128):
+                 sample_ms=200, buffer_bytes=2048, sample_slots=64):
         self.prefix, self.max_bytes = prefix, max_bytes
         self.sample_ms, self.buffer_bytes = sample_ms, buffer_bytes
         self.enabled = True
@@ -64,7 +64,7 @@ class NavigationLog:
         try:
             gc.collect()
             if hasattr(gc, 'mem_free'):
-                self.sample_slots = min(sample_slots, max(0, (gc.mem_free() - 20 * 1024) // SAMPLE_SIZE))
+                self.sample_slots = min(sample_slots, max(0, (gc.mem_free() - 32 * 1024) // SAMPLE_SIZE))
             while self.sample_slots >= min(16, sample_slots) and self.sample_slots > 0:
                 try:
                     self.ring = bytearray(self.sample_slots * SAMPLE_SIZE)

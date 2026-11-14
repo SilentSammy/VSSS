@@ -121,11 +121,11 @@ class NavigationLogTests(unittest.TestCase):
         log.close()
 
     def test_heap_budget_keeps_reserve(self):
-        available = 20 * 1024 + 64 * SAMPLE_SIZE
+        available = 32 * 1024 + 64 * SAMPLE_SIZE
         with patch('mp.navigation_log.gc.mem_free', return_value=available, create=True):
             log = NavigationLog(self.settings, prefix=self.prefix)
         self.assertEqual(log.sample_slots, 64)
-        self.assertEqual(available - len(log.ring), 20 * 1024)
+        self.assertEqual(available - len(log.ring), 32 * 1024)
         log.close()
 
     def test_switch_to_moving_manual_control_does_not_write_flash(self):

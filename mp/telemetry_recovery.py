@@ -2,6 +2,11 @@
 import time
 
 
+def low_latency_wifi(wlan):
+    """Disable modem sleep on this ESP32 port, including after reconnects."""
+    wlan.config(pm=getattr(type(wlan), 'PM_NONE', 0))
+
+
 class TelemetryRecovery:
     def __init__(self, wlan, settings, receiver_factory, retry_ms=10000):
         self.wlan = wlan
@@ -37,6 +42,7 @@ class TelemetryRecovery:
                 self.next_retry = time.ticks_add(now, self.retry_ms)
                 try:
                     self.wlan.active(True)
+                    low_latency_wifi(self.wlan)
                     self.wlan.connect(self.settings['wifi_ssid'], self.settings['wifi_password'])
                 except OSError as error:
                     print('WiFi reconnect failed:', error)

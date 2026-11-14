@@ -84,6 +84,14 @@ own marker. `car.wait_for_position()` waits for desktop visibility when your
 planning code also needs field feedback; `car.read_status().pose_fresh` checks
 the robot's separate onboard reception.
 
+The firmware disables Wi-Fi modem sleep for lower-latency feedback. Its
+freshness check includes reported camera frame age and time since the last
+unique frame; duplicates do not keep an old pose alive. Arrival requires low
+estimated translation/yaw speed throughout the hold period, with predictive
+braking retained during a fast pass through the target. The speed thresholds
+are derived from the existing tolerances and hold time, so the BLE controller
+parameter layout and saved per-car trim remain unchanged.
+
 ## Stored robot configuration
 
 Trim and controller configuration live on the robot. Connecting does not rewrite
@@ -218,9 +226,9 @@ the boot ID, reset cause, controller parameters, and trim. Samples include
 onboard pose/timing, target, estimated velocity, raw/trimmed commands, actual
 PWM frequencies/duties, loop time, and free heap.
 
-During motion, the logger uses a preallocated RAM ring (up to 20 KiB / 25 seconds
+During motion, the logger uses a preallocated RAM ring (up to 10 KiB / 13 seconds
 at 5 Hz, reduced when heap is tight) and performs no flash writes. The schema
-records its actual capacity, and 20 KiB of heap is reserved for control/networking.
+records its actual capacity, and 32 KiB of heap is reserved for control/networking.
 Stop, arrival, fault, disconnect, and clean
 shutdown save the trace. Idle time does not replace navigation samples. To
 preserve a reproduced problem, stop/disconnect the car while it is still

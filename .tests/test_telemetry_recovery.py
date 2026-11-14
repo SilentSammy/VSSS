@@ -24,6 +24,7 @@ class TelemetryRecoveryTests(unittest.TestCase):
     def test_retries_without_blocking_and_creates_receiver_after_association(self):
         self.recovery.poll()
         self.wifi.connect.assert_called_once_with('lab', 'secret')
+        self.wifi.config.assert_called_with(pm=0)
         self.recovery.poll()
         self.assertEqual(self.wifi.connect.call_count, 1)
         self.wifi.isconnected.return_value = True

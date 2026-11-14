@@ -44,6 +44,11 @@ class OnboardController:
             setattr(self, key, parameters[key])
         self.heading_tolerance = math.radians(self.heading_tolerance_deg)
         self.hold_ms = int(self.hold_ms)
+        # At arrival, estimated travel over the hold period must fit inside
+        # the tolerance. Derive limits without changing the BLE/config format.
+        hold_s = max(.1, self.hold_ms / 1000.)
+        self.settle_speed = self.position_tolerance / hold_s
+        self.settle_yaw_rate = self.heading_tolerance / hold_s
         self.target = None
         self.reset()
 
@@ -64,6 +69,7 @@ class OnboardController:
     def update(self, pose, now_ms):
         """Consume `(x, y, heading_degrees)`; return robot-frame x/y/w."""
         if self.target is None or pose is None:
+            self.stable_since = None
             self.command = (0.0, 0.0, 0.0)
             return self.command
         x, y, angle_degrees = pose
@@ -87,7 +93,9 @@ class OnboardController:
         heading_error = abs(wrap_angle(target_theta - theta))
         position_ok = position_error <= self.position_tolerance
         heading_ok = heading_error <= self.heading_tolerance
-        if position_ok and heading_ok:
+        translation_settled = math.sqrt(self.velocity[0] ** 2 + self.velocity[1] ** 2) <= self.settle_speed
+        rotation_settled = abs(self.velocity[2]) <= self.settle_yaw_rate
+        if position_ok and heading_ok and translation_settled and rotation_settled:
             self.stable_since = now_ms if self.stable_since is None else self.stable_since
             self.command = (0.0, 0.0, 0.0)
             return self.command
@@ -115,9 +123,11 @@ class OnboardController:
         if (heading_error >= 2 * self.heading_tolerance and
                 0 < abs(command_w) < self.min_w):
             command_w = self.min_w if command_w > 0 else -self.min_w
-        if position_ok:
+        # Keep predictive braking active when passing through the target with
+        # appreciable speed; zeroing these axes early caused repeated overshoot.
+        if position_ok and translation_settled:
             command_x = command_y = 0.0
-        if heading_ok:
+        if heading_ok and rotation_settled:
             command_w = 0.0
         self.command = (command_x, command_y, command_w)
         return self.command
