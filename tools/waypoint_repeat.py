@@ -95,11 +95,16 @@ def main(argv=None):
     parser.add_argument('--output', type=Path)
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--restart-first', action='store_true', help='also reboot before the first batch')
+    parser.add_argument('--target', type=float, nargs=3, action='append', metavar=('X', 'Y', 'ANGLE'),
+                        help='override the waypoint circuit; repeat for each target')
     args = parser.parse_args(argv)
     if (args.car < 0 or any(n <= 0 for n in args.batches) or
             not all(math.isfinite(v) and v > 0 for v in (args.timeout, args.max_seconds))):
         parser.error('car must be nonnegative; batch sizes and time limits must be positive')
-    targets = ((0., .4, 90.), (0., -.4, 90.))
+    targets = args.target or ((0., .4, 90.), (0., -.4, 90.))
+    if any(not all(math.isfinite(v) for v in target) or abs(target[0]) >= .6 or abs(target[1]) >= 1.
+           for target in targets):
+        parser.error('targets must be finite and strictly inside the motion guard')
     if not args.execute:
         print(json.dumps(dict(car=args.car, targets=targets, round_trips=args.batches,
                               bounds=dict(x=[-.6, .6], y=[-1., 1.]), execute=False), indent=2))
@@ -201,11 +206,11 @@ def main(argv=None):
                     guard.paused.clear()
                     note('udp_resume', batch=batch)
                 note('batch_start', batch=batch, round_trips=rounds)
-                for leg in range(rounds * 2):
+                for leg in range(rounds * len(targets)):
                     guard.check()
                     if time.monotonic() - started > args.max_seconds:
                         raise TimeoutError('whole-run time limit')
-                    target = targets[leg % 2]
+                    target = targets[leg % len(targets)]
                     status = car.read_status()
                     if not status.pose_fresh or not status.wifi_connected or status.fault:
                         raise RuntimeError('onboard feedback unavailable before waypoint')
