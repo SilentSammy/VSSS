@@ -67,7 +67,7 @@ def format_event(event):
     return kind + ': ' + json.dumps(details)
 
 
-def main(argv=None):
+def main(argv=None, *, stop_event=None, ready_event=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, help='also record full events to a new JSON Lines file')
     parser.add_argument('--quiet', action='store_true', help='suppress individual events (requires --output)')
@@ -112,8 +112,12 @@ def main(argv=None):
                 save(observer.snapshot)
                 if args.output:
                     print('Recording to', args.output, flush=True)
+                if ready_event is not None:
+                    ready_event.set()
                 deadline = time.monotonic() + args.duration if args.duration else None
                 while deadline is None or time.monotonic() < deadline:
+                    if stop_event is not None and stop_event.is_set():
+                        break
                     event = observer.read(.1)
                     if event is None:
                         continue
