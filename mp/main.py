@@ -54,15 +54,20 @@ def main():
     settings = configuration.data
     car = MecanumCar()
     car.stop()
-    wlan = connect_wifi(settings["wifi_ssid"], settings["wifi_password"])
-    telemetry = TelemetryRecovery(wlan, settings, PoseReceiver)
-
-    # Importing ble_server activates BLE, deliberately after WiFi association.
-    import ble_server
+    try:
+        wlan = connect_wifi(settings["wifi_ssid"], settings["wifi_password"])
+        telemetry = TelemetryRecovery(wlan, settings, PoseReceiver)
+        # Importing ble_server activates BLE, deliberately after WiFi association.
+        import ble_server
+    except BaseException:
+        car.stop()
+        raise
+    nav_log = None
     state = {
         "mode": MODE_IDLE, "fault": FAULT_NONE, "velocity": (0., 0., 0.),
         "waypoint": None, "deadline": None, "stop": False,
         "control_frame": None, "control_command": (0., 0., 0.),
+        "control_raw": (0., 0., 0.), "control_dt_ms": None, "waypoint_id": 0,
         "save_trim": False, "save_controller": False,
         "reconnect_at": None, "restart_at": None,
     }
@@ -85,6 +90,7 @@ def main():
             state["waypoint"] = None
             state["control_frame"] = None
             state["control_command"] = (0., 0., 0.)
+            state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
             state["mode"] = MODE_MANUAL if any(data) else MODE_IDLE
             state["fault"] = FAULT_NONE
             controller.clear_target()
@@ -96,8 +102,10 @@ def main():
             x, y, angle = struct.unpack("<fff", data)
             if all(math.isfinite(v) for v in (x, y, angle)) and -0.8 <= x <= 0.8 and -1.5 <= y <= 1.5:
                 state["waypoint"] = (x, y, angle)
+                state["waypoint_id"] += 1
                 state["control_frame"] = None
                 state["control_command"] = (0., 0., 0.)
+                state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
                 # A new BLE waypoint replaces the active target immediately.
                 # The main loop installs it on the next iteration.
                 controller.clear_target()
@@ -157,11 +165,17 @@ def main():
 
     try:
         ble_server.start()
+        # Fully start Wi-Fi and GATT before allocating optional diagnostic RAM.
+        from navigation_log import NavigationLog
+        nav_log = NavigationLog(settings)
         print("car%d ready; WiFi %s; control onboard" % (
             settings["car_id"], wlan.ifconfig()[0] if wlan.isconnected() else "unavailable"))
         last_status = 0
+        previous_loop = time.ticks_ms()
         while True:
             now = time.ticks_ms()
+            loop_ms = time.ticks_diff(now, previous_loop)
+            previous_loop = now
             ble_server.poll()
 
             if state["stop"]:
@@ -170,17 +184,21 @@ def main():
                 state["velocity"], state["waypoint"] = (0., 0., 0.), None
                 state["control_frame"] = None
                 state["control_command"] = (0., 0., 0.)
+                state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
                 state["deadline"] = None
                 controller.clear_target()
                 car.stop()
 
             if state["restart_at"] is not None and time.ticks_diff(now, state["restart_at"]) >= 0:
                 car.stop()
+                nav_log.event('restart')
+                nav_log.flush()
                 import machine
                 machine.reset()
 
             if state["reconnect_at"] is not None and time.ticks_diff(now, state["reconnect_at"]) >= 0:
                 state["reconnect_at"] = None
+                nav_log.event('telemetry_reconnect')
                 telemetry.reconnect()
             telemetry.poll()
             receiver = telemetry.receiver
@@ -188,10 +206,12 @@ def main():
             if state["save_trim"]:
                 state["save_trim"] = False
                 configuration.set_trim(trim.matrix)
+                nav_log.configuration(trim.matrix, settings["controller"])
             if state["save_controller"]:
                 state["save_controller"] = False
                 configuration.set_controller(settings["controller"])
                 controller = OnboardController(**settings["controller"])
+                nav_log.configuration(trim.matrix, settings["controller"])
 
             if state["mode"] == MODE_MANUAL:
                 car.set_velocity(*trim.apply(state["velocity"]))
@@ -222,7 +242,10 @@ def main():
                              else receiver.packets)
                     if frame != state["control_frame"]:
                         state["control_frame"] = frame
+                        state["control_dt_ms"] = (time.ticks_diff(receiver.received_ms, controller.previous[0])
+                                                   if controller.previous is not None else None)
                         command = controller.update(receiver.pose, receiver.received_ms)
+                        state["control_raw"] = command
                         state["control_command"] = trim.apply(command)
                         car.set_velocity(*state["control_command"])
                         if controller.reached(receiver.received_ms):
@@ -230,6 +253,7 @@ def main():
                             state["control_command"] = (0., 0., 0.)
                             state["mode"], state["fault"] = MODE_REACHED, FAULT_NONE
 
+            nav_log.sample(now, state, receiver, controller, car, wlan.isconnected(), loop_ms)
             if time.ticks_diff(now, last_status) >= 100:
                 last_status = now
                 pose = receiver.pose if receiver is not None and receiver.fresh else (0., 0., 0.)
@@ -242,8 +266,15 @@ def main():
             time.sleep_ms(10)
     except KeyboardInterrupt:
         pass
+    except Exception as error:
+        if nav_log is not None:
+            nav_log.event('exception', error=repr(error))
+        raise
     finally:
         car.stop()
+        if nav_log is not None:
+            nav_log.event('shutdown', mode=state['mode'], fault=state['fault'])
+            nav_log.close()
         telemetry.close()
         ble_server.stop()
 

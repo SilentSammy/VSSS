@@ -211,6 +211,24 @@ provider consumer.
 
 ## Firmware and tests
 
+Firmware records waypoint diagnostics to `navigation.jsonl` (newest),
+`navigation.1.jsonl`, and `navigation.2.jsonl`, limited to 128 KiB each. The
+JSONL schema header names the fields in each sample's `v` array and includes
+the boot ID, reset cause, controller parameters, and trim. Samples include
+onboard pose/timing, target, estimated velocity, raw/trimmed commands, actual
+PWM frequencies/duties, loop time, and free heap.
+
+During motion, the logger uses a preallocated RAM ring (up to 20 KiB / 25 seconds
+at 5 Hz, reduced when heap is tight) and performs no flash writes. The schema
+records its actual capacity, and 20 KiB of heap is reserved for control/networking.
+Stop, arrival, fault, disconnect, and clean
+shutdown save the trace. Idle time does not replace navigation samples. To
+preserve a reproduced problem, stop/disconnect the car while it is still
+powered before switching batteries or bringing it back for USB inspection.
+Sudden power loss during motion can lose the current RAM trace; earlier saved
+waypoints survive reboots. A `flush` event reports any overwritten RAM records.
+Storage errors disable logging while leaving control operational.
+
 Production firmware files under `mp/` are copied to the ESP32 root. Copy support
 modules first, `robot_config.json` next, and `main.py` last. The native USB-safe
 `tools/mpremote_no_reset.py` wrapper avoids asserting DTR/RTS on COM17.
