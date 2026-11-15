@@ -3,9 +3,8 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock, patch
 
-from vsss.provider import BagProvider, LiveProvider
+from vsss._bag import BagReader
 
 
 class ProviderSourceTests(unittest.TestCase):
@@ -24,7 +23,7 @@ class ProviderSourceTests(unittest.TestCase):
 
     def test_bag_provider_filters_topics_and_replays_timing(self):
         with tempfile.TemporaryDirectory() as directory:
-            provider = BagProvider(self.make_bag(directory), ('udp',), speed=1)
+            provider = BagReader(self.make_bag(directory), ('udp',), speed=1)
             self.assertEqual(provider.snapshot['controlled_cars'], ['car1'])
             self.assertEqual(provider.read(0)['sequence'], 1)
             self.assertIsNone(provider.read(.01))
@@ -32,26 +31,22 @@ class ProviderSourceTests(unittest.TestCase):
             self.assertEqual(provider.read(.2)['sequence'], 3)
             self.assertGreaterEqual(time.monotonic() - started, .07)
             self.assertTrue(provider.finished)
+            provider.close()
 
     def test_empty_bag_and_close_finish_cleanly(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'empty.jsonl'
             path.write_text('{"type":"session_start"}\n', encoding='utf-8')
-            provider = BagProvider(path, ('udp',), speed=10)
+            provider = BagReader(path, ('udp',), speed=10)
             self.assertTrue(provider.finished)
             self.assertIsNone(provider.read(0))
             provider.close()
 
-    def test_live_provider_has_same_observation_surface(self):
-        observer = MagicMock()
-        observer.snapshot = {'type': 'provider_snapshot'}
-        observer.read.return_value = {'type': 'udp'}
-        with patch('vsss.provider.ProviderObserver', return_value=observer):
-            provider = LiveProvider(('udp',), {'port': 5000})
-            self.assertFalse(provider.finished)
-            self.assertEqual(provider.read(.1), {'type': 'udp'})
-            provider.close()
-        observer.close.assert_called_once_with()
+    def test_reader_rejects_invalid_playback_speed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for speed in (0, -1, float('nan')):
+                with self.subTest(speed=speed), self.assertRaises(ValueError):
+                    BagReader(self.make_bag(directory), speed=speed)
 
 
 if __name__ == '__main__':

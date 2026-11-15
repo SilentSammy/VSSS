@@ -21,10 +21,11 @@ class ObserverToolTests(unittest.TestCase):
         ble = dict(type='ble', car='car1', operation='write', characteristic='velocity',
                    request=7, phase='start', reason='command', value=dict(x=.2, y=0, w=0))
         observer.read.side_effect = [udp, ble, KeyboardInterrupt()]
-        with patch('tools.vsss_observer.ProviderObserver', return_value=observer), \
+        with patch('tools.vsss_observer.ProviderClient', return_value=observer), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             main(['--topics', 'udp', 'ble'])
         text = output.getvalue()
+        self.assertIn('Live observation only; no bag is being recorded.', text)
         self.assertIn('ball: x=+0.300m, y=+0.400m', text)
         self.assertIn('BLE car1 write velocity #7 start (command)', text)
         self.assertIn('"x": 0.2', text)
@@ -73,7 +74,7 @@ class ObserverToolTests(unittest.TestCase):
                 path = Path(temp) / 'packets.jsonl'
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     main(['--server', '127.0.0.1', '--subscription-port', str(server.getsockname()[1]),
-                          '--duration', '.4', '--output', str(path), '--quiet'])
+                          '--duration', '.4', str(path)])
                 rows = [json.loads(line) for line in path.read_text().splitlines()]
                 event = next(row for row in rows if row['type'] == 'udp')
                 self.assertEqual(event['packet'], packet)
@@ -90,7 +91,7 @@ class ObserverToolTests(unittest.TestCase):
     def test_invalid_options_fail_before_opening_socket(self):
         for args in (['--port', '0'], ['--server', '127.0.0.1', '--port', '65535'],
                      ['--quiet'], ['--duration', 'nan']):
-            with self.subTest(args=args), patch('tools.vsss_observer.ProviderObserver') as sock, \
+            with self.subTest(args=args), patch('tools.vsss_observer.ProviderClient') as sock, \
                     contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     main(args)

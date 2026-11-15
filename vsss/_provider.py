@@ -34,6 +34,24 @@ class Provider:
         self.last_empty = time.monotonic()
         self.token = secrets.token_urlsafe(32)
 
+    def acquire_source(self, hello):
+        """Called under the provider lock; sources share one observation contract."""
+        key = source_settings(hello.get('vision', {})) if 'udp' in hello.get('topics', ()) else None
+        source = self.sources.get(key) if key is not None else None
+        if key is not None and source is None:
+            source = VisionSource(key, lambda event: self.publish(event, (key, event['source_id'])))
+            self.sources[key] = source
+        return key, source
+
+    def release_source(self, key, source):
+        source.users -= 1
+        if source.users == 0:
+            self.sources.pop(key)
+            source.close()
+
+    def should_exit(self):
+        return self.clients == 0 and time.monotonic() - self.last_empty >= IDLE_SECONDS
+
     def publish(self, event, source=None):
         with self.publish_lock:
             self._publish(event, source)
@@ -42,8 +60,11 @@ class Provider:
         with self.lock:
             observers = tuple(self.observers)
         for observer, topics, selected in observers:
-            if event['type'] == 'udp':
-                if 'udp' not in topics or selected != source:
+            if event['type'] in ('udp', 'stream_end'):
+                if event['type'] == 'stream_end':
+                    if selected != source:
+                        continue
+                elif 'udp' not in topics or selected != source:
                     continue
             elif 'ble' not in topics:
                 continue
@@ -99,12 +120,8 @@ class Provider:
         topics = frozenset(hello.get('topics', ['ble']))
         if not topics or not topics <= {'udp', 'ble'}:
             raise ValueError('Unknown observation topics')
-        key = source_settings(hello.get('vision', {})) if 'udp' in topics else None
         with self.lock:
-            source = self.sources.get(key) if key is not None else None
-            if key is not None and source is None:
-                source = VisionSource(key, lambda event: self.publish(event, (key, event['source_id'])))
-                self.sources[key] = source
+            key, source = self.acquire_source(hello)
             if source:
                 source.users += 1
             selected = (key, source.info['source_id']) if source else None
@@ -117,13 +134,15 @@ class Provider:
             conn.sendall(b'{"provider":"observing"}\n')
             conn.sendall((json.dumps(stamp('provider_snapshot', controlled_cars=cars,
                                          vision=source.snapshot() if source else None)) + '\n').encode())
+            if source and hasattr(source, 'activate'):
+                source.activate(queue)
             while True:
                 try:
                     event = queue.get(timeout=.1)
                     if event is None:
                         break
                     conn.sendall((json.dumps(event) + '\n').encode())
-                    if event.get('type') == 'observer_overflow':
+                    if event.get('type') in ('observer_overflow', 'stream_end'):
                         break
                 except Empty:
                     pass
@@ -134,10 +153,7 @@ class Provider:
             with self.lock:
                 self.observers.discard(entry)
                 if source:
-                    source.users -= 1
-                    if source.users == 0:
-                        self.sources.pop(key)
-                        source.close()
+                    self.release_source(key, source)
 
     def control(self, conn, reader, name):
         session_id = uuid.uuid4().hex
@@ -209,7 +225,7 @@ class Provider:
                         Thread(target=self.handle, args=(conn,), daemon=True).start()
                     except socket.timeout:
                         with self.lock:
-                            if self.clients == 0 and time.monotonic() - self.last_empty >= IDLE_SECONDS:
+                            if self.should_exit():
                                 break
             finally:
                 try:

@@ -156,7 +156,7 @@ def main(argv=None):
 
     def recorder(topics, path, stop, ready):
         try:
-            observe(['--topics', topics, '--quiet', '--output', str(path)],
+            observe([str(path), '--topics', topics],
                     stop_event=stop, ready_event=ready)
         except BaseException as error:
             record_errors.append(error)

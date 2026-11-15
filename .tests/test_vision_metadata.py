@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from tools.vsss_observer import main
 from vsss._provider_vision import VisionSource, source_settings
-from vsss.provider import BagProvider
+from vsss._bag import BagReader
 
 
 class VisionMetadataTests(unittest.TestCase):
@@ -58,13 +58,13 @@ class VisionMetadataTests(unittest.TestCase):
             def read(self, timeout): raise KeyboardInterrupt
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'bag.jsonl'
-            with patch('tools.vsss_observer.ProviderObserver', return_value=Observer()), \
+            with patch('tools.vsss_observer.ProviderClient', return_value=Observer()), \
                     contextlib.redirect_stdout(io.StringIO()):
-                main(['--topics', 'udp', '--output', str(path), '--quiet'])
+                main([str(path), '--topics', 'udp'])
             header = json.loads(path.read_text().splitlines()[0])
             self.assertEqual(header['type'], 'bag_header')
             self.assertEqual(header['schema'], 3)
-            with BagProvider(path) as provider:
+            with BagReader(path) as provider:
                 self.assertEqual(provider.snapshot['vision']['metadata']['status']['setup']['name'], 'lab')
 
 

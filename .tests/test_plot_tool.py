@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.vsss_plot import plotter_from_snapshot, main
 
@@ -31,8 +32,10 @@ class PlotToolTests(unittest.TestCase):
                             'balls': [{'x': -.2, 'y': .3}]}}
             ]
             bag.write_text('\n'.join(json.dumps(row) for row in rows), encoding='utf-8')
-            with contextlib.redirect_stdout(io.StringIO()) as stdout:
-                main(['--bag', str(bag), '--speed', '1000', '--width', '320',
+            from vsss._bag import BagReader
+            with contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                    patch('tools.vsss_plot.provider_from_args', return_value=BagReader(bag, speed=1000)):
+                main(['--width', '320',
                       '--field-width', '1.6', '--field-height', '3.0',
                       '--output', str(output)])
             self.assertTrue(output.is_file())

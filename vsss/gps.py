@@ -5,7 +5,7 @@ from threading import Lock, Thread
 import time
 from types import MappingProxyType
 
-from ._provider_observer import ProviderObserver
+from .provider import ProviderClient
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ class GPS:
         self._cars, self._balls, self._board = {}, (), False
         self._vision = dict(port=port, server=('192.168.12.1' if port == 5000 else '255.255.255.255') if subscribe else None,
                             listen_port=0 if subscribe else port)
-        self._observer = ProviderObserver(topics=('udp',), vision=self._vision)
+        self._observer = ProviderClient(topics=('udp',), vision=self._vision)
         self.port = self._observer.snapshot['vision']['local_port']
         self._subscription_port = (port if port else self.port) + 1
         self._server = ('192.168.12.1', self._subscription_port) if subscribe and port == 5000 else None
@@ -93,6 +93,10 @@ class GPS:
                 event = self._observer.read()
                 if event is None:
                     continue
+                if event['type'] == 'stream_end':
+                    with self._lock:
+                        self._delivery_problem = 'Bag playback completed.'
+                    break
                 if event['type'] == 'observer_overflow':
                     raise ConnectionError(event['error'])
                 if event['type'] != 'udp' or not event.get('valid'):
@@ -115,15 +119,17 @@ class GPS:
                     server_timestamp = float(server_timestamp)
                 if frame_age_ms is not None:
                     frame_age_ms = float(frame_age_ms)
-                if self._timing_source != address[0]:
-                    self._timing_source = address[0]
+                timing_source = (address[0], event.get('source_id'),
+                                 (event.get('replay') or {}).get('cycle_source_id'))
+                if self._timing_source != timing_source:
+                    self._timing_source = timing_source
                     self._best_offset = self._last_source_timestamp = None
                 excess = None
                 out_of_order = False
                 if server_timestamp is not None:
                     offset = now-server_timestamp
                     self._best_offset = offset if self._best_offset is None else min(self._best_offset,offset)
-                    excess = max(0.,offset-self._best_offset)
+                    excess = 0. if event.get('replay') else max(0.,offset-self._best_offset)
                     out_of_order = (self._last_source_timestamp is not None
                                     and server_timestamp < self._last_source_timestamp)
                 minimum_age = (0. if frame_age_ms is None else frame_age_ms/1000) + (excess or 0.)
@@ -161,7 +167,7 @@ class GPS:
                 self._observer.close()
                 while not self._closed:
                     try:
-                        observer = ProviderObserver(topics=('udp',), vision=self._vision)
+                        observer = ProviderClient(topics=('udp',), vision=self._vision)
                         if self._closed:
                             observer.close()
                             break

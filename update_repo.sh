@@ -3,3 +3,4 @@
 set -euo pipefail
 cd "${1:-$(dirname "$0")}" || exit 1
 git pull --ff-only
+git submodule update --init --recursive

@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 import time
 
-from vsss._provider_observer import ProviderObserver
+from vsss.provider import ProviderClient
 from vsss import _ble_protocol as protocol
 
 
@@ -71,8 +71,8 @@ def format_event(event):
 
 def main(argv=None, *, stop_event=None, ready_event=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, help='also record full events to a new JSON Lines file')
-    parser.add_argument('--quiet', action='store_true', help='suppress individual events (requires --output)')
+    parser.add_argument('output', nargs='?', type=Path, help='record to this new bag file')
+    parser.add_argument('--print', dest='print_events', action='store_true', help='print events while recording')
     parser.add_argument('--server', default='192.168.12.1', help='vision server (default: 192.168.12.1)')
     parser.add_argument('--metadata-url', help='override the vision HTTP status endpoint')
     parser.add_argument('--broadcast', action='store_true', help='observe broadcast instead of subscribing')
@@ -84,8 +84,7 @@ def main(argv=None, *, stop_event=None, ready_event=None):
     parser.add_argument('--topics', nargs='+', choices=('udp', 'ble'), default=['udp', 'ble'],
                         help='streams to observe (default: udp ble)')
     args = parser.parse_args(argv)
-    if args.quiet and args.output is None:
-        parser.error('--quiet requires --output')
+    args.quiet = bool(args.output and not args.print_events)
     if not 1 <= args.port <= 65535 or (args.listen_port is not None and not 0 <= args.listen_port <= 65535):
         parser.error('invalid UDP port')
     if args.subscription_port is not None and not 1 <= args.subscription_port <= 65535:
@@ -99,6 +98,8 @@ def main(argv=None, *, stop_event=None, ready_event=None):
                   subscription_port=args.subscription_port or args.port + 1)
     if args.metadata_url:
         vision['metadata_url'] = args.metadata_url
+    if not args.output:
+        print('Live observation only; no bag is being recorded.', flush=True)
     counts = {}
     with args.output.open('x', encoding='utf-8') if args.output else nullcontext(None) as output:
         def save(event):
@@ -111,7 +112,7 @@ def main(argv=None, *, stop_event=None, ready_event=None):
 
         complete = False
         try:
-            with ProviderObserver(args.topics, vision) as observer:
+            with ProviderClient(args.topics, vision) as observer:
                 save(dict(type='bag_header', schema=3, topics=args.topics,
                           provider=observer.snapshot,
                           monotonic_ns=time.monotonic_ns(), wall_time_ns=time.time_ns()))
@@ -127,6 +128,10 @@ def main(argv=None, *, stop_event=None, ready_event=None):
                     if event is None:
                         continue
                     save(event)
+                    if event['type'] == 'stream_end':
+                        if not event.get('complete', True):
+                            raise RuntimeError(event.get('error', 'Provider stream ended incomplete'))
+                        break
                     if event['type'] == 'observer_overflow':
                         raise RuntimeError('Provider event queue overflow; recording is incomplete')
             complete = True

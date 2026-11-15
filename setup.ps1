@@ -10,8 +10,6 @@ git submodule update --init --recursive
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 python -m venv .venv
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
-& .venv/Scripts/python.exe -m pip install -r requirements.txt
-if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & .venv/Scripts/python.exe -m pip install -e .
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 if ($Vision) { & ./aruco_gps/setup.ps1 -Yes; if ($LASTEXITCODE) { exit $LASTEXITCODE } }

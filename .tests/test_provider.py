@@ -116,7 +116,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         path = Path(self.temp.name) / 'session.jsonl'
         process = subprocess.Popen([sys.executable, '-u', '-m', 'tools.vsss_observer',
                                     '--server', '127.0.0.1', '--subscription-port', str(server.getsockname()[1]),
-                                    '--duration', '4', '--output', str(path)],
+                                    '--duration', '4', str(path)],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 5
@@ -173,7 +173,7 @@ class ProviderIntegrationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == 'nt', 'Windows console regression')
     def test_first_provider_start_has_no_console_through_venv_launcher(self):
-        from vsss._provider_observer import ProviderObserver
+        from vsss.provider import ProviderClient
         original_popen = subprocess.Popen
         launched = []
 
@@ -193,7 +193,7 @@ class ProviderIntegrationTests(unittest.TestCase):
 
         try:
             with patch('vsss._provider_connection.subprocess.Popen', side_effect=probe_console):
-                with ProviderObserver(('ble',)):
+                with ProviderClient(('ble',)):
                     self.assertEqual(len(launched), 1)
                     self.assertEqual(launched[0].stdout.readline().strip(), b'0')
         finally:

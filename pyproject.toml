@@ -16,13 +16,12 @@ calibrate = "tools.calibrate:main"
 vsss-manual = "vsss._ble_client:main"
 vsss-observer = "tools.vsss_observer:main"
 vsss-plot = "tools.vsss_plot:main"
+vsss-bag = "tools.vsss_bag:main"
 
 [tool.setuptools]
 packages = ["vsss", "tools", "aruco_gps"]
-py-modules = ["car", "gps", "mecanum_client"]
 
 [tool.setuptools.package-dir]
-"" = "compat"
 vsss = "vsss"
 tools = "tools"
 aruco_gps = "aruco_gps"

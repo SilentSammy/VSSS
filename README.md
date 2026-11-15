@@ -29,7 +29,6 @@ For manual client installation:
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 pip install -e .
 ```
 
@@ -38,8 +37,8 @@ and uses marker ID 1.
 
 The student API is in the `vsss` package: import `Car`, `gps`, and `run` from `vsss`.
 Keyboard and gamepad helpers are available as `from vsss import input`.
-Legacy `from car import Car` and `from gps import GPS` imports remain available
-after installation for existing scripts.
+Use package imports consistently; the obsolete top-level compatibility modules
+have been removed.
 
 Root-level starting scripts: [velocity only](boilerplate_velocity.py),
 [field observation](boilerplate_observe.py), and
@@ -188,15 +187,17 @@ they do not run a second controller on the laptop.
 
 ## Observation and recording
 
-`vsss-observer` shows a readable UDP/BLE feed. Add `--output` to also record
-full events, or `--quiet --output` to record without displaying each event.
+`vsss-observer` shows a readable UDP/BLE feed and explicitly states that it is
+not recording. Supply a path to record a bag quietly; add `--print` to also
+display events while recording. Existing files are never overwritten.
 Both topics are observed by default; `--topics udp` or `--topics ble` selects one.
 
 ```powershell
 vsss-observer
 vsss-observer --topics udp --duration 10
 vsss-observer --topics ble
-vsss-observer --quiet --output session.jsonl --duration 60
+vsss-observer session.jsonl --duration 60
+vsss-observer session.jsonl --print
 vsss-observer --topics udp --broadcast --port 5000
 ```
 
@@ -253,21 +254,22 @@ dribbling are identified but not simulated.
 
 ## Live and recorded field plotting
 
-Observation consumers use a small provider contract: `snapshot`,
-`read(timeout)`, `finished`, and `close()`. `vsss.provider.LiveProvider` reads
-the real shared VSSS Provider, while `BagProvider` replays a `vsss-observer`
-JSONL file with the same event shape and relative timing. A future simulation
-provider can implement the same contract without special cases in plotters or
-analysis tools.
+Observation consumers use `vsss.provider.ProviderClient`, which exposes
+`snapshot`, `read(timeout)`, `finished`, and `close()`. It connects to the active
+local provider process. The hardware provider starts automatically when needed;
+`vsss-bag` explicitly starts a replay provider on the same endpoint. A future
+simulation provider can use that same server protocol. Replay never opens BLE
+or UDP hardware connections and rejects car-control requests.
 
 Install the optional GUI dependencies with `pip install -e ".[plot]"`, then:
 
 ```powershell
 vsss-plot                         # live unicast telemetry
 vsss-plot --broadcast             # live broadcast telemetry
-vsss-plot --bag session.jsonl     # real-time bag replay
-vsss-plot --bag session.jsonl --speed 4
-vsss-plot --bag session.jsonl --speed 100 --output final-frame.png
+vsss-bag session.jsonl            # terminal 1: wait for the first observer
+vsss-plot                         # terminal 2: plot the active provider
+vsss-bag session.jsonl --speed 4  # faster replay
+vsss-bag session.jsonl --loop     # repeat until Ctrl+C
 vsss-plot --duration 10 --output live-snapshot.png
 ```
 
@@ -278,6 +280,15 @@ from its portable geometry and dictionary. Initialize the submodule with
 `git submodule update --init` before installing VSSS. For older bags without setup
 metadata, supply `--field-width 1.6 --field-height 3.0` explicitly.
 Press Q, Escape, or close the window to stop.
+
+Bag playback begins when its first observer connects. Every observer shares
+one playback clock and receives the recorded setup metadata. Late observers
+join the current position. At the end, clients receive an explicit `stream_end`
+event and the bag process exits after clients leave. Original packet bytes and
+source timestamps are retained; replay events also carry current delivery times
+so GPS freshness works at any playback speed. A live provider and a bag provider
+cannot own the same endpoint simultaneously: close live clients and allow the
+provider's five-second idle shutdown before starting `vsss-bag`.
 
 ## Firmware and tests
 

@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from vsss._provider import Provider
-from vsss._provider_observer import ProviderObserver
+from vsss.provider import ProviderClient
 from vsss.gps import GPS
 
 
@@ -37,14 +37,14 @@ class VisionProviderTests(unittest.TestCase):
         self.env.stop()
 
     def observer(self, config=None, topics=('udp',)):
-        observer = ProviderObserver(topics, self.config if config is None else config)
+        observer = ProviderClient(topics, self.config if config is None else config)
         self.observers.append(observer)
         return observer
 
     def test_one_subscription_identical_datagrams_and_timestamps_for_two_processes(self):
         first = self.observer()
-        code = ("import json; from vsss._provider_observer import ProviderObserver; "
-                "o=ProviderObserver(('udp',),json.loads(input())); "
+        code = ("import json; from vsss.provider import ProviderClient; "
+                "o=ProviderClient(('udp',),json.loads(input())); "
                 "print(json.dumps(o.snapshot),flush=True); print(json.dumps(o.read(4)),flush=True); o.close()")
         process = subprocess.Popen([sys.executable, '-u', '-c', code], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -166,9 +166,9 @@ class VisionProviderTests(unittest.TestCase):
         observer.read.side_effect = ConnectionError('provider interrupted')
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'interrupted.jsonl'
-            with patch('tools.vsss_observer.ProviderObserver', return_value=observer):
+            with patch('tools.vsss_observer.ProviderClient', return_value=observer):
                 with self.assertRaises(ConnectionError):
-                    main(['--output', str(output), '--topics', 'ble'])
+                    main([str(output), '--topics', 'ble'])
             rows = [json.loads(line) for line in output.read_text().splitlines()]
             self.assertEqual(rows[-1]['type'], 'session_end')
             self.assertFalse(rows[-1]['complete'])

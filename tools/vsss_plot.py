@@ -4,18 +4,16 @@ import math
 from pathlib import Path
 import time
 
-from vsss.provider import BagProvider, LiveProvider
+from vsss.provider import ProviderClient
 
 
 def provider_from_args(args):
-    if args.bag:
-        return BagProvider(args.bag, topics=('udp',), speed=args.speed)
     vision = dict(server=None if args.broadcast else args.server, port=args.port,
                   listen_port=args.port if args.broadcast else 0,
                   subscription_port=args.subscription_port or args.port + 1)
     if args.metadata_url:
         vision['metadata_url'] = args.metadata_url
-    return LiveProvider(('udp',), vision)
+    return ProviderClient(('udp',), vision)
 
 
 def plotter_from_snapshot(snapshot, width, fallback=None):
@@ -34,10 +32,7 @@ def plotter_from_snapshot(snapshot, width, fallback=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument('--bag', type=Path, help='replay a vsss-observer JSONL bag')
-    source.add_argument('--broadcast', action='store_true')
-    parser.add_argument('--speed', type=float, default=1.)
+    parser.add_argument('--broadcast', action='store_true')
     parser.add_argument('--server', default='192.168.12.1')
     parser.add_argument('--metadata-url', help='override the vision HTTP status endpoint')
     parser.add_argument('--port', type=int, default=5000)
@@ -48,8 +43,6 @@ def main(argv=None):
     parser.add_argument('--duration', type=float)
     parser.add_argument('--output', type=Path, help='headless: save the final frame as a new image')
     args = parser.parse_args(argv)
-    if not math.isfinite(args.speed) or args.speed <= 0:
-        parser.error('--speed must be positive and finite')
     if not 1 <= args.port <= 65534:
         parser.error('--port must be 1..65534')
     if args.subscription_port is not None and not 1 <= args.subscription_port <= 65535:
@@ -77,6 +70,8 @@ def main(argv=None):
                 cv2.namedWindow(window, cv2.WINDOW_NORMAL)
             while not provider.finished and (deadline is None or time.monotonic() < deadline):
                 event = provider.read(.02)
+                if event and event.get('type') == 'stream_end' and not event.get('complete', True):
+                    raise RuntimeError(event.get('error', 'Provider stream ended incomplete'))
                 if event and event.get('type') == 'udp' and event.get('valid'):
                     latest = plotter.render_packet(event['packet'])
                 if args.output is None:
