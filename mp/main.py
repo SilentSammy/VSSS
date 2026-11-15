@@ -9,7 +9,7 @@ from mecanum import MecanumCar
 from onboard_controller import CONTROLLER_KEYS, OnboardController
 from pose_receiver import PoseReceiver
 from robot_config import RobotConfig, validate
-from telemetry_recovery import TelemetryRecovery, low_latency_wifi
+from telemetry_recovery import TelemetryFreshness, TelemetryRecovery, low_latency_wifi
 
 VELOCITY_UUID = "12345678-1234-5678-1234-56789abcdef1"
 LEASE_UUID = "12345678-1234-5678-1234-56789abcdef2"
@@ -27,9 +27,6 @@ MODE_FAULT = 4
 FAULT_NONE = 0
 FAULT_TELEMETRY = 1
 FAULT_TIMEOUT = 2
-WAYPOINT_TIMEOUT_MS = 30000
-
-
 def connect_wifi(ssid, password, timeout_ms=20000):
     wlan = network.WLAN(network.STA_IF)
     if wlan.isconnected():
@@ -48,7 +45,8 @@ def connect_wifi(ssid, password, timeout_ms=20000):
 
 
 def controller_payload(parameters):
-    return struct.pack("<11f", *(parameters[key] for key in CONTROLLER_KEYS))
+    return struct.pack("<%df" % len(CONTROLLER_KEYS),
+                       *(parameters[key] for key in CONTROLLER_KEYS))
 
 
 def main():
@@ -79,6 +77,7 @@ def main():
 
     trim = AxisTrim(settings["trim_matrix"], trim_changed)
     controller = OnboardController(**settings["controller"])
+    freshness = TelemetryFreshness(settings["controller"]["telemetry_recovery_ms"])
 
     def stop_requested():
         state["stop"] = True
@@ -95,6 +94,7 @@ def main():
             state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
             state["mode"] = MODE_MANUAL if any(data) else MODE_IDLE
             state["fault"] = FAULT_NONE
+            freshness.reset()
             controller.clear_target()
 
     def on_waypoint(data):
@@ -113,6 +113,7 @@ def main():
                 controller.clear_target()
                 state["mode"] = MODE_POSITION
                 state["fault"] = FAULT_NONE
+                freshness.reset()
                 return data
         return struct.pack("<fff", *(state["waypoint"] or (0., 0., 0.)))
 
@@ -133,8 +134,8 @@ def main():
         return bytes((state["mode"], state["fault"]))
 
     def on_controller(data):
-        if len(data) == 44:
-            values = struct.unpack("<11f", data)
+        if len(data) == 4 * len(CONTROLLER_KEYS):
+            values = struct.unpack("<%df" % len(CONTROLLER_KEYS), data)
             candidate = dict(zip(CONTROLLER_KEYS, values))
             try:
                 test = dict(settings)
@@ -195,6 +196,7 @@ def main():
                 state["control_command"] = (0., 0., 0.)
                 state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
                 state["deadline"] = None
+                freshness.reset()
                 controller.clear_target()
                 car.stop()
 
@@ -220,6 +222,7 @@ def main():
                 state["save_controller"] = False
                 configuration.set_controller(settings["controller"])
                 controller = OnboardController(**settings["controller"])
+                freshness = TelemetryFreshness(settings["controller"]["telemetry_recovery_ms"])
                 nav_log.configuration(trim.matrix, settings["controller"])
 
             if state["mode"] == MODE_MANUAL:
@@ -235,13 +238,45 @@ def main():
                     controller.set_target(x, y, math.radians(angle))
                     state["control_frame"] = None
                     state["control_command"] = (0., 0., 0.)
-                    state["deadline"] = time.ticks_add(now, WAYPOINT_TIMEOUT_MS)
-                if receiver is None or not wlan.isconnected() or not receiver.fresh:
+                    state["deadline"] = time.ticks_add(
+                        now, int(settings["controller"]["waypoint_timeout_ms"]))
+                feedback_fresh = (receiver is not None and wlan.isconnected() and receiver.fresh)
+                feedback_state, outage_ms = freshness.update(feedback_fresh, now)
+                if feedback_state in ("pause", "wait", "fault"):
                     car.stop()
-                    state["mode"], state["fault"] = MODE_FAULT, FAULT_TELEMETRY
-                    nav_log.event('telemetry_fault',
-                                  age_ms=receiver.age_ms if receiver else None,
-                                  memory_errors=receiver.memory_errors if receiver else 0)
+                    state["control_command"] = (0., 0., 0.)
+                    if feedback_state == "pause":
+                        nav_log.event('telemetry_pause',
+                                      age_ms=receiver.age_ms if receiver else None,
+                                      frame_sequence=receiver.frame_sequence if receiver else None,
+                                      packets=receiver.packets if receiver else 0)
+                    if feedback_state == "fault":
+                        state["mode"], state["fault"] = MODE_FAULT, FAULT_TELEMETRY
+                        try:
+                            fault_rssi = int(wlan.status('rssi')) if wlan.isconnected() else None
+                        except (OSError, ValueError, TypeError):
+                            fault_rssi = None
+                        nav_log.event('telemetry_fault',
+                                      age_ms=receiver.age_ms if receiver else None,
+                                      rx_age_ms=(time.ticks_diff(now, receiver.received_ms)
+                                                 if receiver and receiver.received_ms is not None else None),
+                                      frame_age_ms=receiver.frame_age_ms if receiver else None,
+                                      frame_sequence=receiver.frame_sequence if receiver else None,
+                                      packets=receiver.packets if receiver else 0,
+                                      sequence_gap=receiver.sequence_gap if receiver else None,
+                                      receive_gap_ms=receiver.receive_gap_ms if receiver else None,
+                                      wifi_rssi=fault_rssi,
+                                      outage_ms=outage_ms,
+                                      memory_errors=receiver.memory_errors if receiver else 0)
+                elif feedback_state == "recover":
+                    # Do not estimate velocity across a telemetry gap. Resume
+                    # the retained target from the newly fresh pose instead.
+                    controller.reset()
+                    state["control_frame"] = None
+                    state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
+                    nav_log.event('telemetry_recovered', outage_ms=outage_ms,
+                                  frame_sequence=receiver.frame_sequence,
+                                  packets=receiver.packets)
                 elif time.ticks_diff(now, state["deadline"]) >= 0:
                     car.stop()
                     state["mode"], state["fault"] = MODE_FAULT, FAULT_TIMEOUT
@@ -265,7 +300,13 @@ def main():
                             state["control_command"] = (0., 0., 0.)
                             state["mode"], state["fault"] = MODE_REACHED, FAULT_NONE
 
-            nav_log.sample(now, state, receiver, controller, car, wlan.isconnected(), loop_ms)
+            if nav_log.sample(now, state, receiver, controller, car, wlan, loop_ms):
+                # Stopped-state flash writes can take longer than the feedback
+                # timeout. Drain queued telemetry before publishing status;
+                # genuinely stale frames still fail the unchanged age check.
+                telemetry.poll()
+                receiver = telemetry.receiver
+                now = time.ticks_ms()
             if time.ticks_diff(now, last_status) >= 100:
                 last_status = now
                 pose = receiver.pose if receiver is not None and receiver.fresh else (0., 0., 0.)

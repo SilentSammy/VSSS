@@ -16,6 +16,29 @@ import time
 from vsss import Car, GPS
 from tools.vsss_observer import main as observe
 
+ONBOARD_RECOVERY_GRACE = 3.0
+
+
+class RecoveryWindow:
+    """Bound a transient missing-pose interval without hiding its duration."""
+
+    def __init__(self, grace=ONBOARD_RECOVERY_GRACE):
+        self.grace = grace
+        self.started = None
+
+    def update(self, available, now):
+        if available:
+            if self.started is None:
+                return 'fresh', 0.
+            elapsed = now - self.started
+            self.started = None
+            return 'recovered', elapsed
+        if self.started is None:
+            self.started = now
+            return 'missing', 0.
+        elapsed = now - self.started
+        return ('expired' if elapsed > self.grace else 'missing'), elapsed
+
 
 def oscillating(samples, target):
     """Flag repeated crossings outside a noise band in the last six seconds."""
@@ -49,18 +72,32 @@ class Guard:
     def watch(self):
         previous = None
         vx = vy = 0.
+        recovery = RecoveryWindow()
         while not self.done.wait(.05):
             if self.paused.is_set():
                 previous = None
                 vx = vy = 0.
                 continue
             pose, frame = self.car.pose, self.gps.latest
+            now = time.monotonic()
             reason = None
             if self.recorder_errors:
                 reason = 'recording failed: ' + str(self.recorder_errors[0])
             elif pose is None or frame is None:
-                reason = 'desktop pose missing/stale'
+                state, elapsed = recovery.update(False, now)
+                if previous and (abs(previous[1] + vx * min(.35, elapsed)) >= .6 or
+                                 abs(previous[2] + vy * min(.35, elapsed)) >= 1.0):
+                    reason = 'predicted safety boundary reached during pose loss'
+                elif state == 'expired':
+                    reason = 'desktop pose missing beyond recovery grace'
+                else:
+                    continue
             else:
+                recovered, elapsed = recovery.update(True, now)
+                if recovered == 'recovered':
+                    self.note('desktop_pose_recovered', elapsed_s=elapsed)
+                    previous = None
+                    vx = vy = 0.
                 if previous and frame.received_at != previous[0]:
                     dt = frame.received_at - previous[0]
                     if 0 < dt < .5:
@@ -220,25 +257,45 @@ def main(argv=None):
                     note('waypoint_start', batch=batch, leg=leg + 1, target=target, pose=asdict(car.pose))
                     car.go_to(*target)
                     reached_at = None
+                    feedback_recovery = RecoveryWindow()
                     while True:
                         guard.check()
                         now = time.monotonic()
                         if now - leg_started > args.timeout:
                             raise TimeoutError('waypoint did not settle before timeout')
+                        status = car.read_status()
                         pose, frame = car.pose, gps.latest
-                        if pose is None or frame is None:
-                            raise RuntimeError('pose unavailable during waypoint')
+                        feedback_available = (pose is not None and frame is not None and
+                                              status.pose_fresh and status.wifi_connected)
+                        feedback_state, feedback_elapsed = feedback_recovery.update(
+                            feedback_available, now)
+                        if status.fault:
+                            raise RuntimeError('onboard feedback/control fault: ' + status.fault_name)
+                        if not feedback_available:
+                            if status.mode_name not in ('position', 'reached'):
+                                raise RuntimeError('feedback unavailable outside recovery pause')
+                            if feedback_state == 'expired':
+                                raise RuntimeError('feedback recovery grace exceeded')
+                            if feedback_state == 'missing' and feedback_elapsed == 0:
+                                note('feedback_pause', batch=batch, leg=leg + 1,
+                                     desktop_pose=pose is not None and frame is not None,
+                                     onboard_pose=status.pose_fresh,
+                                     wifi=status.wifi_connected)
+                            time.sleep(.1)
+                            continue
+                        if feedback_state == 'recovered':
+                            note('feedback_recovered', batch=batch, leg=leg + 1,
+                                 elapsed_s=feedback_elapsed)
+                            previous_frame = None
+                            history.clear()
                         if frame.received_at != previous_frame:
                             history.append((now, pose.x, pose.y, pose.angle))
                             previous_frame = frame.received_at
                         while history and history[0][0] < now - 6:
                             history.popleft()
-                        status = car.read_status()
                         note('sample', batch=batch, leg=leg + 1, target=target,
                              pose=asdict(pose), status=asdict(status), frame_sequence=frame.frame_sequence,
                              frame_age_ms=frame.frame_age_ms)
-                        if status.fault or not status.pose_fresh or not status.wifi_connected:
-                            raise RuntimeError('onboard feedback/control fault: ' + status.fault_name)
                         if oscillating(history, target):
                             note('oscillation_detected', batch=batch, leg=leg + 1, target=target)
                             raise RuntimeError('sustained waypoint oscillation detected')

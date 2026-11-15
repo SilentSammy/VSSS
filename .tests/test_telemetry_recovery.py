@@ -2,7 +2,30 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from mp.telemetry_recovery import TelemetryRecovery
+from mp.telemetry_recovery import TelemetryFreshness, TelemetryRecovery
+
+
+class TelemetryFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = types.SimpleNamespace(ticks_diff=lambda a, b: a - b)
+        self.time_patch = patch('mp.telemetry_recovery.time', self.clock)
+        self.time_patch.start()
+        self.addCleanup(self.time_patch.stop)
+
+    def test_short_loss_pauses_then_recovers(self):
+        guard = TelemetryFreshness(2000)
+        self.assertEqual(guard.update(True, 100), ('fresh', 0))
+        self.assertEqual(guard.update(False, 600), ('pause', 0))
+        self.assertEqual(guard.update(False, 1500), ('wait', 900))
+        self.assertEqual(guard.update(True, 1700), ('recover', 1100))
+        self.assertEqual(guard.update(True, 1800), ('fresh', 0))
+
+    def test_long_loss_becomes_terminal_and_reset_allows_retry(self):
+        guard = TelemetryFreshness(2000)
+        guard.update(False, 100)
+        self.assertEqual(guard.update(False, 2100), ('fault', 2000))
+        guard.reset()
+        self.assertEqual(guard.update(False, 2200), ('pause', 0))
 
 
 class TelemetryRecoveryTests(unittest.TestCase):

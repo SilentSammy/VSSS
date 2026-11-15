@@ -57,6 +57,12 @@ def validate(candidate):
         raise ValueError("invalid controller configuration")
     if controller["max_speed"] > 1 or controller["max_w"] > 1 or not 0 < controller["velocity_alpha"] <= 1:
         raise ValueError("controller limits are out of range")
+    if controller["position_hysteresis"] < 1 or controller["heading_hysteresis"] < 1:
+        raise ValueError("controller hysteresis is out of range")
+    if not 100 <= controller["telemetry_recovery_ms"] <= 10000:
+        raise ValueError("telemetry recovery is out of range")
+    if not 1000 <= controller["waypoint_timeout_ms"] <= 300000:
+        raise ValueError("waypoint timeout is out of range")
     return config
 
 

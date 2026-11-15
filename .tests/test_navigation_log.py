@@ -56,7 +56,8 @@ class NavigationLogTests(unittest.TestCase):
         car = SimpleNamespace(x=0, y=0, w=0, motor_fl=motor, motor_fr=motor, motor_bl=motor, motor_br=motor)
         controller = SimpleNamespace(velocity=[.1, .2, .3])
         receiver = SimpleNamespace(pose=(0, .3, 90), received_ms=900, frame_age_ms=120,
-                                   frame_sequence=7, packets=8, parse_errors=0, fresh=True)
+                                   frame_sequence=7, packets=8, parse_errors=0, fresh=True,
+                                   sequence_gap=2, receive_gap_ms=180)
         state = dict(mode=2, fault=0, waypoint_id=1, waypoint=(0, .4, 90), control_dt_ms=100,
                      control_raw=(.2, 0, 0), control_command=(.21, 0, 0))
         return state, receiver, controller, car
@@ -73,6 +74,9 @@ class NavigationLogTests(unittest.TestCase):
         self.assertEqual(len(samples), 6)
         self.assertEqual(len(samples[-1]['v']), len(COLUMNS))
         self.assertEqual(dict(zip(COLUMNS, samples[-1]['v']))['fault'], 2)
+        values = dict(zip(COLUMNS, samples[-1]['v']))
+        self.assertEqual(values['sequence_gap'], 2)
+        self.assertEqual(values['receive_gap_ms'], 180)
         for now in range(2010, 3010, 10):
             log.sample(now, state, receiver, controller, car, True, 10)
         log.close()
@@ -82,7 +86,7 @@ class NavigationLogTests(unittest.TestCase):
         log = NavigationLog(self.settings, prefix=self.prefix)
         log.event('test')
         with patch.object(log, '_write', side_effect=OSError('flash full')):
-            log.flush()
+            self.assertTrue(log.flush())
         self.assertFalse(log.enabled)
         log.sample(1000, *self.sample_inputs(), True, 10)
         log.event('still safe')
@@ -98,7 +102,8 @@ class NavigationLogTests(unittest.TestCase):
             self.assertTrue(log.enabled)
             self.assertEqual(log.count, 8)
         state.update(mode=4, fault=2)
-        log.sample(5000, state, receiver, controller, car, True, 10)
+        self.assertTrue(log.sample(5000, state, receiver, controller, car, True, 10))
+        self.assertFalse(log.flush())
         rows = self.read(log.path(0))
         samples = [row for row in rows if row['type'] == 'sample']
         self.assertEqual(len(samples), 8)
@@ -126,6 +131,19 @@ class NavigationLogTests(unittest.TestCase):
             log = NavigationLog(self.settings, prefix=self.prefix)
         self.assertEqual(log.sample_slots, 64)
         self.assertEqual(available - len(log.ring), 32 * 1024)
+        log.close()
+
+    def test_wifi_rssi_is_sampled_without_affecting_connectivity(self):
+        log = NavigationLog(self.settings, prefix=self.prefix)
+        state, receiver, controller, car = self.sample_inputs()
+        wifi = SimpleNamespace(isconnected=lambda: True, status=lambda key: -77)
+        log.sample(1000, state, receiver, controller, car, wifi, 10)
+        state.update(mode=4, fault=1)
+        log.sample(1200, state, receiver, controller, car, wifi, 10)
+        sample = next(row for row in self.read(log.path(0)) if row['type'] == 'sample')
+        values = dict(zip(COLUMNS, sample['v']))
+        self.assertEqual(values['wifi_rssi'], -77)
+        self.assertEqual(values['flags'], 3)
         log.close()
 
     def test_switch_to_moving_manual_control_does_not_write_flash(self):

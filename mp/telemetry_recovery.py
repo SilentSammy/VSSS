@@ -7,6 +7,31 @@ def low_latency_wifi(wlan):
     wlan.config(pm=getattr(type(wlan), 'PM_NONE', 0))
 
 
+class TelemetryFreshness:
+    """Classify short feedback losses without relaxing the motor-stop limit."""
+
+    def __init__(self, recovery_ms=2000):
+        self.recovery_ms = int(recovery_ms)
+        self.lost_at = None
+
+    def reset(self):
+        self.lost_at = None
+
+    def update(self, fresh, now_ms):
+        """Return `(state, outage_ms)` for fresh/pause/wait/recover/fault."""
+        if fresh:
+            if self.lost_at is None:
+                return "fresh", 0
+            elapsed = max(0, time.ticks_diff(now_ms, self.lost_at))
+            self.lost_at = None
+            return "recover", elapsed
+        if self.lost_at is None:
+            self.lost_at = now_ms
+            return "pause", 0
+        elapsed = max(0, time.ticks_diff(now_ms, self.lost_at))
+        return ("fault" if elapsed >= self.recovery_ms else "wait"), elapsed
+
+
 class TelemetryRecovery:
     def __init__(self, wlan, settings, receiver_factory, retry_ms=10000):
         self.wlan = wlan

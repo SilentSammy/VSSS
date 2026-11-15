@@ -163,7 +163,7 @@ const compare = (a,op,b) => expression('logic_compare',{OP:op},{A:inputBlock(a),
 function loadLesson(kind) {
   let steps;
   document.getElementById('lesson').value = kind;
-  const ids = ['car1','car2','pose','total','count'];
+  const ids = ['car1','car2','pose','total','count','forward','turn'];
   const forever = steps => expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:inputBlock(expression('logic_boolean',{BOOL:'TRUE'})),DO:inputBlock(chain(steps))});
   const assign = (name,block) => expression('variables_set',{VAR:varField(name)},{VALUE:inputBlock(block)});
   if(kind==='printing') {
@@ -177,6 +177,23 @@ function loadLesson(kind) {
       carBlock('set_velocity','car1',{x:num(0),y:num(0),w:num(.2)}),wait(1),
       carBlock('set_velocity','car1',{x:num(0),y:num(0),w:num(-.2)}),wait(1)
     ])];
+  } else if(kind==='teleop') {
+    steps=[connect('car1',1),forever([
+      assign('forward',expression('api_input_get_bipolar_ctrl',{}, {high_key:text('w'),low_key:text('s'),keyboard_scale:num(.5)})),
+      assign('turn',expression('math_arithmetic',{OP:'MULTIPLY'},{A:inputBlock(expression('vsss_pad_axis',{PAD:0,AXIS:'RX'})),B:num(.5)})),
+      carBlock('set_velocity','car1',{x:inputBlock(variable('forward')),y:num(0),w:inputBlock(variable('turn'))}),wait(.05)
+    ])];
+  } else if(kind==='read_gamepad') {
+    const readings=(label,blocks)=>print(expression('lists_create_with',{},Object.fromEntries(
+      [expression('text',{TEXT:label}),...blocks].map((block,i)=>['ADD'+i,inputBlock(block)])
+    )));
+    const buttons=readings('Buttons A/B/X/Y',['A','B','X','Y'].map(BUTTON=>expression('vsss_pad_held',{PAD:0,BUTTON})));
+    const sticks=readings('Sticks LX/LY/RX/RY',['LX','LY','RX','RY'].map(AXIS=>expression('vsss_pad_axis',{PAD:0,AXIS})));
+    const triggers=readings('Triggers LT/RT',['LT','RT'].map(AXIS=>expression('vsss_pad_axis',{PAD:0,AXIS})));
+    buttons.inputs.TEXT.block.extraState={itemCount:5};
+    sticks.inputs.TEXT.block.extraState={itemCount:5};
+    triggers.inputs.TEXT.block.extraState={itemCount:3};
+    steps=[forever([buttons,sticks,triggers,wait(.25)])];
   } else if(kind==='position') {
     steps=[forever([assign('pose',expression('api_gps_get_car',{}, {number:num(1)})),print(variable('pose')),wait(.25)])];
   } else if(kind==='waypoints') {

@@ -28,6 +28,12 @@ Every requested example is available in the example selector and as a Python fil
 | Rotate back and forth | [03_rotate_back_and_forth.py](examples/03_rotate_back_and_forth.py) | Car 1: w=0.2 for one second, w=-0.2 for one second, repeat forever. No translation or GPS requirement. |
 | Read car position | [04_read_car_position.py](examples/04_read_car_position.py) | Print marker 1's Pose(x, y, angle) every .25 seconds, or None if missing/stale. GPS only: no BLE connection or motion commands. |
 | Alternate waypoints | [05_alternate_waypoints.py](examples/05_alternate_waypoints.py) | Car 1: alternate (0, .5, 90) and (0, -.5, 90) forever, waiting for arrival at each. |
+| Partial teleop | [06_partial_teleop.py](examples/06_partial_teleop.py) | W/S drive at +.5/-.5 in X; gamepad 0 RX drives yaw at half scale. Y stays zero for students to complete. |
+| Read gamepad | [07_read_gamepad.py](examples/07_read_gamepad.py) | Print A/B/X/Y buttons, LX/LY/RX/RY joysticks, and LT/RT triggers on gamepad 0 every .25 seconds. No car or GPS. |
+
+In partial teleop, releasing W/S (or holding both) gives X=0, and centering RX
+gives yaw=0. The loop runs every .05 seconds until Stop or Ctrl+C. Input is read
+on the server computer. No GPS is needed.
 
 The rotation and waypoint examples move a physical car when Run live is clicked.
 Check the car number and available space first. Waypoints use field X/Y metres

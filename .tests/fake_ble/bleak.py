@@ -34,8 +34,9 @@ class BleakClient:
         self.is_connected = False
         self.services_ready = False
         self.matrix = struct.pack('<9f', 1., 0., 0., 0., 1., 0., 0., 0., 1.)
-        self.controller = struct.pack('<11f', 4., .55, .4, .35, .2, .5,
-                                      .12, .08, .025, 5., 600.)
+        self.controller = struct.pack('<15f', 4., .55, .4, .35, .2, .5,
+                                      .12, .08, .025, 5., 600., 1.5, 1.5,
+                                      2000., 30000.)
         self.status = struct.pack('<BBBBfffI', 0, 3, 0, 0, .1, .2, 90., 7)
         self.control = bytes(2)
 

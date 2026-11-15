@@ -64,7 +64,7 @@ const path = require('node:path');
     }
     // Both gamepads and keyboard exports must be valid live programs, stoppable
     // despite their intentionally endless read/control loops.
-    for(const lesson of ['rotation','position','waypoints','gamepads','keyboard','observe']){
+    for(const lesson of ['rotation','position','waypoints','teleop','read_gamepad','gamepads','keyboard','observe']){
       await page.selectOption('#lesson',lesson);
       const code=await page.locator('#code').innerText();
       if(lesson==='gamepads'){
@@ -72,12 +72,15 @@ const path = require('node:path');
         assert.match(code,/input.get_axis\("LY1"\)/);
         assert.match(code,/car2.set_velocity/);
       }
-      if(['observe','position'].includes(lesson))assert.doesNotMatch(code,/ = Car\(/);
+      if(['observe','position','read_gamepad'].includes(lesson))assert.doesNotMatch(code,/ = Car\(/);
+      if(lesson==='read_gamepad'){for(const name of ['A0','B0','X0','Y0','LX0','LY0','RX0','RY0','LT0','RT0'])assert.ok(code.includes(name),name+' missing');assert.doesNotMatch(code,/from vsss import.*Car|gps/);}
+      if(lesson==='teleop'){assert.match(code,/high_key=['"]w['"]/);assert.match(code,/low_key=['"]s['"]/);assert.match(code,/keyboard_scale=0.5/);assert.match(code,/input.get_axis\("RX0"\) \* 0.5/);assert.match(code,/y=0/);}
       if(lesson==='rotation'){assert.match(code,/w=0.2/);assert.match(code,/w=-0.2/);assert.match(code,/while True:/);}
       if(lesson==='waypoints'){assert.match(code,/y=0.5/);assert.match(code,/y=-0.5/);assert.match(code,/arrival_status.mode_name == 'reached'/);}
       await page.click('#run');
       await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running live');
       await page.waitForTimeout(350);
+      if(lesson==='read_gamepad')await page.waitForFunction(()=>document.querySelector('#output').textContent.includes('Triggers LT/RT'));
       assert.equal(await page.locator('#stop').isEnabled(),true);
       await page.click('#stop');
       await page.waitForFunction(()=>document.querySelector('#status').textContent==='Stopped by user.');

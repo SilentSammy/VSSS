@@ -121,8 +121,11 @@ class ProcessTests(unittest.TestCase):
                          ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)))
         controller = self.client.read_controller()
         self.assertAlmostEqual(controller['kp_dist'], 4.)
-        updated = self.client.set_controller({'horizon': .15})
+        updated = self.client.set_controller({'horizon': .15, 'position_hysteresis': 1.75,
+                                              'telemetry_recovery_ms': 2500})
         self.assertAlmostEqual(updated['horizon'], .15)
+        self.assertAlmostEqual(updated['position_hysteresis'], 1.75)
+        self.assertAlmostEqual(updated['telemetry_recovery_ms'], 2500)
         self.assertTrue(any(e['event'] == 'controller_config' for e in self.events()))
         status = self.client.read_status()
         self.assertEqual(status.mode_name, 'idle')
@@ -136,7 +139,9 @@ class ProcessTests(unittest.TestCase):
         self.client.connect()
         self.client.wait_until_connected(4)
         for update in ({'max_speed': 1.1}, {'velocity_alpha': 0},
-                       {'unknown': 1}, {'horizon': float('nan')}):
+                       {'position_hysteresis': .9}, {'telemetry_recovery_ms': 99},
+                       {'waypoint_timeout_ms': 999}, {'unknown': 1},
+                       {'horizon': float('nan')}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 self.client.set_controller(update)
 

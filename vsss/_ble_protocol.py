@@ -16,13 +16,14 @@ STATUS_UUID = "12345678-1234-5678-1234-56789abcdef9"
 
 TRIM_STRUCT = struct.Struct("<9f")
 WAYPOINT_STRUCT = struct.Struct("<fff")
-CONTROLLER_STRUCT = struct.Struct("<11f")
+CONTROLLER_STRUCT = struct.Struct("<15f")
 STATUS_STRUCT = struct.Struct("<BBBBfffI")
 
 CONTROLLER_KEYS = (
     "kp_dist", "kp_heading", "max_speed", "max_w", "horizon",
     "velocity_alpha", "min_speed", "min_w", "position_tolerance",
-    "heading_tolerance_deg", "hold_ms",
+    "heading_tolerance_deg", "hold_ms", "position_hysteresis",
+    "heading_hysteresis", "telemetry_recovery_ms", "waypoint_timeout_ms",
 )
 
 MODE_NAMES = ("idle", "manual", "position", "reached", "fault")
@@ -53,6 +54,12 @@ def normalize_controller(parameters, base=None):
         raise ValueError("controller output limits must be at most 1")
     if merged["velocity_alpha"] > 1:
         raise ValueError("velocity_alpha must be in (0, 1]")
+    if merged["position_hysteresis"] < 1 or merged["heading_hysteresis"] < 1:
+        raise ValueError("arrival hysteresis must be at least 1")
+    if not 100 <= merged["telemetry_recovery_ms"] <= 10000:
+        raise ValueError("telemetry_recovery_ms must be 100 to 10000")
+    if not 1000 <= merged["waypoint_timeout_ms"] <= 300000:
+        raise ValueError("waypoint_timeout_ms must be 1000 to 300000")
     return {key: merged[key] for key in CONTROLLER_KEYS}
 
 

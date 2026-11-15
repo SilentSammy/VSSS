@@ -13,13 +13,14 @@ import time
 COLUMNS = ('t_ms', 'loop_ms', 'mode', 'fault', 'flags', 'waypoint_id',
            'target_x', 'target_y', 'target_deg', 'pose_x', 'pose_y', 'pose_deg',
            'rx_age_ms', 'frame_age_ms', 'frame_sequence', 'packets', 'parse_errors',
+           'sequence_gap', 'receive_gap_ms', 'wifi_rssi',
            'control_dt_ms', 'velocity_x', 'velocity_y', 'velocity_w_rad_s',
            'command_x', 'command_y', 'command_w', 'trimmed_x', 'trimmed_y', 'trimmed_w',
            'motor_x', 'motor_y', 'motor_w', 'fl_hz', 'fl_duty', 'fr_hz', 'fr_duty',
            'bl_hz', 'bl_duty', 'br_hz', 'br_duty', 'heap_free', 'last_flush_ms')
-SAMPLE_FORMAT = '<6i6fif4i12f10i'
+SAMPLE_FORMAT = '<6i6fif7i12f10i'
 SAMPLE_SIZE = struct.calcsize(SAMPLE_FORMAT)
-FLOAT_FIELDS = tuple(list(range(6, 12)) + [13] + list(range(18, 30)))
+FLOAT_FIELDS = tuple(list(range(6, 12)) + [13] + list(range(21, 33)))
 MISSING_INT = -2147483648
 
 
@@ -56,7 +57,7 @@ class NavigationLog:
         self.last_key = None
         self.sample_slots = sample_slots
         self.head = self.count = self.samples_dropped = self.events_dropped = 0
-        self.header = dict(type='schema', version=1, columns=COLUMNS,
+        self.header = dict(type='schema', version=2, columns=COLUMNS,
                            boot_id=os.urandom(4).hex(), car_id=settings['car_id'],
                            controller=settings['controller'], trim=settings['trim_matrix'],
                            sample_ms=sample_ms, sample_slots=sample_slots,
@@ -171,7 +172,14 @@ class NavigationLog:
                     self.last_sample = now
                     pose = receiver.pose if receiver else None
                     received = receiver.received_ms if receiver else None
-                    flags = int(bool(wifi)) | (2 if receiver and receiver.fresh else 0)
+                    connected = wifi.isconnected() if hasattr(wifi, 'isconnected') else bool(wifi)
+                    rssi = None
+                    if connected and hasattr(wifi, 'status'):
+                        try:
+                            rssi = int(wifi.status('rssi'))
+                        except (OSError, ValueError, TypeError):
+                            pass
+                    flags = int(connected) | (2 if receiver and receiver.fresh else 0)
                     values = [now, loop_ms, state['mode'], state['fault'], flags, state['waypoint_id']]
                     values.extend(state['waypoint'] or (None, None, None))
                     values.extend(pose or (None, None, None))
@@ -180,6 +188,9 @@ class NavigationLog:
                                    receiver.frame_sequence if receiver else None,
                                    receiver.packets if receiver else 0,
                                    receiver.parse_errors if receiver else 0,
+                                   receiver.sequence_gap if receiver else None,
+                                   receiver.receive_gap_ms if receiver else None,
+                                   rssi,
                                    state['control_dt_ms']))
                     values.extend(controller.velocity)
                     values.extend(state['control_raw'])
@@ -200,7 +211,7 @@ class NavigationLog:
                     else:
                         self.count += 1
             if changed and state['mode'] != 2 and not any((car.x, car.y, car.w)):
-                self.flush()  # Motors are already stopped on reached/fault/idle.
+                return self.flush()  # Tell the caller feedback needs refreshing.
         except Exception as error:
             self._disable(error)
 
@@ -231,8 +242,12 @@ class NavigationLog:
                 self.head = self.count = self.samples_dropped = self.events_dropped = 0
                 self.last_flush = ticks_ms()
                 self.last_flush_ms = ticks_diff(self.last_flush, started)
+                return True
             except Exception as error:
                 self._disable(error)
+                # A failed flash write can also have blocked network polling.
+                return True
+        return False
 
     def close(self):
         self.flush()

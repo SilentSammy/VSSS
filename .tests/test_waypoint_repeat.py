@@ -4,10 +4,22 @@ import contextlib
 import io
 import json
 from unittest.mock import patch
-from tools.waypoint_repeat import main, oscillating
+from tools.waypoint_repeat import main, oscillating, RecoveryWindow
 
 
 class OscillationTests(unittest.TestCase):
+    def test_recovery_window_tolerates_one_frame_and_expires(self):
+        window = RecoveryWindow(grace=2.)
+        self.assertEqual(window.update(True, 0), ('fresh', 0.))
+        self.assertEqual(window.update(False, 1), ('missing', 0.))
+        state, elapsed = window.update(True, 1.1)
+        self.assertEqual(state, 'recovered')
+        self.assertAlmostEqual(elapsed, .1)
+        self.assertEqual(window.update(False, 2), ('missing', 0.))
+        state, elapsed = window.update(False, 4.1)
+        self.assertEqual(state, 'expired')
+        self.assertAlmostEqual(elapsed, 2.1)
+
     def test_repeated_crossings_are_flagged(self):
         samples = [(i * .1, 0., .4 + (.05 if (i // 7) % 2 else -.05), 90.) for i in range(60)]
         self.assertTrue(oscillating(samples, (0., .4, 90.)))

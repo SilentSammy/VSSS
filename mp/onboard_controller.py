@@ -5,7 +5,8 @@ import time
 
 CONTROLLER_KEYS = ("kp_dist", "kp_heading", "max_speed", "max_w", "horizon",
                    "velocity_alpha", "min_speed", "min_w", "position_tolerance",
-                   "heading_tolerance_deg", "hold_ms")
+                   "heading_tolerance_deg", "hold_ms", "position_hysteresis",
+                   "heading_hysteresis", "telemetry_recovery_ms", "waypoint_timeout_ms")
 
 DEFAULT_CONTROLLER = {
     "kp_dist": 4.0,
@@ -19,6 +20,10 @@ DEFAULT_CONTROLLER = {
     "position_tolerance": .025,
     "heading_tolerance_deg": 5.0,
     "hold_ms": 600,
+    "position_hysteresis": 1.5,
+    "heading_hysteresis": 1.5,
+    "telemetry_recovery_ms": 2000,
+    "waypoint_timeout_ms": 30000,
 }
 
 
@@ -57,6 +62,8 @@ class OnboardController:
         self.velocity = [0.0, 0.0, 0.0]
         self.command = (0.0, 0.0, 0.0)
         self.stable_since = None
+        self.position_acquired = False
+        self.heading_acquired = False
 
     def set_target(self, x, y, angle_radians):
         self.target = (float(x), float(y), float(angle_radians))
@@ -91,8 +98,18 @@ class OnboardController:
         tx, ty, target_theta = self.target
         position_error = math.sqrt((tx - x) ** 2 + (ty - y) ** 2)
         heading_error = abs(wrap_angle(target_theta - theta))
-        position_ok = position_error <= self.position_tolerance
-        heading_ok = heading_error <= self.heading_tolerance
+        if self.position_acquired:
+            if position_error > self.position_tolerance * self.position_hysteresis:
+                self.position_acquired = False
+        elif position_error <= self.position_tolerance:
+            self.position_acquired = True
+        if self.heading_acquired:
+            if heading_error > self.heading_tolerance * self.heading_hysteresis:
+                self.heading_acquired = False
+        elif heading_error <= self.heading_tolerance:
+            self.heading_acquired = True
+        position_ok = self.position_acquired
+        heading_ok = self.heading_acquired
         translation_settled = math.sqrt(self.velocity[0] ** 2 + self.velocity[1] ** 2) <= self.settle_speed
         rotation_settled = abs(self.velocity[2]) <= self.settle_yaw_rate
         if position_ok and heading_ok and translation_settled and rotation_settled:
@@ -112,22 +129,24 @@ class OnboardController:
         command_w = self.kp_heading * wrap_angle(target_theta - predicted_theta)
         command_w = max(-self.max_w, min(self.max_w, command_w))
         speed = math.sqrt(command_x * command_x + command_y * command_y)
-        # Do not impose a discontinuous minimum kick immediately outside the
-        # arrival band.  Camera quantization would otherwise create a limit
-        # cycle across the tolerance boundary.
-        if (position_error >= 2 * self.position_tolerance and
-                0 < speed < self.min_speed):
+        # While acquiring the arrival band, overcome loaded motor deadband.
+        # Once acquired, latch and stop that axis until it leaves the wider
+        # hysteresis band; this avoids both a near-target stall and chatter.
+        if not position_ok and 0 < speed < self.min_speed:
             scale = self.min_speed / speed
             command_x *= scale
             command_y *= scale
-        if (heading_error >= 2 * self.heading_tolerance and
-                0 < abs(command_w) < self.min_w):
+        if not heading_ok and 0 < abs(command_w) < self.min_w:
             command_w = self.min_w if command_w > 0 else -self.min_w
-        # Keep predictive braking active when passing through the target with
-        # appreciable speed; zeroing these axes early caused repeated overshoot.
-        if position_ok and translation_settled:
+        # Never fight a large heading correction with translation. Mecanum
+        # cross-coupling can otherwise concentrate the combined command in one
+        # wheel and create an alternating yaw/position limit cycle. Reacquire
+        # heading in place, then resume translation with yaw latched at zero.
+        if not heading_ok:
             command_x = command_y = 0.0
-        if heading_ok and rotation_settled:
+        elif position_ok:
+            command_x = command_y = 0.0
+        if heading_ok:
             command_w = 0.0
         self.command = (command_x, command_y, command_w)
         return self.command

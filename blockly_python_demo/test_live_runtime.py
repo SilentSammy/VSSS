@@ -247,6 +247,42 @@ class LiveTests(unittest.TestCase):
         self.assertFalse(self.devices.cars)
         self.assertEqual(self.devices.field_reads,0)
 
+    def test_partial_teleop_maps_keys_and_rx_independently(self):
+        code=(ROOT/'blockly_python_demo/examples/06_partial_teleop.py').read_text()
+        validate(code)
+        self.devices.input.pressed_keys.clear()
+        self.devices.input._axis_states[0]['RX']=0
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:self.devices.cars)
+        for keys,rx,forward,turn in [({'w'},32767,.5,.5),({'s'},-32768,-.5,-.5),
+                                     (set(),0,0,0),({'w','s'},32767,0,.5),({'w'},0,.5,0)]:
+            with self.subTest(keys=keys,rx=rx):
+                car=self.devices.cars[0]
+                start=len(car.events)
+                self.devices.input.pressed_keys.clear()
+                self.devices.input.pressed_keys.update(keys)
+                self.devices.input._axis_states[0]['RX']=rx
+                self.wait_for(lambda:('velocity',forward,0,turn) in car.events[start:])
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assert_closed()
+        self.assertEqual(self.devices.field_reads,0)
+
+    def test_gamepad_reader_prints_buttons_sticks_and_triggers_without_car(self):
+        self.devices.input._axis_states[0].update(RX=-32768,RY=32767,LT=0,RT=255)
+        code=(ROOT/'blockly_python_demo/examples/07_read_gamepad.py').read_text()
+        validate(code)
+        run=self.runner.start(code)['run_id']
+        self.wait_for(lambda:'Triggers LT/RT: 0.0 1.0' in self.runner.status(run)['output'])
+        output=self.runner.status(run)['output']
+        self.assertIn('Buttons A/B/X/Y: True False False False',output)
+        self.assertIn('Sticks LX/LY/RX/RY: 0.3 0.5 -1.0 1.0',output)
+        self.assertIn('Triggers LT/RT: 0.0 1.0',output)
+        self.runner.stop(run)
+        self.assertEqual(self.finish(run)['state'],'stopped')
+        self.assertFalse(self.devices.cars)
+        self.assertEqual(self.devices.field_reads,0)
+
     def test_infinite_rotation_alternates_until_stopped(self):
         self.runner=self.devices.runner()
         self.assertIsNone(self.runner.max_seconds)

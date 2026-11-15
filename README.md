@@ -86,11 +86,15 @@ the robot's separate onboard reception.
 
 The firmware disables Wi-Fi modem sleep for lower-latency feedback. Its
 freshness check includes reported camera frame age and time since the last
-unique frame; duplicates do not keep an old pose alive. Arrival requires low
-estimated translation/yaw speed throughout the hold period, with predictive
-braking retained during a fast pass through the target. The speed thresholds
-are derived from the existing tolerances and hold time, so the BLE controller
-parameter layout and saved per-car trim remain unchanged.
+unique frame; duplicates do not keep an old pose alive. A short loss stops the
+motors, retains the waypoint, and resumes from a reset velocity estimate only
+after fresh telemetry returns. Arrival latches translation and heading inside
+their tolerances, stops those axes immediately, and only reactivates them after
+leaving configurable hysteresis bands. This prevents loaded deadband stalls and
+single-wheel chatter while preserving a continuous settled hold before success.
+If heading leaves its band during translation, translation pauses while heading
+is reacquired in place; the controller never mixes a large yaw correction with
+translation near this unstable coupled condition.
 
 ## Stored robot configuration
 
@@ -116,7 +120,10 @@ connection. Neither resumes a prior velocity or waypoint.
 
 Controller keys are `kp_dist`, `kp_heading`, `max_speed`, `max_w`, `horizon`,
 `velocity_alpha`, `min_speed`, `min_w`, `position_tolerance`,
-`heading_tolerance_deg`, and `hold_ms`.
+`heading_tolerance_deg`, `hold_ms`, `position_hysteresis`,
+`heading_hysteresis`, `telemetry_recovery_ms`, and `waypoint_timeout_ms`.
+Hysteresis values are exit-band multipliers (at least 1); the two timing values
+are milliseconds. Partial updates remain supported and are stored on the robot.
 
 ## Manual control and experiments
 
@@ -216,6 +223,13 @@ observers. GPS automatically reconnects after provider interruption and expires
 old positions; a recorder ends incomplete so interruptions remain visible.
 Run `vsss-observer --help` for all options. The observer is an ordinary
 provider consumer.
+
+For development analysis, `python -m tools.ball_dynamics BAG.jsonl --car 1`
+extracts car/ball contacts, rejects detector outliers and sustained pushes,
+fits an impact-plus-rolling model, and reports leave-one-roll-out endpoint
+errors. Add `--output model.json` to preserve the fitted parameters and episode
+diagnostics. This is an initial free-roll model: wall rebounds and prolonged
+dribbling are identified but not simulated.
 
 ## Firmware and tests
 

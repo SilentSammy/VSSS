@@ -25,6 +25,8 @@ class PoseReceiver:
         self.frame_sequence = None
         self.frame_age_ms = None
         self.stream_id = None
+        self.sequence_gap = None
+        self.receive_gap_ms = None
         self.packets = 0
         self.parse_errors = 0
         self.memory_errors = 0
@@ -91,10 +93,17 @@ class PoseReceiver:
                         float(marker["angle"])) if marker else None
                 if pose is not None and not all(math.isfinite(v) for v in pose):
                     raise ValueError('invalid pose')
+                accepted_ms = time.ticks_ms()
+                if stream_id == self.stream_id and self.received_ms is not None:
+                    self.receive_gap_ms = max(0, time.ticks_diff(accepted_ms, self.received_ms))
+                    self.sequence_gap = (sequence - self.frame_sequence
+                                         if sequence is not None and self.frame_sequence is not None else None)
+                else:
+                    self.receive_gap_ms = self.sequence_gap = None
                 self.pose = pose
                 self.frame_sequence, self.frame_age_ms = sequence, frame_age
                 self.stream_id = stream_id
-                self.received_ms = time.ticks_ms()
+                self.received_ms = accepted_ms
                 self._receive_failed = False
                 updated = True
             except MemoryError:

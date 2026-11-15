@@ -59,6 +59,17 @@ class PoseReceiverTests(unittest.TestCase):
         self.assertEqual(self.receiver.stream_id, 'restarted')
         self.assertTrue(self.receiver.fresh)
 
+    def test_receive_and_sequence_gaps_are_recorded(self):
+        self.send(sequence=10)
+        self.now += 180
+        self.send(sequence=13)
+        self.assertEqual(self.receiver.receive_gap_ms, 180)
+        self.assertEqual(self.receiver.sequence_gap, 3)
+        self.now += 20
+        self.send(sequence=2, stream='new')
+        self.assertIsNone(self.receiver.receive_gap_ms)
+        self.assertIsNone(self.receiver.sequence_gap)
+
     def test_invalid_pose_and_age_do_not_replace_valid_state(self):
         self.send()
         for age, x in ((-1, .2), (float('nan'), .2), (100, float('nan'))):
