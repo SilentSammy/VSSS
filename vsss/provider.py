@@ -59,6 +59,8 @@ class BagProvider:
             except json.JSONDecodeError as error:
                 raise ValueError(f'invalid JSON on bag line {number}: {error.msg}') from error
             kind = event.get('type')
+            if kind == 'bag_header':
+                self.snapshot = event['provider']
             if kind == 'provider_snapshot' and self.snapshot is None:
                 self.snapshot = event
             if kind in self.topics:

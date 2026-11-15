@@ -63,6 +63,8 @@ def format_event(event):
         vision = event.get('vision')
         source = f"; UDP port {vision['local_port']}" if vision else ''
         return 'Provider: controlled cars=' + ', '.join(event['controlled_cars']) + source
+    if kind == 'bag_header':
+        return format_event(event['provider'])
     details = {k: v for k, v in event.items() if k not in ('type', 'monotonic_ns', 'wall_time_ns')}
     return kind + ': ' + json.dumps(details)
 
@@ -72,6 +74,7 @@ def main(argv=None, *, stop_event=None, ready_event=None):
     parser.add_argument('--output', type=Path, help='also record full events to a new JSON Lines file')
     parser.add_argument('--quiet', action='store_true', help='suppress individual events (requires --output)')
     parser.add_argument('--server', default='192.168.12.1', help='vision server (default: 192.168.12.1)')
+    parser.add_argument('--metadata-url', help='override the vision HTTP status endpoint')
     parser.add_argument('--broadcast', action='store_true', help='observe broadcast instead of subscribing')
     parser.add_argument('--bind', default='0.0.0.0', help='provider UDP bind address')
     parser.add_argument('--port', type=int, default=5000, help='vision data port (default: 5000)')
@@ -94,6 +97,8 @@ def main(argv=None, *, stop_event=None, ready_event=None):
     vision = dict(server=None if args.broadcast else args.server, port=args.port, bind=args.bind,
                   listen_port=args.listen_port if args.listen_port is not None else (args.port if args.broadcast else 0),
                   subscription_port=args.subscription_port or args.port + 1)
+    if args.metadata_url:
+        vision['metadata_url'] = args.metadata_url
     counts = {}
     with args.output.open('x', encoding='utf-8') if args.output else nullcontext(None) as output:
         def save(event):
@@ -105,11 +110,11 @@ def main(argv=None, *, stop_event=None, ready_event=None):
                 print(format_event(event), flush=True)
 
         complete = False
-        save(dict(type='session_start', schema=2, topics=args.topics,
-                  monotonic_ns=time.monotonic_ns(), wall_time_ns=time.time_ns()))
         try:
             with ProviderObserver(args.topics, vision) as observer:
-                save(observer.snapshot)
+                save(dict(type='bag_header', schema=3, topics=args.topics,
+                          provider=observer.snapshot,
+                          monotonic_ns=time.monotonic_ns(), wall_time_ns=time.time_ns()))
                 if args.output:
                     print('Recording to', args.output, flush=True)
                 if ready_event is not None:

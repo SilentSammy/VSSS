@@ -112,9 +112,11 @@ class Provider:
             self.observers.add(entry)
             cars = list(self.controllers)
         try:
+            if source:
+                source.metadata_ready.wait(1.2)
             conn.sendall(b'{"provider":"observing"}\n')
             conn.sendall((json.dumps(stamp('provider_snapshot', controlled_cars=cars,
-                                         vision=source.info if source else None)) + '\n').encode())
+                                         vision=source.snapshot() if source else None)) + '\n').encode())
             while True:
                 try:
                     event = queue.get(timeout=.1)

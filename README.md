@@ -217,7 +217,15 @@ datagrams and BLE operations through private, independent event streams.
 
 Start the observer before the programs whose BLE traffic you want to capture.
 
-The JSON Lines file combines original UDP datagrams with local provider BLE reads,
+The JSON Lines file starts with a schema-3 `bag_header` containing the provider
+snapshot and cached vision-server metadata. The provider polls
+`http://HOST:8080/api/v1/status` every five seconds, independently of UDP receive
+and BLE control. It retains the last successful response with its fetch time
+and any later fetch error. Use `--metadata-url` for a different endpoint; broadcast
+sources discover the HTTP host from incoming UDP packets. An unavailable endpoint
+does not prevent recording or control.
+
+The rest of the bag combines original UDP datagrams with local provider BLE reads,
 writes, acknowledgements and errors. BLE events include a car, control session,
 connection and request ID; velocity writes distinguish commands, heartbeats,
 and stops. Timestamps use the local monotonic and wall clocks in nanoseconds.
@@ -263,9 +271,13 @@ vsss-plot --bag session.jsonl --speed 100 --output final-frame.png
 vsss-plot --duration 10 --output live-snapshot.png
 ```
 
-The renderer is adapted from TE2004B_AD26's OpenCV board plotter but accepts
-the published VSSS marker/ball packets directly, without camera, ArUco, or
-board-generation dependencies. Press Q, Escape, or close the window to stop.
+The renderer comes directly from the `aruco_gps` submodule. Live plots and bag
+replay obtain board geometry, marker/ball sizes and appearance from the provider
+metadata. Server PNGs are optional; the shared renderer reconstructs the board
+from its portable geometry and dictionary. Initialize the submodule with
+`git submodule update --init` before installing VSSS. For older bags without setup
+metadata, supply `--field-width 1.6 --field-height 3.0` explicitly.
+Press Q, Escape, or close the window to stop.
 
 ## Firmware and tests
 
