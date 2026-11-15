@@ -1,7 +1,8 @@
 # VSSS robot client and firmware
 
-VSSS is the small robot side of the lab system. TE2004B_AD26 owns camera capture,
-marker/ball detection, visualization, and pose publication. This repository owns:
+VSSS is the small robot side of the lab system. The shared `aruco_gps`
+submodule provides camera capture, marker/ball detection, visualization, and
+pose publication. This repository owns:
 
 - the student `Car`/`GPS` Python API;
 - BLE command transport and the manual keyboard/gamepad controller;
@@ -13,6 +14,17 @@ vision computer. The default service uses UDP `5000` for data and `5001` for
 `POSE_SUBSCRIBE`/`POSE_UNSUBSCRIBE`.
 
 ## Install and connect
+
+Clone the repository and run `./setup.ps1` on Windows or `bash setup.sh` on
+Linux. Add `-Yes` or `--yes` to skip prompts, and `-Vision` or `--vision` to
+also install the optional shared vision service. The scripts initialize the
+submodule. Users only consuming the lab feed do not need to run that service.
+
+To start a local service on Linux, use `bash aruco_gps/run.sh`. The lab desktop
+normally runs one standalone instance shared by VSSS and TE2004; see
+[`aruco_gps/README.md`](aruco_gps/README.md). Network setup is separate.
+
+For manual client installation:
 
 ```powershell
 python -m venv .venv

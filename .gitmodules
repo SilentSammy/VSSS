@@ -1,0 +1,3 @@
+[submodule "aruco_gps"]
+	path = aruco_gps
+	url = https://github.com/SilentSammy/aruco_gps.git
