@@ -8,10 +8,14 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = ["bleak", "pynput", "inputs"]
 
+[project.optional-dependencies]
+plot = ["numpy", "opencv-python"]
+
 [project.scripts]
 calibrate = "tools.calibrate:main"
 vsss-manual = "vsss._ble_client:main"
 vsss-observer = "tools.vsss_observer:main"
+vsss-plot = "tools.vsss_plot:main"
 
 [tool.setuptools]
 packages = ["vsss", "tools"]

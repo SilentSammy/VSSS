@@ -231,6 +231,30 @@ errors. Add `--output model.json` to preserve the fitted parameters and episode
 diagnostics. This is an initial free-roll model: wall rebounds and prolonged
 dribbling are identified but not simulated.
 
+## Live and recorded field plotting
+
+Observation consumers use a small provider contract: `snapshot`,
+`read(timeout)`, `finished`, and `close()`. `vsss.provider.LiveProvider` reads
+the real shared VSSS Provider, while `BagProvider` replays a `vsss-observer`
+JSONL file with the same event shape and relative timing. A future simulation
+provider can implement the same contract without special cases in plotters or
+analysis tools.
+
+Install the optional GUI dependencies with `pip install -e ".[plot]"`, then:
+
+```powershell
+vsss-plot                         # live unicast telemetry
+vsss-plot --broadcast             # live broadcast telemetry
+vsss-plot --bag session.jsonl     # real-time bag replay
+vsss-plot --bag session.jsonl --speed 4
+vsss-plot --bag session.jsonl --speed 100 --output final-frame.png
+vsss-plot --duration 10 --output live-snapshot.png
+```
+
+The renderer is adapted from TE2004B_AD26's OpenCV board plotter but accepts
+the published VSSS marker/ball packets directly, without camera, ArUco, or
+board-generation dependencies. Press Q, Escape, or close the window to stop.
+
 ## Firmware and tests
 
 Firmware records waypoint diagnostics to `navigation.jsonl` (newest),
