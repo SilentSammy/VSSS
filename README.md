@@ -4,6 +4,13 @@ Python control and field observation for the lab's mecanum cars. Enable Bluetoot
 and join the lab network (`embedded`) to use the real cars and vision feed.
 Implementation and maintenance notes are in [DEV.md](DEV.md).
 
+This project is the software platform for a small fleet of ESP32-based mecanum
+robots used in the VSSS lab. Students can write Python programs that drive cars,
+observe their positions and the ball field, and combine those capabilities for
+autonomous behavior. The cars receive commands over BLE, while the shared vision
+system publishes marker and ball telemetry over UDP. The repository also includes
+provider, replay, plotting, teleoperation, calibration, and development tools.
+
 ## Installation
 
 Install Git and Python 3.10 or newer, then clone into any folder:
