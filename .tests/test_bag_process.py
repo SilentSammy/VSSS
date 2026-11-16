@@ -94,20 +94,15 @@ class BagProcessTests(unittest.TestCase):
         self.assertEqual(second.read(2)['type'], 'stream_end')
         self.assertTrue(first.finished)
         self.assertEqual(first.snapshot['vision']['metadata']['status']['setup']['name'], 'test-field')
-        self.assertIsNone(self.process.poll())
-        late = self.observe()
-        self.assertEqual(late.read(2)['type'], 'stream_end')
-        self.assertIsNone(self.process.poll())
+        self.assertEqual(self.process.wait(timeout=5), 0)
+        self.assertFalse(self.token_path.exists())
 
     def test_immediate_plays_to_end_without_subscribers(self):
         self.start('--immediate', '--speed', '4')
         self.assertIn('Bag provider:', self.process.stdout.readline())
         self.assertIn('Playback started: --immediate', self.process.stdout.readline())
-        time.sleep(.6)
-        observer = self.observe()
-        self.assertTrue(observer.snapshot['vision']['replay']['finished'])
-        self.assertEqual(observer.read(2)['type'], 'stream_end')
-        self.assertIsNone(self.process.poll())
+        self.assertEqual(self.process.wait(timeout=5), 0)
+        self.assertFalse(self.token_path.exists())
 
     def test_replay_rejects_car_control_and_gps_uses_current_delivery_time(self):
         self.start()
@@ -138,7 +133,30 @@ class BagProcessTests(unittest.TestCase):
                                 text=True, timeout=8)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(image.is_file())
-        self.assertIsNone(self.process.poll())
+        self.assertEqual(self.process.wait(timeout=5), 0)
+
+    def test_persistent_plot_survives_bag_provider_restart_without_starting_live(self):
+        self.start('--speed', '4')
+        image = self.directory / 'persistent.png'
+        plot = subprocess.Popen([sys.executable, '-m', 'tools.vsss_plot', '--persist',
+                                 '--duration', '3', '--width', '320', '--output', str(image)],
+                                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(self.process.wait(timeout=5), 0)
+            self.process.communicate(timeout=1)
+            time.sleep(.7)
+            self.assertIsNone(plot.poll())
+            self.assertFalse(self.token_path.exists())
+            self.start('--speed', '4')
+            self.assertEqual(self.process.wait(timeout=5), 0)
+            stdout, stderr = plot.communicate(timeout=5)
+            self.assertEqual(plot.returncode, 0, stderr)
+            self.assertTrue(image.is_file())
+            self.assertIn('Saved', stdout)
+        finally:
+            if plot.poll() is None:
+                plot.terminate()
+            plot.communicate(timeout=5)
 
     def test_explicit_live_stays_running_without_clients_and_refuses_competitor(self):
         self.process = subprocess.Popen([sys.executable, '-u', '-m', 'tools.vsss_live'],
@@ -182,6 +200,7 @@ class BagProcessTests(unittest.TestCase):
         self.assertEqual(events[-1]['type'], 'stream_end')
         self.assertFalse(events[-1]['complete'])
         self.assertIn('invalid JSON', events[-1]['error'])
+        self.assertEqual(self.process.wait(timeout=5), 0)
 
 
 if __name__ == '__main__':

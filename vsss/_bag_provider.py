@@ -120,9 +120,9 @@ class BagProvider(Provider):
             error='Bag playback is read-only; no car commands can be sent.')) + '\n').encode())
 
     def should_exit(self):
-        # Explicitly selected replay remains authoritative after EOF; do not
-        # silently fall back to the live provider when the last observer exits.
-        return False
+        # Let observation handlers drain their queues through stream_end before
+        # shutting down their sockets. Immediate playback can finish without users.
+        return self.source.ended.is_set() and not self.observers
 
     def run(self):
         try:

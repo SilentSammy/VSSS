@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Event, Thread
 import time
 
-def connect(role, name=None, timeout=8, **options):
+def connect(role, name=None, timeout=8, *, auto_start=True, **options):
     port = int(os.environ.get('VSSS_PROVIDER_PORT', '38475'))
     token_path = Path(tempfile.gettempdir()) / ('vsss-provider-%d.token' % port)
     deadline = time.monotonic() + timeout
@@ -33,7 +33,7 @@ def connect(role, name=None, timeout=8, **options):
         except (OSError, ValueError):
             if sock:
                 sock.close()
-            if not started:
+            if auto_start and not started:
                 # DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW. In a
                 # venv the Python launcher can then give the real interpreter
                 # a new console. NO_WINDOW alone also survives that launcher.
@@ -46,7 +46,8 @@ def connect(role, name=None, timeout=8, **options):
                 Thread(target=process.wait, daemon=True).start()
                 started = True
             time.sleep(.05)
-    raise ConnectionError('Could not start or connect to the local VSSS provider')
+    raise ConnectionError('Could not start or connect to the local VSSS provider' if auto_start
+                          else 'No local VSSS provider is available')
 
 
 class _Writer:

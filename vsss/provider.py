@@ -24,8 +24,9 @@ class ProviderClient:
     Each instance has one reader. Call close() from another thread to interrupt it.
     Reconnection is a consumer policy: recorders fail incomplete; GPS reconnects.
     """
-    def __init__(self, topics=('ble', 'udp'), vision=None):
-        self.socket = connect('observe', topics=list(topics), vision=vision or {})
+    def __init__(self, topics=('ble', 'udp'), vision=None, *, auto_start=True, connect_timeout=8):
+        self.socket = connect('observe', topics=list(topics), vision=vision or {},
+                              auto_start=auto_start, timeout=connect_timeout)
         self.buffer = b''
         self.finished = False
         try:

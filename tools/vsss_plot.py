@@ -13,7 +13,8 @@ def provider_from_args(args):
                   subscription_port=args.subscription_port or args.port + 1)
     if args.metadata_url:
         vision['metadata_url'] = args.metadata_url
-    return ProviderClient(('udp',), vision)
+    return ProviderClient(('udp',), vision, auto_start=not args.persist,
+                          connect_timeout=.1 if args.persist else 8)
 
 
 def plotter_from_snapshot(snapshot, width, fallback=None):
@@ -41,6 +42,9 @@ def main(argv=None):
     parser.add_argument('--field-height', type=float, help='fallback height when metadata is unavailable')
     parser.add_argument('--width', type=int, default=720)
     parser.add_argument('--duration', type=float)
+    parser.add_argument('--persist', action='store_true',
+                        help='keep running across feed endings and provider restarts; '
+                             'wait for providers without automatically starting live mode')
     parser.add_argument('--output', type=Path, help='headless: save the final frame as a new image')
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65534:
@@ -63,27 +67,49 @@ def main(argv=None):
     window = 'VSSS field'
     started = time.monotonic()
     deadline = started + args.duration if args.duration else None
+    provider = None
+    retry_at = 0.
     try:
-        with provider_from_args(args) as provider:
-            plotter = plotter_from_snapshot(provider.snapshot, args.width, fallback)
-            if args.output is None:
-                cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-            while not provider.finished and (deadline is None or time.monotonic() < deadline):
-                event = provider.read(.02)
+        if args.output is None:
+            cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        while deadline is None or time.monotonic() < deadline:
+            try:
+                if provider is None and time.monotonic() >= retry_at:
+                    provider = provider_from_args(args)
+                    plotter = plotter_from_snapshot(provider.snapshot, args.width, fallback)
+                    latest = None
+                event = provider.read(.02) if provider is not None else None
                 if event and event.get('type') == 'stream_end' and not event.get('complete', True):
                     raise RuntimeError(event.get('error', 'Provider stream ended incomplete'))
                 if event and event.get('type') == 'udp' and event.get('valid'):
                     latest = plotter.render_packet(event['packet'])
-                if args.output is None:
-                    if latest is not None:
-                        cv2.imshow(window, latest)
-                    if cv2.waitKey(1) & 0xff in (ord('q'), 27):
+                if provider is not None and provider.finished:
+                    if not args.persist:
                         break
-                    if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
-                        break
+                    provider.close()
+                    provider = None
+                    retry_at = time.monotonic() + .5
+            except (ConnectionError, OSError):
+                if not args.persist:
+                    raise
+                if provider is not None:
+                    provider.close()
+                    provider = None
+                retry_at = time.monotonic() + .5
+            if args.output is None:
+                if latest is not None:
+                    cv2.imshow(window, latest)
+                if cv2.waitKey(1) & 0xff in (ord('q'), 27):
+                    break
+                if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+            if provider is None:
+                time.sleep(.02)
     except KeyboardInterrupt:
         pass
     finally:
+        if provider is not None:
+            provider.close()
         if args.output is None:
             cv2.destroyAllWindows()
     if args.output:

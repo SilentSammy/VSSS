@@ -11,7 +11,11 @@ Student scripts and tools connect to one local provider on loopback TCP
 (default port 38475). A per-user temporary token authenticates connections.
 `VSSS_PROVIDER_PORT` selects another endpoint, useful for isolated tests.
 The first client starts live mode automatically if no provider is reachable.
-Explicit live/bag providers remain selected until Ctrl+C.
+Explicit live providers remain selected until Ctrl+C. Bag providers exit after
+playback ends and subscribers receive the final event; `--loop` repeats playback
+until Ctrl+C.
+`vsss-plot --persist` reconnects passively without auto-starting live mode, so a
+waiting plot window does not select a provider while switching live/bag feeds.
 
 The live provider owns UDP reception and one BLE worker per car. Local clients
 share those workers; requests and acknowledgements are mapped back to their

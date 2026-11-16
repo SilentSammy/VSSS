@@ -51,16 +51,16 @@ Run any implemented command with `-h` for its arguments.
 | Command | Purpose |
 | --- | --- |
 | `vsss-live` | Run the real BLE/UDP provider until Ctrl+C. Starts automatically when needed if no provider is running. |
-| `vsss-bag FILE` | Serve a recorded bag. Waits for the first feed subscriber before playback (`--immediate` skips waiting); stays active until Ctrl+C. |
+| `vsss-bag FILE` | Serve a recorded bag. Waits for the first feed subscriber before playback (`--immediate` skips waiting); exits when playback ends (`--loop` repeats until Ctrl+C). |
 | `vsss-sim` | Planned: serve simulated cars and field telemetry. |
 | `vsss-observer [FILE]` | Print UDP/BLE activity, or record it to a new bag file with the cached vision setup header. |
-| `vsss-plot` | Plot the active provider's field telemetry using its setup metadata. |
+| `vsss-plot` | Plot the active provider's field telemetry using its setup metadata. `--persist` waits and reconnects across feed endings and provider restarts. |
 | `vsss-teleop` | Discover cars and assign keyboard/gamepad controls. Sends velocity commands only; explicit arguments allow promptless use. |
 | `vsss-waypoint` | Planned: send waypoint commands from a terminal. |
 | `calibrate --car ID` | Measure and propose trim; optionally save/apply it, apply a saved calibration, or reset trim. Measurement mode moves the car. |
 
 Only one provider mode can run at a time. Start `vsss-bag` before your consumers
-to use playback; stop it with Ctrl+C before switching modes. An automatically
+to use playback; it exits at the end, or can be stopped with Ctrl+C before switching modes. An automatically
 started live provider exits five seconds after its last client leaves.
 
 Teleop's keyboard aliases are `wasd` (Q/E rotation, C boost) and `ijkl`
@@ -70,6 +70,12 @@ Teleop's keyboard aliases are `wasd` (Q/E rotation, C boost) and `ijkl`
 vsss-teleop --car 1=wasd --car 2=gamepad:0
 vsss-observer session.jsonl
 ```
+
+By default, `vsss-plot` exits when playback ends or its provider disconnects.
+Use `vsss-plot --persist` to leave the window open while switching providers.
+This mode waits for an existing provider, including at startup, without starting
+live mode automatically. Start `vsss-live` or `vsss-bag FILE` separately; each
+connection reloads the field setup. Press Q/Escape or close the window to exit.
 
 ## Python API
 
