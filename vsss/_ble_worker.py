@@ -1,7 +1,7 @@
 """BLE owner process. stdin carries commands; stdout carries status messages.
 
-The student script owns stdin's other end. EOF means that script has exited,
-including os._exit() or an IDE stop, so we stop and disconnect immediately.
+The provider owns stdin's other end and shares this worker across local clients.
+A shutdown request or provider EOF stops motion and disconnects BLE.
 """
 import asyncio
 import json
@@ -31,19 +31,29 @@ class Commands:
         self.operations = asyncio.Queue()
         self.waypoints = asyncio.Queue()
         self.position_mode = False
+        self.motion_session = None
+        self.event_session = None
 
     def update(self, message):
+        if message.get('shutdown'):
+            self.closed.set()
+            return
         if self.ready:
             if 'operation' in message:
                 self.operations.put_nowait(message)
                 self.changed.set()
                 return
             if 'waypoint' in message:
+                self.motion_session = message.get('_session_id')
                 self.waypoints.put_nowait(message)
                 self.position_mode = True
                 self.changed.set()
                 return
             self.velocity = bytes(message['velocity'])
+            self.motion_session = message.get('_session_id')
+            while not self.waypoints.empty():
+                self.report(waypoint_done=self.waypoints.get_nowait()['request'],
+                            waypoint_error='Waypoint superseded by velocity command')
             self.sequence = message['sequence']
             self.force = message['force']
             self.position_mode = False
@@ -87,7 +97,8 @@ class TracedBLE:
     async def write_gatt_char(self, uuid, payload, response=True, reason=None):
         self.sequence += 1
         request = self.sequence
-        details = dict(payload_hex=bytes(payload).hex(), response=response, reason=reason or 'command')
+        details = dict(payload_hex=bytes(payload).hex(), response=response, reason=reason or 'command',
+                       origin_session_id=self.commands.event_session)
         try:
             if uuid == VELOCITY_UUID:
                 details['value'] = dict(zip(('x', 'y', 'w'), (v / 128 for v in struct.unpack('<bbb', payload))))
@@ -103,21 +114,23 @@ class TracedBLE:
         try:
             result = await self.client.write_gatt_char(uuid, payload, response=response)
         except BaseException as error:
-            self.event('error', 'write', uuid, request, error=str(error) or type(error).__name__)
+            self.event('error', 'write', uuid, request, error=str(error) or type(error).__name__,
+                       origin_session_id=details['origin_session_id'])
             raise
-        self.event('complete', 'write', uuid, request)
+        self.event('complete', 'write', uuid, request, origin_session_id=details['origin_session_id'])
         return result
 
     async def read_gatt_char(self, uuid):
         self.sequence += 1
         request = self.sequence
-        self.event('start', 'read', uuid, request)
+        origin = self.commands.event_session
+        self.event('start', 'read', uuid, request, origin_session_id=origin)
         try:
             result = await self.client.read_gatt_char(uuid)
         except BaseException as error:
-            self.event('error', 'read', uuid, request, error=str(error) or type(error).__name__)
+            self.event('error', 'read', uuid, request, error=str(error) or type(error).__name__, origin_session_id=origin)
             raise
-        self.event('complete', 'read', uuid, request, payload_hex=bytes(result).hex())
+        self.event('complete', 'read', uuid, request, payload_hex=bytes(result).hex(), origin_session_id=origin)
         return result
 
 
@@ -171,10 +184,11 @@ async def control(client, commands):
     last_velocity = bytes(3)
     last_sequence = 0
     last_write = asyncio.get_running_loop().time()
-    while client.is_connected:
+    while client.is_connected and not commands.closed.is_set():
         commands.changed.clear()
         velocity, sequence = commands.velocity, commands.sequence
         elapsed = asyncio.get_running_loop().time() - last_write
+        commands.event_session = commands.motion_session
         if commands.position_mode:
             if elapsed >= HEARTBEAT_SECONDS:
                 await asyncio.wait_for(
@@ -190,6 +204,8 @@ async def control(client, commands):
             commands.report(written=sequence)
         if not commands.operations.empty():
             message = commands.operations.get_nowait()
+            commands.event_session = message.get('_session_id')
+            result = {}
             try:
                 operation = message['operation']
                 if operation in ('read_trim', 'write_trim'):
@@ -204,7 +220,7 @@ async def control(client, commands):
                         client.read_gatt_char(TRIM_MATRIX_UUID), WRITE_TIMEOUT)
                     if operation == 'write_trim' and bytes(actual) != payload:
                         raise ValueError('Firmware rejected trim')
-                    commands.report(trim_matrix=TRIM_STRUCT.unpack(actual))
+                    result['trim_matrix'] = TRIM_STRUCT.unpack(actual)
                 elif operation in ('read_controller', 'write_controller'):
                     if not controller_supported:
                         raise RuntimeError('Firmware does not support controller configuration')
@@ -218,11 +234,11 @@ async def control(client, commands):
                     if operation == 'write_controller' and bytes(actual) != payload:
                         raise ValueError('Firmware rejected controller configuration')
                     values = CONTROLLER_STRUCT.unpack(actual)
-                    commands.report(controller_config=dict(zip(CONTROLLER_KEYS, values)))
+                    result['controller_config'] = dict(zip(CONTROLLER_KEYS, values))
                 elif operation == 'read_status':
                     actual = await asyncio.wait_for(
                         client.read_gatt_char(STATUS_UUID), WRITE_TIMEOUT)
-                    commands.report(robot_status=STATUS_STRUCT.unpack(actual))
+                    result['robot_status'] = STATUS_STRUCT.unpack(actual)
                 elif operation in ('reconnect_telemetry', 'restart'):
                     code = (CONTROL_RECONNECT_TELEMETRY if operation == 'reconnect_telemetry'
                             else CONTROL_RESTART)
@@ -234,11 +250,12 @@ async def control(client, commands):
                         raise RuntimeError('Firmware did not accept the recovery command')
                 else:
                     raise ValueError('Unknown BLE operation')
-                commands.report(operation_done=message['request'])
+                commands.report(operation_done=message['request'], **result)
             except Exception as error:
                 commands.report(operation_done=message['request'], operation_error=str(error))
         if not commands.waypoints.empty():
             message = commands.waypoints.get_nowait()
+            commands.event_session = message.get('_session_id')
             try:
                 payload = WAYPOINT_STRUCT.pack(*message['waypoint'])
                 await asyncio.wait_for(

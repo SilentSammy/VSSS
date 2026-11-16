@@ -1,49 +1,111 @@
-# VSSS robot client and firmware
+# VSSS
 
-VSSS is the small robot side of the lab system. The shared `aruco_gps`
-submodule provides camera capture, marker/ball detection, visualization, and
-pose publication. This repository owns:
+Python control and field observation for the lab's mecanum cars. Enable Bluetooth
+and join the lab network (`embedded`) to use the real cars and vision feed.
+Implementation and maintenance notes are in [DEV.md](DEV.md).
 
-- the student `Car`/`GPS` Python API;
-- BLE command transport and the manual keyboard/gamepad controller;
-- ESP32-C3 motor control and onboard waypoint control;
-- guarded velocity/waypoint observation experiments.
+## Installation
 
-Commands travel over BLE. Pose feedback travels over UDP unicast from the lab
-vision computer. The default service uses UDP `5000` for data and `5001` for
-`POSE_SUBSCRIBE`/`POSE_UNSUBSCRIBE`.
+Install Git and Python 3.10 or newer, then clone into any folder:
 
-## Install and connect
-
-Clone the repository and run `./setup.ps1` on Windows or `bash setup.sh` on
-Linux. Add `-Yes` or `--yes` to skip prompts, and `-Vision` or `--vision` to
-also install the optional shared vision service. The scripts initialize the
-submodule. Users only consuming the lab feed do not need to run that service.
-
-To start a local service on Linux, use `bash aruco_gps/run.sh`. The lab desktop
-normally runs one standalone instance shared by VSSS and TE2004; see
-[`aruco_gps/README.md`](aruco_gps/README.md). Network setup is separate.
-
-For manual client installation:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e .
+```sh
+git clone --recurse-submodules https://github.com/SilentSammy/VSSS.git my-vsss
+cd my-vsss
 ```
 
-Join the `embedded` lab hotspot and enable Bluetooth. Car 1 advertises as `car1`
-and uses marker ID 1.
+The checkout name is arbitrary. Run the following commands from its root; no
+machine-specific paths are needed. If you move the checkout later, rerun setup
+to recreate its virtual environment.
 
-The student API is in the `vsss` package: import `Car`, `gps`, and `run` from `vsss`.
-Keyboard and gamepad helpers are available as `from vsss import input`.
-Use package imports consistently; the obsolete top-level compatibility modules
-have been removed.
+Windows (PowerShell):
 
-Root-level starting scripts: [velocity only](boilerplate_velocity.py),
-[field observation](boilerplate_observe.py), and
-[autonomous control](boilerplate_autonomous.py). The velocity and autonomous
-examples move car 1 when run; edit their commands/target for your exercise.
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+./setup.ps1 -Yes
+. ./.venv/Scripts/Activate.ps1
+python -m pip install -e ".[plot]"
+```
+
+Linux:
+
+```sh
+bash setup.sh --yes
+source .venv/bin/activate
+python -m pip install -e ".[plot]"
+```
+
+Activate `.venv` again in each new terminal. The vision server runs separately
+on the lab computer; students do not need to install or start it.
+
+## Commands
+
+Run any implemented command with `-h` for its arguments.
+
+| Command | Purpose |
+| --- | --- |
+| `vsss-live` | Run the real BLE/UDP provider until Ctrl+C. Starts automatically when needed if no provider is running. |
+| `vsss-bag FILE` | Serve a recorded bag. Waits for the first feed subscriber before playback (`--immediate` skips waiting); stays active until Ctrl+C. |
+| `vsss-sim` | Planned: serve simulated cars and field telemetry. |
+| `vsss-observer [FILE]` | Print UDP/BLE activity, or record it to a new bag file with the cached vision setup header. |
+| `vsss-plot` | Plot the active provider's field telemetry using its setup metadata. |
+| `vsss-teleop` | Discover cars and assign keyboard/gamepad controls. Sends velocity commands only; explicit arguments allow promptless use. |
+| `vsss-waypoint` | Planned: send waypoint commands from a terminal. |
+| `calibrate --car ID` | Measure and propose trim; optionally save/apply it, apply a saved calibration, or reset trim. Measurement mode moves the car. |
+
+Only one provider mode can run at a time. Start `vsss-bag` before your consumers
+to use playback; stop it with Ctrl+C before switching modes. An automatically
+started live provider exits five seconds after its last client leaves.
+
+Teleop's keyboard aliases are `wasd` (Q/E rotation, C boost) and `ijkl`
+(U/O rotation, M boost). Examples:
+
+```sh
+vsss-teleop --car 1=wasd --car 2=gamepad:0
+vsss-observer session.jsonl
+```
+
+## Python API
+
+The public modules under `vsss/` are:
+
+| File | Common use |
+| --- | --- |
+| [car.py](vsss/car.py) | `Car(ID)` connects to a numbered car over BLE. |
+| [gps.py](vsss/gps.py) | `gps` lazily starts shared field observation; `GPS()` accesses the same receiver. |
+| [input.py](vsss/input.py) | Read keyboard and gamepad state in custom scripts. |
+| [provider.py](vsss/provider.py) | `available_cars()` returns car IDs; `ProviderClient` exposes raw observation events for tools. |
+| [__init__.py](vsss/__init__.py) | Convenient imports: `Car`, `GPS`, `gps`, `Pose`, `Position`, and `run`. |
+
+### Car
+
+- `set_velocity(x=0, y=0, w=0)`: normalized forward, left, and counterclockwise
+  commands in `[-1, 1]`; `stop()` sends zero.
+- `go_to(x, y, angle)`: start onboard waypoint navigation using field coordinates.
+  Requires healthy telemetry and the car's own marker to be visible.
+- `pose` / `position`: current field pose or XY tuple; `None` when unavailable.
+  `wait_for_position()` waits for a valid pose.
+- `read_status()`: onboard mode, fault, pose, and telemetry counters.
+- `read_trim()` / `set_trim(matrix)`: inspect or replace the correction matrix.
+  `read_controller()` / `set_controller(parameters)`: inspect or update controller settings.
+- `is_connected`: BLE readiness. `close()` / `Car.close_all()`: release this
+  script's connections. Prefer `@run` for automatic cleanup.
+
+Velocity control needs only BLE; GPS starts when position is requested.
+Multiple scripts can share a car. The latest explicit motion command takes
+control, and velocity cancels a waypoint. The motion owner leaving stops the
+car; another client's departure does not interrupt it.
+
+### GPS and input
+
+`gps.cars` maps marker IDs to `Pose(x, y, angle)`; `gps.get_car(ID)` returns
+one pose or `None`. `gps.balls` contains `Position(x, y)` objects.
+`gps.board_detected` indicates board visibility. Stale field observations
+return empty collections. Field distances are metres and headings are degrees,
+counterclockwise from +X. GPS observation does not require a BLE connection.
+
+For custom input, use `input.is_pressed(key)`, `rising_edge(key)`,
+`falling_edge(key)`, and `get_axis(name)`. Gamepad names include `LX`, `LY`,
+`RX`, and `RT`; an index suffix selects a device, e.g. `LX1`.
 
 ```python
 from time import sleep
@@ -52,270 +114,16 @@ from vsss import Car, run
 @run
 def main():
     car = Car(1)
-    car.set_velocity(x=.2)
+    car.set_velocity(x=0.2)
     sleep(1)
+    car.stop()
 
 main()
 ```
 
-`@run` stops/disconnects all cars created in this process and releases its GPS
-connection when the function returns, raises an error, or receives Ctrl+C. Call
-the decorated function normally; it is a synchronous script entry point. Multiple
-cars can be created in the same function. Cleanup does not affect other scripts.
+`@run` releases the script's cars and GPS on return, error, or Ctrl+C.
+Starting scripts: [velocity](boilerplate_velocity.py),
+[field observation](boilerplate_observe.py), and
+[autonomous control](boilerplate_autonomous.py).
 
-Car construction and velocity commands use BLE only. Position access (`car.pose`,
-`car.position`, or `car.gps`) starts the shared GPS receiver lazily. Missing camera
-telemetry does not prevent velocity control; a missing/stale pose returns `None`.
-
-For field-only observation, no car or BLE connection is needed:
-
-```python
-from time import sleep
-from vsss import gps, run
-
-@run
-def main():
-    while True:
-        print(gps.cars)   # {id: Pose(x, y, angle)}
-        print(gps.balls)  # tuple of Position(x, y)
-        sleep(.1)
-
-main()
-```
-
-Importing `gps` does not start reception; its first field access does.
-`GPS(...)` remains available for explicit configuration before first access.
-`Car.close()`, `with Car(...)`, and `Car.close_all()` in a `finally` block are
-also supported. `Car.close_all()` attempts every car even if one cleanup fails.
-
-`set_velocity` uses normalized robot-frame forward, left, and counterclockwise
-commands. `go_to` sends field X/Y metres and heading degrees to the firmware.
-Waypoint control requires healthy onboard telemetry and visibility of the car's
-own marker. `car.wait_for_position()` waits for desktop visibility when your
-planning code also needs field feedback; `car.read_status().pose_fresh` checks
-the robot's separate onboard reception.
-
-The firmware disables Wi-Fi modem sleep for lower-latency feedback. Its
-freshness check includes reported camera frame age and time since the last
-unique frame; duplicates do not keep an old pose alive. A short loss stops the
-motors, retains the waypoint, and resumes from a reset velocity estimate only
-after fresh telemetry returns. Arrival latches translation and heading inside
-their tolerances, stops those axes immediately, and only reactivates them after
-leaving configurable hysteresis bands. This prevents loaded deadband stalls and
-single-wheel chatter while preserving a continuous settled hold before success.
-If heading leaves its band during translation, translation pauses while heading
-is reacquired in place; the controller never mixes a large yaw correction with
-translation near this unstable coupled condition.
-
-## Stored robot configuration
-
-Trim and controller configuration live on the robot. Connecting does not rewrite
-them. Configuration can be read, partially updated, and read back over BLE:
-
-```python
-with Car(1) as car:
-    print(car.read_trim())
-    print(car.read_controller())
-
-    car.set_trim(((1, 0, 0), (0, 1, 0), (0, 0, 1)))
-    car.set_controller({"horizon": .15})
-
-    status = car.read_status()
-    print(status.mode_name, status.fault_name, status.pose_fresh)
-```
-
-If telemetry needs recovery, `car.reconnect_telemetry()` stops the robot and
-restarts its Wi-Fi and UDP receiver. `car.restart()` stops and reboots it, then
-waits for BLE to reconnect in the stopped state. Both require a working BLE
-connection. Neither resumes a prior velocity or waypoint.
-
-Controller keys are `kp_dist`, `kp_heading`, `max_speed`, `max_w`, `horizon`,
-`velocity_alpha`, `min_speed`, `min_w`, `position_tolerance`,
-`heading_tolerance_deg`, `hold_ms`, `position_hysteresis`,
-`heading_hysteresis`, `telemetry_recovery_ms`, and `waypoint_timeout_ms`.
-Hysteresis values are exit-band multipliers (at least 1); the two timing values
-are milliseconds. Partial updates remain supported and are stored on the robot.
-
-## Manual control and experiments
-
-The integrated manual controller remains available:
-
-```powershell
-vsss-manual
-```
-
-`P` switches between keyboard/gamepad control and the onboard waypoint console.
-
-The experiment runner reads robot configuration/status and records pose plus
-firmware mode/fault. Motion is preview-only unless `--execute` is present:
-
-```powershell
-python -m tools.run --waypoint 0 .5 90
-python -m tools.run --waypoint 0 .5 90 --execute
-python -m tools.run --velocity .2 0 0 --duration 2 --execute
-python -m tools.run --observe 10
-python -m tools.run --trim trim.json --controller controller.json
-```
-
-Calibration runs signed velocity pulses around the field center `(0, 0, 90)`
-by default and saves its frames, original settings, and trim proposal. For the
-supervised upper-half track, specify `--center 0 .75 90`:
-
-```powershell
-calibrate --car 1
-calibrate --car 1 --auto-apply
-calibrate --car 1 --ask-apply --save-json proposal.json
-calibrate --car 1 --center 0 .75 90 --translation-level .5 --yaw-level .2 --pulse-seconds .8 --yaw-seconds .7
-calibrate --car 1 --apply proposal.json
-calibrate --car 1 --apply tools/runs/RUN/original.json
-calibrate --car 1 --reset
-```
-
-Each measurement prints the proposal and saves a recording in `tools/runs/`;
-`--save-json` also saves it at a chosen path. `--auto-apply` applies a passing
-proposal without prompting, while `--ask-apply` requests confirmation. Apply a
-saved proposal or original trim with `--apply`, or reset to the identity matrix
-with `--reset`; these actions do not move the car. The script stops on lost
-telemetry or boundary risk; controller gains are not retuned by these pulses.
-The guard follows the selected center within field margins; the car must start
-inside that guarded region. Rotation pulses default to 0.7 seconds and remain
-subject to the 70-degree rotation guard, including during settling.
-
-Velocity trials stop if pose telemetry becomes stale or the car crosses configured
-bounds. Waypoint trials send one target to the firmware and observe its BLE status;
-they do not run a second controller on the laptop.
-
-## Observation and recording
-
-`vsss-observer` shows a readable UDP/BLE feed and explicitly states that it is
-not recording. Supply a path to record a bag quietly; add `--print` to also
-display events while recording. Existing files are never overwritten.
-Both topics are observed by default; `--topics udp` or `--topics ble` selects one.
-
-```powershell
-vsss-observer
-vsss-observer --topics udp --duration 10
-vsss-observer --topics ble
-vsss-observer session.jsonl --duration 60
-vsss-observer session.jsonl --print
-vsss-observer --topics udp --broadcast --port 5000
-```
-
-UDP defaults to unicast from `192.168.12.1`; use `--server` for another host
-or `--broadcast` for passive broadcast reception. Unicast uses an automatic
-local port unless `--listen-port` is supplied. `--subscription-port` overrides
-the server subscription port (default: data port + 1).
-
-The shared local VSSS Provider starts automatically when a car client, GPS, or
-observation tool needs it. Each car has one controller at a time; if that controller
-exits, the provider stops and releases the car even when a recorder is watching.
-The provider exits after its last client leaves and a short idle period.
-
-The provider owns the BLE connections and UDP sockets. GPS and tools using the
-same vision source settings share one subscription. GPS turns those packets
-into student-facing poses and ball positions; recording tools observe original
-datagrams and BLE operations through private, independent event streams.
-
-Start the observer before the programs whose BLE traffic you want to capture.
-
-The JSON Lines file starts with a schema-3 `bag_header` containing the provider
-snapshot and cached vision-server metadata. The provider polls
-`http://HOST:8080/api/v1/status` every five seconds, independently of UDP receive
-and BLE control. It retains the last successful response with its fetch time
-and any later fetch error. Use `--metadata-url` for a different endpoint; broadcast
-sources discover the HTTP host from incoming UDP packets. An unavailable endpoint
-does not prevent recording or control.
-
-The rest of the bag combines original UDP datagrams with local provider BLE reads,
-writes, acknowledgements and errors. BLE events include a car, control session,
-connection and request ID; velocity writes distinguish commands, heartbeats,
-and stops. Timestamps use the local monotonic and wall clocks in nanoseconds.
-UDP events include the exact bytes in `payload_base64`, sender, provider receive
-timestamps, source ID, sequence, and validation result. Invalid packets are
-preserved too. All observers of a source receive the same event timestamps and
-sequence numbers. A sequence starts with each new source, not each recording.
-
-`session_end.complete` is false if recording ends due to an error; an abrupt
-termination can leave no end event. The recorder sees BLE traffic from VSSS
-clients on this computer, not other computers or applications that bypass the
-provider. It does not replay operations sent before it starts. A slow observer
-gets an overflow event or disconnect; it cannot block car control or other
-observers. GPS automatically reconnects after provider interruption and expires
-old positions; a recorder ends incomplete so interruptions remain visible.
-Run `vsss-observer --help` for all options. The observer is an ordinary
-provider consumer.
-
-For development analysis, `python -m tools.ball_dynamics BAG.jsonl --car 1`
-extracts car/ball contacts, rejects detector outliers and sustained pushes,
-fits an impact-plus-rolling model, and reports leave-one-roll-out endpoint
-errors. Add `--output model.json` to preserve the fitted parameters and episode
-diagnostics. This is an initial free-roll model: wall rebounds and prolonged
-dribbling are identified but not simulated.
-
-## Live and recorded field plotting
-
-Observation consumers use `vsss.provider.ProviderClient`, which exposes
-`snapshot`, `read(timeout)`, `finished`, and `close()`. It connects to the active
-local provider process. The hardware provider starts automatically when needed;
-`vsss-bag` explicitly starts a replay provider on the same endpoint. A future
-simulation provider can use that same server protocol. Replay never opens BLE
-or UDP hardware connections and rejects car-control requests.
-
-Install the optional GUI dependencies with `pip install -e ".[plot]"`, then:
-
-```powershell
-vsss-plot                         # live unicast telemetry
-vsss-plot --broadcast             # live broadcast telemetry
-vsss-bag session.jsonl            # terminal 1: wait for the first observer
-vsss-plot                         # terminal 2: plot the active provider
-vsss-bag session.jsonl --speed 4  # faster replay
-vsss-bag session.jsonl --loop     # repeat until Ctrl+C
-vsss-plot --duration 10 --output live-snapshot.png
-```
-
-The renderer comes directly from the `aruco_gps` submodule. Live plots and bag
-replay obtain board geometry, marker/ball sizes and appearance from the provider
-metadata. Server PNGs are optional; the shared renderer reconstructs the board
-from its portable geometry and dictionary. Initialize the submodule with
-`git submodule update --init` before installing VSSS. For older bags without setup
-metadata, supply `--field-width 1.6 --field-height 3.0` explicitly.
-Press Q, Escape, or close the window to stop.
-
-Bag playback begins when its first observer connects. Every observer shares
-one playback clock and receives the recorded setup metadata. Late observers
-join the current position. At the end, clients receive an explicit `stream_end`
-event and the bag process exits after clients leave. Original packet bytes and
-source timestamps are retained; replay events also carry current delivery times
-so GPS freshness works at any playback speed. A live provider and a bag provider
-cannot own the same endpoint simultaneously: close live clients and allow the
-provider's five-second idle shutdown before starting `vsss-bag`.
-
-## Firmware and tests
-
-Firmware records waypoint diagnostics to `navigation.jsonl` (newest),
-`navigation.1.jsonl`, and `navigation.2.jsonl`, limited to 128 KiB each. The
-JSONL schema header names the fields in each sample's `v` array and includes
-the boot ID, reset cause, controller parameters, and trim. Samples include
-onboard pose/timing, target, estimated velocity, raw/trimmed commands, actual
-PWM frequencies/duties, loop time, and free heap.
-
-During motion, the logger uses a preallocated RAM ring (up to 10 KiB / 13 seconds
-at 5 Hz, reduced when heap is tight) and performs no flash writes. The schema
-records its actual capacity, and 32 KiB of heap is reserved for control/networking.
-Stop, arrival, fault, disconnect, and clean
-shutdown save the trace. Idle time does not replace navigation samples. To
-preserve a reproduced problem, stop/disconnect the car while it is still
-powered before switching batteries or bringing it back for USB inspection.
-Sudden power loss during motion can lose the current RAM trace; earlier saved
-waypoints survive reboots. A `flush` event reports any overwritten RAM records.
-Storage errors disable logging while leaving control operational.
-
-Production firmware files under `mp/` are copied to the ESP32 root. Copy support
-modules first, `robot_config.json` next, and `main.py` last. The native USB-safe
-`tools/mpremote_no_reset.py` wrapper avoids asserting DTR/RTS on COM17.
-
-Safe fake-BLE and synthetic-telemetry tests never move a physical robot:
-
-```powershell
-python -m unittest discover -s .tests -v
-```
+## Blockly

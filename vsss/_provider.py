@@ -5,12 +5,9 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 import secrets
 import socket
-import subprocess
-import sys
 import tempfile
 from threading import Lock, Thread
 import time
-import uuid
 
 from ._provider_vision import VisionSource, source_settings
 
@@ -26,13 +23,37 @@ def stamp(kind, **values):
 class Provider:
     def __init__(self):
         self.lock = Lock()
+        self.car_lock = Lock()
         self.publish_lock = Lock()
         self.controllers = {}
         self.observers = set()
         self.sources = {}
         self.clients = 0
+        self.connections = set()
+        self.handlers = set()
         self.last_empty = time.monotonic()
         self.token = secrets.token_urlsafe(32)
+        self.scan_lock = Lock()
+        self.scan_time = None
+        self.scan_cars = []
+
+    def available_cars(self, refresh=False):
+        """Return advertised cars plus cars already connected through this provider."""
+        import asyncio
+        import re
+        from bleak import BleakScanner
+
+        with self.scan_lock:
+            if refresh or self.scan_time is None or time.monotonic() - self.scan_time > 30:
+                devices = asyncio.run(BleakScanner.discover(timeout=4, return_adv=True))
+                self.scan_cars = sorted({int(match.group(1))
+                    for device, advertisement in devices.values()
+                    if (match := re.fullmatch(r'car(\d+)', advertisement.local_name or device.name or ''))})
+                self.scan_time = time.monotonic()
+            with self.lock:
+                connected = {int(match.group(1)) for name in self.controllers
+                             if (match := re.fullmatch(r'car(\d+)', name))}
+                return sorted(set(self.scan_cars) | connected)
 
     def acquire_source(self, hello):
         """Called under the provider lock; sources share one observation contract."""
@@ -51,6 +72,9 @@ class Provider:
 
     def should_exit(self):
         return self.clients == 0 and time.monotonic() - self.last_empty >= IDLE_SECONDS
+
+    def on_listening(self):
+        """Called once the provider endpoint is ready to accept clients."""
 
     def publish(self, event, source=None):
         with self.publish_lock:
@@ -95,6 +119,12 @@ class Provider:
             role = hello.get('role')
             if role == 'observe':
                 self.observe(conn, hello)
+            elif role == 'discover':
+                try:
+                    result = dict(cars=self.available_cars(hello.get('refresh', False)))
+                except Exception as error:
+                    result = dict(error=f'Car discovery failed: {error}')
+                conn.sendall((json.dumps(result) + '\n').encode())
             elif role == 'control':
                 name = hello.get('name')
                 if not isinstance(name, str) or not name or len(name) > 128:
@@ -156,59 +186,50 @@ class Provider:
                     self.release_source(key, source)
 
     def control(self, conn, reader, name):
-        session_id = uuid.uuid4().hex
-        with self.lock:
-            if name in self.controllers:
-                conn.sendall((json.dumps({'error': 'Car is already controlled by another client', 'ready': False}) + '\n').encode())
-                return
-            self.controllers[name] = None
-        worker = None
-        try:
-            worker = subprocess.Popen([sys.executable, '-u', '-m', 'vsss._ble_worker', name],
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      text=True, encoding='utf-8', bufsize=1,
-                                      creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            with self.lock:
-                self.controllers[name] = worker
-            self.publish(stamp('control_acquired', car=name, session_id=session_id))
+        from ._provider_car import CarSession
 
-            def output():
+        def emit(kind, **values):
+            if kind == 'ble_event':
+                event = dict(values.pop('event'), car=name, **values)
+            else:
+                event = stamp(kind, car=name, **values)
+            self.publish(event)
+
+        with self.car_lock:
+            session = self.controllers.get(name)
+            if session is None:
+                session = CarSession(name, emit)
+                self.controllers[name] = session
+            session_id, queue = session.attach()
+
+        def output():
+            try:
+                while True:
+                    message = queue.get()
+                    if message is None:
+                        break
+                    conn.sendall((json.dumps(message) + '\n').encode())
+            except OSError:
+                pass
+            finally:
                 try:
-                    for line in worker.stdout:
-                        msg = json.loads(line)
-                        if 'event' in msg:
-                            self.publish(dict(msg['event'], car=name, session_id=session_id))
-                        else:
-                            if 'ready' in msg:
-                                self.publish(stamp('connection', car=name, session_id=session_id, ready=msg['ready']))
-                            if 'error' in msg:
-                                self.publish(stamp('error', car=name, session_id=session_id, error=msg['error']))
-                            conn.sendall(line.encode('utf-8'))
-                except (OSError, ValueError):
+                    conn.shutdown(socket.SHUT_RDWR)
+                except OSError:
                     pass
-                finally:
-                    try:
-                        conn.shutdown(socket.SHUT_RDWR)
-                    except OSError:
-                        pass
 
-            output_thread = Thread(target=output, daemon=True)
-            output_thread.start()
+        thread = Thread(target=output, daemon=True)
+        thread.start()
+        try:
             for line in reader:
-                worker.stdin.write(line)
-                worker.stdin.flush()
+                session.command(session_id, json.loads(line))
         finally:
-            if worker is not None:
-                try:
-                    worker.stdin.close()
-                    worker.wait(timeout=5)
-                except (OSError, subprocess.TimeoutExpired):
-                    worker.kill()
-                    worker.wait()
-                worker.stdout.close()
-            with self.lock:
-                self.controllers.pop(name, None)
-            self.publish(stamp('control_released', car=name, session_id=session_id))
+            with self.car_lock:
+                session.detach(session_id)
+                if not session.clients:
+                    self.controllers.pop(name, None)
+                    session.close()
+            queue.put_nowait(None)
+            thread.join(timeout=1)
 
     def run(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -219,15 +240,40 @@ class Provider:
             listener.settimeout(.25)
             TOKEN_PATH.write_text(self.token, encoding='ascii')
             try:
+                self.on_listening()
                 while True:
                     try:
                         conn, _ = listener.accept()
-                        Thread(target=self.handle, args=(conn,), daemon=True).start()
+                        def serve_client(client=conn):
+                            try:
+                                self.handle(client)
+                            finally:
+                                with self.lock:
+                                    self.connections.discard(client)
+
+                        thread = Thread(target=serve_client, daemon=True)
+                        with self.lock:
+                            self.connections.add(conn)
+                            self.handlers = {handler for handler in self.handlers if handler.is_alive()}
+                            self.handlers.add(thread)
+                        thread.start()
                     except socket.timeout:
                         with self.lock:
                             if self.should_exit():
                                 break
             finally:
+                # Closing client sessions makes control handlers stop their BLE
+                # workers before an explicitly started provider exits.
+                with self.lock:
+                    connections = tuple(self.connections)
+                    handlers = tuple(self.handlers)
+                for conn in connections:
+                    try:
+                        conn.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                for handler in handlers:
+                    handler.join(timeout=6)
                 try:
                     if TOKEN_PATH.read_text(encoding='ascii') == self.token:
                         TOKEN_PATH.unlink()

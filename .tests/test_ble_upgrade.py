@@ -16,27 +16,9 @@ import types
 import unittest
 from unittest.mock import patch
 
-from vsss._ble_client import MecanumBLEClient, parse_waypoint_input
+from vsss._ble_client import MecanumBLEClient
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-class WaypointConsoleTests(unittest.TestCase):
-    def test_accepts_spaces_or_commas(self):
-        self.assertEqual(parse_waypoint_input('0.2 0.75 -90'),
-                         ('waypoint', (0.2, 0.75, -90.0)))
-        self.assertEqual(parse_waypoint_input('0.2, 0.75, 90'),
-                         ('waypoint', (0.2, 0.75, 90.0)))
-
-    def test_recognizes_console_commands(self):
-        for command in ('stop', 'manual', 'quit', 'help'):
-            self.assertEqual(parse_waypoint_input(command), (command, None))
-        self.assertEqual(parse_waypoint_input('exit'), ('quit', None))
-
-    def test_rejects_malformed_or_nonfinite_targets(self):
-        for text in ('1 2', 'a b c', 'nan 0 0', '0 inf 0'):
-            with self.subTest(text=text), self.assertRaises(ValueError):
-                parse_waypoint_input(text)
 
 
 class ProcessTests(unittest.TestCase):

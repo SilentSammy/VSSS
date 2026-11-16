@@ -14,145 +14,6 @@ def to_byte(val):
     signed = max(-128, min(127, int(val * 128.0)))
     return signed & 0xFF
 
-def merge_proportional(cmd_primary, cmd_secondary):
-    # Primary command overrides secondary based on its magnitude
-    cmd_final = {}
-    
-    # Handle all axes from both commands
-    all_axes = set(cmd_primary.keys()) | set(cmd_secondary.keys())
-    
-    for axis in all_axes:
-        primary_input = cmd_primary.get(axis, 0.0)    # Default to 0 if missing
-        secondary_input = cmd_secondary.get(axis, 0.0) # Default to 0 if missing
-        
-        if abs(primary_input) < 0.05:  # No primary input
-            cmd_final[axis] = secondary_input
-        else:
-            # Primary input interpolates between secondary and desired value
-            # abs(primary_input) determines how much override (0 to 1)
-            # sign(primary_input) determines direction
-            override_strength = abs(primary_input)
-            desired_value = 1.0 if primary_input > 0 else -1.0
-            cmd_final[axis] = (1 - override_strength) * secondary_input + override_strength * desired_value
-    
-    return cmd_final
-
-def get_user_cmd(gamepad_index: int = 0):
-    from vsss import input as inp
-
-    keymappings = [
-        ('w', 's', 'd', 'a', 'e', 'q', 'c'),  # Gamepad 0
-        ('i', 'k', 'l', 'j', 'o', 'u', 'm'),  # Gamepad 1
-        # Add more tuples for additional gamepads if needed
-    ]
-
-    fwd, bck, right, left, cw, ccw, boost_key = keymappings[gamepad_index] if gamepad_index < len(keymappings) else keymappings[0]
-    s = str(gamepad_index)
-    slow = 0.5
-    fast = 1.0
-    boost = inp.get_bipolar_ctrl(high_key=boost_key, high_game=f'RT{s}')
-    scale = slow + (fast - slow) * boost
-    return {
-        'x':  inp.get_bipolar_ctrl(fwd,  bck,   f'LY{s}') * scale,
-        'y': -inp.get_bipolar_ctrl(right, left,  f'LX{s}') * scale,  # positive y is left according to right-handed coordinate system
-        'w': -inp.get_bipolar_ctrl(cw,    ccw,   f'RX{s}') * scale
-    }
-
-def get_manual_override(cmd):
-    user_cmd = get_user_cmd()
-    return merge_proportional(user_cmd, cmd)
-
-
-def parse_waypoint_input(text):
-    """Parse one waypoint-console line without touching the robot."""
-    text = text.strip()
-    if not text:
-        return 'empty', None
-    command = text.lower()
-    if command in ('stop', 'manual', 'quit', 'exit', 'help'):
-        return ('quit' if command == 'exit' else command), None
-    parts = text.replace(',', ' ').split()
-    if len(parts) != 3:
-        raise ValueError('enter three values: x y angle')
-    try:
-        target = tuple(float(value) for value in parts)
-    except ValueError as error:
-        raise ValueError('x, y, and angle must be numbers') from error
-    if not all(math.isfinite(value) for value in target):
-        raise ValueError('x, y, and angle must be finite')
-    return 'waypoint', target
-
-
-def print_waypoint_help():
-    print("\nWaypoint mode")
-    print("  x y angle   Send a waypoint in metres, metres, degrees")
-    print("  stop        Cancel motion")
-    print("  manual      Return to WASD/gamepad control")
-    print("  help        Show these commands")
-    print("  quit        Stop and exit\n")
-
-
-def run_waypoint_console(cars):
-    """Read live waypoint commands while the BLE worker retains its link."""
-    print_waypoint_help()
-    while True:
-        try:
-            line = input("waypoint> ")
-        except EOFError:
-            line = 'quit'
-        try:
-            action, target = parse_waypoint_input(line)
-            if action == 'empty':
-                continue
-            if action == 'help':
-                print_waypoint_help()
-                continue
-            if action == 'manual':
-                for car, _ in cars:
-                    if car.is_connected:
-                        car.stop()
-                print("Manual mode. Press P to return to waypoint mode.")
-                return 'manual'
-            if action == 'quit':
-                for car, _ in cars:
-                    if car.is_connected:
-                        car.stop()
-                return 'quit'
-            if action == 'stop':
-                for car, _ in cars:
-                    if car.is_connected:
-                        car.stop()
-                print("Stopped.")
-                continue
-
-            connected = [car for car, _ in cars if car.is_connected]
-            if not connected:
-                print("No car is connected yet.")
-                continue
-            for car in connected:
-                car.set_waypoint(*target)
-            print("Waypoint sent: x={:.3f}, y={:.3f}, angle={:.1f} deg".format(*target))
-        except (ValueError, ConnectionError, RuntimeError, TimeoutError) as error:
-            print(f"Invalid command: {error}")
-
-
-def run_manual_demo(cars):
-    """Run sampled keyboard/gamepad control until P switches modes."""
-    from vsss import input as inp
-
-    # Discard a P edge captured while the user was typing in the waypoint
-    # console (for example, the final letter in "stop").
-    inp.rising_edge('p')
-    while True:
-        for car, gamepad_index in cars:
-            if car.is_connected:
-                car.set_velocity(get_user_cmd(gamepad_index))
-        if inp.rising_edge('p'):
-            for car, _ in cars:
-                if car.is_connected:
-                    car.stop()
-            return 'waypoint'
-        time.sleep(0.02)
 
 def normalize_trim_matrix(matrix=None):
     """Validate a matrix without connecting to hardware."""
@@ -221,6 +82,8 @@ class MecanumBLEClient:
                         self._cached_velocity = None
                     if 'written' in message:
                         self._written = max(self._written, message['written'])
+                    if message.get('motion_changed'):
+                        self._cached_velocity = None
                     if 'trim_matrix' in message:
                         values = message['trim_matrix']
                         self.trim_matrix = None if values is None else tuple(tuple(values[i:i+3]) for i in (0, 3, 6))
@@ -231,7 +94,7 @@ class MecanumBLEClient:
                     if 'robot_status' in message:
                         self.robot_status = RobotStatus(*message['robot_status'])
                     if 'operation_done' in message:
-                        self._operation_results[message['operation_done']] = message.get('operation_error')
+                        self._operation_results[message['operation_done']] = message
                     if 'waypoint_done' in message:
                         self._waypoint_results[message['waypoint_done']] = message.get('waypoint_error')
                     if 'error' in message:
@@ -287,7 +150,7 @@ class MecanumBLEClient:
         """Send the current x/y/w fields; the worker coalesces rapid updates."""
         self._send_velocity(bytes(to_byte(v) for v in (self.x, self.y, self.w)), force)
 
-    def set_velocity(self, velocity, force=False):
+    def set_velocity(self, velocity, force=True):
         """Set normalized x/y/w, rounded to the configured resolution."""
         self.x, self.y, self.w = (round(velocity.get(axis, 0.0) / self.resolution) * self.resolution
                                  for axis in ('x', 'y', 'w'))
@@ -318,9 +181,11 @@ class MecanumBLEClient:
                                          or not self.is_connected, timeout=4)
             if not done or request not in self._operation_results:
                 raise ConnectionError('BLE operation was not acknowledged; reconnect before retrying')
-            error = self._operation_results.pop(request)
+            result = self._operation_results.pop(request)
+            error = result.get('operation_error')
             if error:
                 raise RuntimeError(error)
+            return result
 
     def set_trim(self, matrix=None):
         """Write/read back a complete 3x3 matrix. Rows: outputs; columns: inputs.
@@ -330,26 +195,23 @@ class MecanumBLEClient:
         """
         rows = normalize_trim_matrix(matrix)
         values = tuple(v for row in rows for v in row)
-        self._operation('write_trim', values=values)
-        return self.trim_matrix
+        result = self._operation('write_trim', values=values)['trim_matrix']
+        return tuple(tuple(result[i:i+3]) for i in (0, 3, 6))
 
     def read_trim(self):
-        self._operation('read_trim')
-        return self.trim_matrix
+        result = self._operation('read_trim')['trim_matrix']
+        return tuple(tuple(result[i:i+3]) for i in (0, 3, 6))
 
     def set_controller(self, parameters):
         configuration = normalize_controller(parameters, self.controller_config)
-        self._operation('write_controller',
-                        values=[configuration[key] for key in CONTROLLER_KEYS])
-        return self.controller_config
+        return self._operation('write_controller',
+                        values=[configuration[key] for key in CONTROLLER_KEYS])['controller_config']
 
     def read_controller(self):
-        self._operation('read_controller')
-        return self.controller_config
+        return self._operation('read_controller')['controller_config']
 
     def read_status(self):
-        self._operation('read_status')
-        return self.robot_status
+        return RobotStatus(*self._operation('read_status')['robot_status'])
 
     def reconnect_telemetry(self):
         """Stop motion and ask the robot to reconnect Wi-Fi and UDP telemetry."""
@@ -391,7 +253,7 @@ class MecanumBLEClient:
         return target
 
     def disconnect(self):
-        """Close the pipe: the worker stops the robot and releases BLE, then exits."""
+        """Leave the shared session; stop motion if this client currently owns it."""
         process = self._process
         if process is None:
             return
@@ -423,45 +285,3 @@ class MecanumBLEClient:
 
     def __exit__(self, *exc):
         self.disconnect()
-
-def main():
-    import time
-
-    print("Mecanum BLE Manual Control Demo")
-    print("================================\n")
-
-    # Each entry: (device_name, gamepad_index)
-    # Add more tuples to control multiple cars simultaneously.
-    CAR_CONFIG = [
-        ("car1", 0),
-        # ("car2", 0),
-        # ("car3", 1),
-    ]
-
-    cars = [(MecanumBLEClient(device_name=name), gp_idx) for name, gp_idx in CAR_CONFIG]
-
-    for car, _ in cars:
-        car.connect()  # non-blocking; reconnect loop starts in background
-
-    try:
-        print(f"Controlling {len(cars)} car(s). Use WASD/gamepad to control.")
-        print("  W/S or Left Stick Y: Forward/Backward (X-axis)")
-        print("  A/D or Left Stick X: Strafe Left/Right (Y-axis)")
-        print("  Q/E or Right Stick X: Rotate (W-axis)")
-        print("  C: Full speed mode")
-        print("  P: Switch to waypoint terminal")
-        print("  Ctrl+C: Exit\n")
-
-        mode = 'manual'
-        while mode != 'quit':
-            mode = run_manual_demo(cars) if mode == 'manual' else run_waypoint_console(cars)
-
-    except KeyboardInterrupt:
-        print("\nInterrupted")
-    finally:
-        for car, _ in cars:
-            car.disconnect()  # The worker sends stop before disconnecting.
-
-
-if __name__ == "__main__":
-    main()

@@ -7,6 +7,17 @@ import time
 from ._provider_connection import connect
 
 
+def available_cars(*, refresh=False):
+    """List available BLE car numbers; the live provider caches scans for 30s."""
+    with connect('discover', refresh=refresh) as sock:
+        sock.settimeout(10)
+        with sock.makefile('r', encoding='utf-8') as reader:
+            result = json.loads(reader.readline())
+    if 'error' in result:
+        raise ConnectionError(result['error'])
+    return result['cars']
+
+
 class ProviderClient:
     """Observe selected topics. Disconnection/overflow explicitly ends the stream.
 

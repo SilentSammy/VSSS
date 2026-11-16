@@ -3,7 +3,7 @@
 `python -m unittest discover -s .tests -v` runs regression tests with simulated
 robots and fake BLE. It never moves a physical car.
 
-The provider tests cover exclusive car control, stop on controller exit,
+The provider tests cover shared car access, motion takeover, stop on owner exit,
 shared UDP subscriptions across processes, original-byte fanout, malformed
 packets, observer overflow, and GPS recovery after provider failure. Replay
 tests use real bag/plot subprocesses and check shared timing, metadata, clean

@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from vsss.provider import ProviderClient
+from vsss.provider import ProviderClient, available_cars
 from vsss._provider_connection import ProviderConnection
 from vsss.gps import GPS
 
@@ -77,10 +77,13 @@ class BagProcessTests(unittest.TestCase):
 
     def test_waits_for_observer_and_fans_out_same_events_without_hardware(self):
         self.start()
-        time.sleep(.25)
+        self.assertIn('Bag provider:', self.process.stdout.readline())
+        self.assertIn('playback has not started', self.process.stdout.readline())
+        time.sleep(1.)  # Longer than the entire bag; no frames may be consumed.
         self.assertIsNone(self.process.poll())
         first = self.observe()
         initial = first.read(2)
+        self.assertIn('first feed subscriber connected', self.process.stdout.readline())
         self.assertEqual(initial['sequence'], 0)
         self.assertGreater(initial['monotonic_ns'], 1_000_000_000)
         self.assertEqual(initial['payload_base64'], self.rows[1]['payload_base64'])
@@ -91,11 +94,24 @@ class BagProcessTests(unittest.TestCase):
         self.assertEqual(second.read(2)['type'], 'stream_end')
         self.assertTrue(first.finished)
         self.assertEqual(first.snapshot['vision']['metadata']['status']['setup']['name'], 'test-field')
-        self.process.wait(3)
-        self.assertEqual(self.process.returncode, 0)
+        self.assertIsNone(self.process.poll())
+        late = self.observe()
+        self.assertEqual(late.read(2)['type'], 'stream_end')
+        self.assertIsNone(self.process.poll())
+
+    def test_immediate_plays_to_end_without_subscribers(self):
+        self.start('--immediate', '--speed', '4')
+        self.assertIn('Bag provider:', self.process.stdout.readline())
+        self.assertIn('Playback started: --immediate', self.process.stdout.readline())
+        time.sleep(.6)
+        observer = self.observe()
+        self.assertTrue(observer.snapshot['vision']['replay']['finished'])
+        self.assertEqual(observer.read(2)['type'], 'stream_end')
+        self.assertIsNone(self.process.poll())
 
     def test_replay_rejects_car_control_and_gps_uses_current_delivery_time(self):
         self.start()
+        self.assertEqual(available_cars(), [])
         connection = ProviderConnection('car1')
         response = json.loads(connection.stdout.readline())
         self.assertFalse(response['ready'])
@@ -122,7 +138,21 @@ class BagProcessTests(unittest.TestCase):
                                 text=True, timeout=8)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(image.is_file())
-        self.process.wait(3)
+        self.assertIsNone(self.process.poll())
+
+    def test_explicit_live_stays_running_without_clients_and_refuses_competitor(self):
+        self.process = subprocess.Popen([sys.executable, '-u', '-m', 'tools.vsss_live'],
+                                        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 8
+        while (not self.token_path.exists() or not self.token_path.read_text()) and time.monotonic() < deadline:
+            self.assertIsNone(self.process.poll())
+            time.sleep(.01)
+        time.sleep(5.5)
+        self.assertIsNone(self.process.poll())
+        result = subprocess.run([sys.executable, '-m', 'tools.vsss_bag', str(self.bag)],
+                                cwd=ROOT, capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('already be active', result.stderr)
 
     def test_conflicting_provider_cannot_replace_active_session(self):
         self.start()

@@ -15,3 +15,5 @@ calibration/runs/
 experiments/runs/
 
 tools/runs/
+.bags/
+/GPS_SERVER_SSH.md

@@ -10,12 +10,16 @@ def main(argv=None):
     parser.add_argument('bag', type=Path)
     parser.add_argument('--speed', type=float, default=1.)
     parser.add_argument('--loop', action='store_true')
+    parser.add_argument('--immediate', action='store_true',
+                        help='start playback immediately instead of waiting for the first feed subscriber')
     args = parser.parse_args(argv)
     try:
-        provider = BagProvider(args.bag, args.speed, args.loop)
+        provider = BagProvider(args.bag, args.speed, args.loop, immediate=args.immediate)
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    print(f'Bag provider: {args.bag}. Waiting for an observer; run vsss-plot.', flush=True)
+    print(f'Bag provider: {args.bag}. Press Ctrl+C to stop.', flush=True)
+    if not args.immediate:
+        print('Waiting for the first feed subscriber; playback has not started.', flush=True)
     try:
         provider.run()
     except KeyboardInterrupt:

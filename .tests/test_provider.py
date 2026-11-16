@@ -43,20 +43,18 @@ class ProviderIntegrationTests(unittest.TestCase):
         car.wait_until_connected(6)
         return car
 
-    def test_observer_sees_actual_writes_and_multiple_cars_are_exclusive(self):
+    def test_observer_sees_actual_writes_and_clients_share_one_connection(self):
         observer = connect('observe')
         observer.settimeout(8)
         stream = observer.makefile('r', encoding='utf-8')
         self.assertEqual(json.loads(stream.readline()), {'provider': 'observing'})
         a, b = self.car('car1'), self.car('car2')
-        duplicate = MecanumBLEClient('car1')
-        try:
-            duplicate.connect()
-            with self.assertRaises(TimeoutError):
-                duplicate.wait_until_connected(3)
-            self.assertIn('already controlled', duplicate.last_error)
-        finally:
-            duplicate.disconnect()
+        duplicate = self.car('car1')
+        self.assertEqual(duplicate.read_status().packet_count, 7)
+        duplicate.disconnect()
+        self.assertTrue(a.is_connected)
+        records = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual(sum(e['event'] == 'link' for e in records), 2)
         a.set_velocity({'x': .2})
         time.sleep(.25)
         a.stop()
@@ -77,11 +75,49 @@ class ProviderIntegrationTests(unittest.TestCase):
         stream.close()
         observer.close()
 
+    def test_overlapping_requests_and_motion_takeover_are_routed(self):
+        a, b, status = self.car('car1'), self.car('car1'), self.car('car1')
+        errors = []
+        def read(client, gain):
+            try:
+                for _ in range(3):
+                    self.assertEqual(client.read_status().packet_count, 7)
+                    result = client.set_trim(((gain, 0, 0), (0, 1, 0), (0, 0, 1)))
+                    self.assertAlmostEqual(result[0][0], gain, places=5)
+            except Exception as error:
+                errors.append(error)
+        threads = [threading.Thread(target=read, args=(client, gain))
+                   for client, gain in zip((a, b, status), (.9, 1., 1.1))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+            self.assertFalse(thread.is_alive())
+        self.assertFalse(errors, errors)
+        a.set_velocity({'x': .3})
+        time.sleep(.15)
+        b.set_waypoint(0, .5, 90)
+        time.sleep(.1)
+        a.stop()  # Explicit zero takes over and cancels the waypoint.
+        b.set_velocity({'y': .3})
+        time.sleep(.15)
+        a.disconnect()  # Former owner leaving must not stop b.
+        status.disconnect()  # Neither should a reader leaving.
+        time.sleep(.25)
+        records = [json.loads(line) for line in self.log.read_text().splitlines()]
+        writes = [e['data'] for e in records if e['event'] == 'write']
+        self.assertEqual(writes[-1], [0, 38, 0])
+        b.disconnect()
+        time.sleep(.15)
+        records = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual([e['data'] for e in records if e['event'] == 'write'][-1], [0, 0, 0])
+
     def test_controller_process_exit_stops_while_observer_remains(self):
         observer = connect('observe')
         observer.settimeout(8)
         stream = observer.makefile('r', encoding='utf-8')
         self.assertEqual(json.loads(stream.readline()), {'provider': 'observing'})
+        status_client = self.car('car1')
         code = ("from vsss._ble_client import MecanumBLEClient; import os,time; "
                 "c=MecanumBLEClient('car1'); c.connect(); c.wait_until_connected(6); "
                 "c.set_velocity({'x':.4}); time.sleep(.5); os._exit(0)")
@@ -96,6 +132,8 @@ class ProviderIntegrationTests(unittest.TestCase):
             time.sleep(.05)
         self.assertTrue(any(any(x) for x in writes), events)
         self.assertEqual(writes[-1], [0, 0, 0])
+        self.assertTrue(status_client.is_connected)
+        self.assertEqual(status_client.read_status().packet_count, 7)
         stream.close()
         observer.close()
 

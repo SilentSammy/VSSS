@@ -9,7 +9,7 @@ from ._provider import Provider, stamp
 
 
 class BagSource:
-    def __init__(self, path, publish, speed=1., loop=False):
+    def __init__(self, path, publish, speed=1., loop=False, on_start=None):
         self.reader = BagReader(path, speed=speed)
         self.info = dict(self.reader.snapshot.get('vision') or {})
         self.info.setdefault('local_port', 0)
@@ -19,6 +19,7 @@ class BagSource:
         self.publish = publish
         self.loop = loop
         self.started = Event()
+        self.on_start = on_start
         self.closed = Event()
         self.ended = Event()
         self.end_event = None
@@ -30,13 +31,21 @@ class BagSource:
         self.thread.start()
 
     def snapshot(self):
-        return dict(self.info, replay=dict(self.info['replay'], finished=self.ended.is_set()))
+        return dict(self.info, replay=dict(self.info['replay'], started=self.started.is_set(),
+                                          finished=self.ended.is_set()))
+
+    def start(self, reason):
+        with self.activation_lock:
+            if not self.started.is_set():
+                if self.on_start:
+                    self.on_start(reason)
+                self.started.set()
 
     def activate(self, queue):
         with self.activation_lock:
             if self.ended.is_set():
                 queue.put_nowait(self.end_event)
-            self.started.set()
+        self.start('first feed subscriber connected')
 
     def run(self):
         try:
@@ -81,17 +90,26 @@ class BagSource:
 
 
 class BagProvider(Provider):
-    def __init__(self, path, speed=1., loop=False):
+    def __init__(self, path, speed=1., loop=False, immediate=False):
         super().__init__()
         self.key = 'bag'
-        self.source = BagSource(path, self._publish_bag, speed, loop)
+        self.immediate = immediate
+        self.source = BagSource(path, self._publish_bag, speed, loop,
+                               on_start=lambda reason: print(f'Playback started: {reason}.', flush=True))
         self.selected = (self.key, self.source.info['source_id'])
+
+    def on_listening(self):
+        if self.immediate:
+            self.source.start('--immediate')
 
     def _publish_bag(self, event):
         self.publish(event, self.selected)
 
     def acquire_source(self, hello):
         return self.key, self.source
+
+    def available_cars(self, refresh=False):
+        return []
 
     def release_source(self, key, source):
         source.users -= 1
@@ -102,7 +120,9 @@ class BagProvider(Provider):
             error='Bag playback is read-only; no car commands can be sent.')) + '\n').encode())
 
     def should_exit(self):
-        return self.source.ended.is_set() and self.clients == 0
+        # Explicitly selected replay remains authoritative after EOF; do not
+        # silently fall back to the live provider when the last observer exits.
+        return False
 
     def run(self):
         try:
