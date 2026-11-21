@@ -42,7 +42,9 @@ class CoreTest(unittest.TestCase):
         with VSSSSim(original) as sim:
             sim.cars.set_velocity(1, Velocity(.5))
             sim.step(.1)
-            self.assertAlmostEqual(sim.gps.state().cars[0].pose.x, .03)
+            # Finite motor acceleration replaces instantaneous kinematic speed.
+            self.assertGreater(sim.gps.state().cars[0].pose.x, .005)
+            self.assertLess(sim.gps.state().cars[0].pose.x, .03)
             before = sim.gps.state()
             with self.assertRaises(ValueError):
                 sim.update_state(StatePatch(cars=[CarState(1, Pose(5, 0))]))

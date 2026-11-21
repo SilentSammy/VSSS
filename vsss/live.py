@@ -109,6 +109,8 @@ class CarCmdLive(CarCmd):
         self._active = {}
         self._ready = Event()
         self._closing = False
+        self._discovered = None
+        self._discovered_at = 0.
 
         def run():
             asyncio.set_event_loop(self._loop)
@@ -139,8 +141,13 @@ class CarCmdLive(CarCmd):
                        if (match := re.fullmatch(r"car(\d+)", advertisement.local_name or device.name or ""))})
 
     @rpc_method
-    def available(self):
-        return self._call(self._scan())
+    def available(self, refresh=False):
+        with self._lock:
+            if refresh or self._discovered is None or time.monotonic() - self._discovered_at >= 30:
+                self._discovered = self._call(self._scan())
+                self._discovered_at = time.monotonic()
+            return sorted(set(self._discovered) | {car_id for car_id, client in self._clients.items()
+                                                       if client.is_connected})
 
     async def _connect(self, car_id):
         from bleak import BleakClient, BleakScanner

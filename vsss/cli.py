@@ -21,7 +21,9 @@ def run_provider(provider, args):
         with provider.serve(endpoint=args.endpoint, port=args.port):
             print(f"{provider.mode} provider ready; Ctrl+C stops it", flush=True)
             try:
-                Event().wait()
+                # A bounded wait lets Windows deliver Python's pending SIGINT.
+                while True:
+                    Event().wait(.1)
             except KeyboardInterrupt:
                 pass
 

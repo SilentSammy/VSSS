@@ -8,7 +8,7 @@ Playback supplies the same observations and rejects commands.
 Python 3.10+ is required. From this checkout:
 
 ```powershell
-python -m pip install -e .
+python -m pip install -e ".[plot]"
 python -m vsss.simulation examples/scenario.jsonl
 ```
 
@@ -25,16 +25,18 @@ Install the current command entry points once (repeat after switching branches):
 
 ```powershell
 cd C:\Users\SAMMY_LOQ\Desktop\Python\VSSS
-python -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e ".[plot]"
 ```
 
 1. Terminal A: `vsss-sim`. Leave it running throughout the simulation tests.
 2. Terminal B: `vsss-plot`. A field window shows car1 and ball0. Escape or the
    close button closes this client. Positions use meters, +x right and +y up.
-3. Terminal C: `vsss-teleop --car 1 --speed 0.3`. Focus the teleop window and
-   hold W/S to move forward/back, A/D to strafe left/right, Q/E to rotate.
-   Release keys, press Space, or change focus to stop. Escape exits and stops.
-   Motion is relative to the car's heading. Watch the separate plot window.
+3. Terminal C: `vsss-teleop --car 1`. The previous `input.py` keyboard/gamepad
+   controls run globally at 50 Hz; there is no teleop window. Hold W/S to move
+   forward/back, A/D to strafe left/right, Q/E to rotate. Release keys to stop.
+   C boosts from half to full speed. Motion is relative to the car's heading.
+   Ctrl+C in the terminal stops and exits. Keyboard controls remain active when
+   the plot has focus, as in the previous tool.
 4. Terminal D: `vsss-sim --load examples/goalie_easy.jsonl`. This connects to
    the existing simulator, replaces its world, clears commands and exits.
    The plot and teleop stay connected. Car1 now faces up near the bottom of
@@ -43,16 +45,18 @@ python -m pip install -e .
 5. Terminal D: `vsss-record trial01.jsonl`. Use teleop to move/rotate car1 and
    optionally load another scenario while recording. In terminal D press Ctrl+C
    to finish the recording. Use a new filename for each take; overwrites fail.
-6. Close teleop and plot, then Ctrl+C in terminal A to stop the simulator.
+6. Ctrl+C in teleop, then Ctrl+C in terminal A to stop the simulator.
    Run `vsss-playback trial01.jsonl --speed 0.5` in terminal A, then
-   `vsss-plot` in terminal B. Playback waits for the plot's subscription and
-   replays at half speed. It stays open at the final frame; Ctrl+C stops it.
+   leave `vsss-plot` open in terminal B. The plot reconnects automatically.
+   Playback waits for the plot's subscription and replays at half speed.
+   It stays open at the final frame; Ctrl+C stops it.
    `--loop` repeats the recording. Teleop is rejected during playback.
 7. For event text in another terminal: `vsss-observer`. It shows position,
    command and lifecycle events. Stop it with Ctrl+C.
 
 Only one provider (sim/live/playback) runs on the default endpoint at a time.
-Clients can run together. If a provider is restarted, restart its clients.
+Clients can run together. Plot can start before a provider and reconnects after
+provider changes. Other clients must be restarted after a provider changes.
 `vsss-sim examples/goalie_easy.jsonl` starts a new server with that initial
 scenario; `vsss-sim --load ...` changes an existing server.
 
@@ -61,9 +65,25 @@ To try real hardware instead, stop playback/simulation and start
 record and observer commands. Teleop now moves the physical car; start with
 `vsss-teleop --car 1 --speed 0.1`. The plot requires incoming vision telemetry.
 
-The desktop clients use Python's Tkinter (included in the normal Windows Python
-installer), with no extra plotting/gamepad package. The simulator has basic
-car motion; balls stay still and there are no collisions or autonomous behaviors.
+The plot reuses `aruco_gps.plotter2d.BoardPlotter2D`, the 3x5 ArUco board artwork,
+pastel marker labels and orientation indicators, with no vision metadata request.
+Install the plot extra and initialize the submodule (`git submodule update --init`)
+on a fresh checkout. `vsss-plot --duration 2 --output field.png` saves a headless
+frame to a new file. `--width 720` sets resolution; Q/Escape closes the window.
+
+Teleop retains `--list`, `--refresh`, `--auto`, repeated `--car ID[=INPUT+INPUT]`
+and interactive assignments. Examples:
+
+```powershell
+vsss-teleop --list --refresh
+vsss-teleop --car 1=wasd+gamepad:0 --car 2=ijkl
+vsss-teleop --auto
+```
+
+I/K, J/L, U/O and M are the second keyboard layout. Gamepad left stick
+translates, right stick rotates, and RT boosts. `--speed 0.3` multiplies both
+normal and boosted speeds. Discovery caches for 30 seconds; explicit car
+assignments bypass discovery. Only changed, quantized inputs send commands.
 
 ## One client API
 
@@ -133,10 +153,14 @@ state is invalid until telemetry arrives. The BLE adapter lazily connects to
 heartbeats and stops/disconnects during shutdown. `cars.status(N)` reads onboard
 status. BLE UUIDs, payloads and UDP packets stay inside `live.py`.
 
-The simulator implements bounded kinematic car motion at 30 Hz by default,
-with body-frame normalized velocity and no identified motor model. Balls are
-stationary until edited. Collision physics, pushing, waypoints, noise, camera
-latency and firmware emulation are intentionally outside this first core.
+The simulator publishes at 30 Hz by default and advances Pymunk physics at a
+fixed 240 Hz. Square car bodies have finite motor acceleration; cars contact
+one another, push balls, and collide with field walls. Balls bounce and lose
+speed through rolling resistance. Full speed is 0.6 m/s and 180 degrees/s.
+The masses, friction and motor constants are illustrative rather than measured;
+firmware waypoints, noise and camera latency are still outside this core.
+Editing an object clears its physical momentum; loading a scenario resets the
+whole physics world. Unedited objects retain motion.
 
 `load_scenario(WorldState)` replaces the complete world and clears commands.
 `update_state(StatePatch)` changes only listed car/ball poses; it validates the
@@ -172,7 +196,10 @@ The normal tests use synthetic UDP, fake BLE and real subprocess RPC; they do
 not move hardware. The explicit hardware check scans, reads status and sends
 only STOP. It is not part of automatic test discovery.
 
-The original package and docs are retained locally in `.reference/` (ignored by
-Git), and in the pre-rewrite commit. Older tools/examples/tests remain as
-reference but are not installed entry points or compatibility guarantees.
+The original package and docs remain in Git (`overhaul`, commit `8a58b90`).
+Obsolete tools/tests/scripts, old scenarios and generated artifacts were moved
+outside the checkout to `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`.
+This includes ignored recordings and hardware backup files. Firmware under
+`mp/` and the vision submodule remain in place. No merge into `overhaul` has
+been made; this branch is still being verified against the previous behavior.
 See `DEV.md` for module responsibilities and current limitations.

@@ -1,8 +1,8 @@
 # IPC cleanup experiment
 
 This branch implements the minimal provider architecture from scratch. The
-original checkout remains on `overhaul`; the experiment lives in an isolated
-Git worktree. There is no commitment to compatibility with the former student
+main checkout is on `ipc_cleanup`; `overhaul` has not been advanced.
+There is no commitment to compatibility with the former student
 API, CLI tools or schema-3 recording files.
 
 | Module | Responsibility |
@@ -13,7 +13,10 @@ API, CLI tools or schema-3 recording files.
 | `rpc.py` | One authenticated loopback Pyro endpoint, generic method forwarding, sessions and callback polling. |
 | `provider.py` | Compose GPS/cars, describe provider capabilities, host/connect lifecycle. |
 | `live.py` | UDP/HTTP vision adapter, one asyncio thread owning lazy BLE connections. |
-| `simulation.py` | Minimal kinematics, scenario replacement, atomic position patches. |
+| `simulation.py` | Physics lifecycle, scenario replacement, atomic position patches. |
+| `physics.py` | Pymunk rigid bodies, 240 Hz steps, motors, contacts and rolling drag. |
+| `input.py` / `teleop.py` | Previous keyboard/gamepad input API and 50 Hz RPC teleoperation. |
+| `plot.py` | Existing BoardPlotter2D artwork, headless output, provider-following viewer. |
 | `recording.py` | Protocol-agnostic JSONL snapshots/events and completion markers. |
 | `playback.py` | One playback clock dispatching observations into both components. |
 | `cli.py` | Foreground provider, recorder and observer entry points. |
@@ -42,8 +45,9 @@ component lifetimes; there are no per-car or per-component RPC servers.
 - Domain velocity means normalized body-frame x/y and angular w in [-1, 1].
   Pose angles are degrees, counterclockwise from +x; positions are metres in a
   centred field. The simulator maps full-scale commands to 0.6 m/s, 180 deg/s.
-- The new simulator does not yet implement collision/contact or firmware
-  navigation. It is an IPC and state-editing baseline, not a physical predictor.
+- Physics includes contacts, finite motor force, ball pushing, wall rebounds and
+  rolling resistance. Constants are illustrative; firmware navigation is absent.
+  Manual edits recreate the affected body to discard cached contact impulses.
 - Live metadata currently retains dimensions, not the camera/ArUco configuration.
   A fresh timestamp and explicit board-detected flag do not by themselves
   guarantee safe autonomous navigation; consumers must check telemetry age.
@@ -57,7 +61,17 @@ component lifetimes; there are no per-car or per-component RPC servers.
   transactional snapshot of all components. Events preserve their provider
   sequence; playback uses the recording's relative delivery timeline.
 - Shared memory, image arrays, calibration, auto-start, request deduplication,
-  plugin discovery, GUIs and old API adapters are deferred.
+  plugin discovery and old API adapters are deferred.
+
+Plot uses a read-only background feed with one latest state. It rereads discovery
+and reconnects when the endpoint changes or a subscription fails. This retry is
+limited to observation: command clients never automatically resend an uncertain
+request. Plot RPC timeouts are one second; ordinary client timeouts remain 30s
+to accommodate bounded BLE operations. GUI operations stay on the main thread.
+
+Provider foreground loops use short timed waits so Windows can deliver pending
+SIGINT. Teardown closes RPC sessions while command components still exist, then
+closes components. GPS cleanup runs even if command cleanup fails.
 
 ## Development checks
 
@@ -72,7 +86,9 @@ check. No nonzero velocity is sent by this check. Keep raw logs in ignored
 
 ## Experiment verification, 2026-11-21
 
-- All 12 tests passed, including the actual simulator CLI in a subprocess.
+- The original core had 12 passing tests; the expanded suite now has 24,
+  including all three provider main loops under pending SIGINT, provider changes,
+  original renderer/headless CLI output, 50 Hz teleop and contact physics.
 - A wheel built successfully with the new package and console entry points.
 - Real car1 advertised over BLE. Outside the sandbox, the new RPC/live adapter
   read status and received a STOP acknowledgement. Mode was idle, Wi-Fi was
@@ -82,3 +98,10 @@ check. No nonzero velocity is sent by this check. Keep raw logs in ignored
 - Vision reception and field HTTP polling were tested against synthetic UDP
   and a local HTTP server, not the lab camera server. Real navigation and
   live telemetry freshness have not been validated.
+
+The working CLI baseline is commit `dc7351f`. Cleanup removes obsolete source
+from this branch only. Local recordings and firmware backups are recoverable
+from `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`; tracked source also
+remains available through Git. `mp/`, `aruco_gps/`, the environment, editor
+settings and `.hardware_backup/` are retained. No push or `overhaul` merge is
+part of this implementation.

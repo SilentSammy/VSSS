@@ -16,5 +16,5 @@ if ! "$yes"; then
 fi
 git submodule update --init --recursive
 python3 -m venv .venv
-.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install -e '.[plot]'
 if "$vision"; then bash aruco_gps/setup.sh --yes; fi

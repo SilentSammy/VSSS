@@ -21,7 +21,7 @@ class CarCmdPlayback(CarCmd):
         self.gps = gps
 
     @rpc_method
-    def available(self):
+    def available(self, refresh=False):
         return sorted({car.id for car in self.gps.state().cars} | set(self._last))
 
     def _apply(self, car_id, velocity):

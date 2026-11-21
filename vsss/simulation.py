@@ -1,4 +1,4 @@
-"""Small kinematic simulation: body-frame commands, bounded poses, manual edits."""
+"""Rigid-body simulation: driven cars, collisions, rolling balls and manual edits."""
 from dataclasses import replace
 from copy import deepcopy
 import json
@@ -11,6 +11,7 @@ from .components import CarCmd, GPSState, rpc_method
 from .events import EventHub
 from .models import BallState, CarState, Field, Pose, StatePatch, Velocity, WorldState, decode
 from .provider import VSSSProvider
+from .physics import Physics, CAR_SIZE, BALL_RADIUS
 
 
 def scenario_state(path):
@@ -31,7 +32,7 @@ class CarCmdSim(CarCmd):
         self.simulator = simulator
 
     @rpc_method
-    def available(self):
+    def available(self, refresh=False):
         return [car.id for car in self.simulator.gps.state().cars]
 
     def _apply(self, car_id, velocity):
@@ -48,6 +49,7 @@ class VSSSSim(VSSSProvider):
         events = EventHub()
         self._world_lock = RLock()
         self._world = self._validated(state or WorldState(cars=[CarState(1)], balls=[BallState(0, Pose(.3, .3))]))
+        self._physics = Physics(self._world)
         self._velocities = {}
         self._stop = Event()
         self._thread = None
@@ -58,22 +60,27 @@ class VSSSSim(VSSSProvider):
     def _validated(state):
         if not isinstance(state, WorldState):
             raise TypeError("expected WorldState")
-        for objects, radius in ((state.cars, .07), (state.balls, .02)):
+        for objects, radius in ((state.cars, CAR_SIZE / 2), (state.balls, BALL_RADIUS)):
             if state.field.width < 2 * radius or state.field.height < 2 * radius:
                 raise ValueError("field is too small for object bodies")
             for obj in objects:
-                if abs(obj.pose.x) > state.field.width / 2 - radius or abs(obj.pose.y) > state.field.height / 2 - radius:
+                extent = (radius * (abs(math.cos(math.radians(obj.pose.angle))) +
+                                   abs(math.sin(math.radians(obj.pose.angle))))
+                          if isinstance(obj, CarState) else radius)
+                if abs(obj.pose.x) > state.field.width / 2 - extent or abs(obj.pose.y) > state.field.height / 2 - extent:
                     raise ValueError("object lies outside field bounds")
         return deepcopy(state)
 
     @rpc_method
     def load_scenario(self, state):
         state = self._validated(state)
+        physics = Physics(state)
         with self.cars._lock, self._world_lock:
             self._velocities.clear()
             self.cars._owners.clear()
             self.cars._last.clear()
             self._world = replace(state, captured_at=time.time(), valid=True)
+            self._physics = physics
             self.gps._update(self._world)
         self.events.publish("lifecycle", {"kind": "scenario_loaded"})
         return self.gps.state()
@@ -102,6 +109,11 @@ class VSSSSim(VSSSProvider):
             for car_id in cars:
                 self._velocities.pop(car_id, None)
                 self.cars._owners.pop(car_id, None)
+                self.cars._last.pop(car_id, None)
+            for car in cars.values():
+                self._physics.edit('car', car)
+            for ball in balls.values():
+                self._physics.edit('ball', ball)
             self._world = candidate
             self.gps._update(candidate)
         self.events.publish("lifecycle", {"kind": "state_edited", "patch": patch})
@@ -111,18 +123,8 @@ class VSSSSim(VSSSProvider):
         if not math.isfinite(dt) or not 0 < dt <= .1:
             raise ValueError("step must be 0..0.1 seconds")
         with self._world_lock:
-            cars = []
-            for car in self._world.cars:
-                velocity = self._velocities.get(car.id, Velocity())
-                pose = car.pose
-                angle = math.radians(pose.angle)
-                # 0.6 m/s and 180 deg/s are illustrative, not identified dynamics.
-                x = pose.x + .6 * (velocity.x * math.cos(angle) - velocity.y * math.sin(angle)) * dt
-                y = pose.y + .6 * (velocity.x * math.sin(angle) + velocity.y * math.cos(angle)) * dt
-                x = max(-self._world.field.width / 2 + .07, min(self._world.field.width / 2 - .07, x))
-                y = max(-self._world.field.height / 2 + .07, min(self._world.field.height / 2 - .07, y))
-                cars.append(CarState(car.id, Pose(x, y, (pose.angle + 180 * velocity.w * dt + 180) % 360 - 180)))
-            self._world = replace(self._world, cars=cars, sequence=self._world.sequence + 1,
+            self._physics.advance(dt, self._velocities)
+            self._world = replace(self._physics.snapshot(self._world), sequence=self._world.sequence + 1,
                                   captured_at=time.time(), valid=True)
             self.gps._update(self._world)
 

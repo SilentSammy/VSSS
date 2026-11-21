@@ -24,12 +24,14 @@ class VSSSProvider:
         return RPCHost(self, **settings)
 
     @staticmethod
-    def connect(endpoint=None):
-        return ProviderClient(endpoint)
+    def connect(endpoint=None, *, timeout=30):
+        return ProviderClient(endpoint, timeout=timeout)
 
     def close(self):
-        self.cars.close()
-        self.gps.close()
+        try:
+            self.cars.close()
+        finally:
+            self.gps.close()
 
     def __enter__(self):
         return self

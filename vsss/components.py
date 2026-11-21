@@ -66,7 +66,7 @@ class CarCmd(ABC):
 
     @rpc_method
     @abstractmethod
-    def available(self):
+    def available(self, refresh=False):
         """Return known car IDs."""
 
     @abstractmethod

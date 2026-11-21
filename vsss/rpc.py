@@ -150,7 +150,7 @@ class RPCHost:
 def _proxy(settings):
     proxy = pyro.Proxy(settings["uri"])
     proxy._pyroHandshake = settings["token"]
-    proxy._pyroTimeout = 30  # Longer than the live adapter's bounded BLE operation.
+    proxy._pyroTimeout = settings.get('timeout', 30)
     return proxy
 
 
@@ -192,7 +192,7 @@ class Subscription:
             except Exception as error:
                 if not self._stop.is_set():
                     self.error = error
-                    log.exception("event subscription ended")
+                    log.debug("event subscription ended", exc_info=True)
             finally:
                 try:
                     with _proxy(client._settings) as proxy:
@@ -217,8 +217,9 @@ class Subscription:
 
 class ProviderClient:
     """One generic client: component methods, records and callbacks are shared."""
-    def __init__(self, endpoint=None):
+    def __init__(self, endpoint=None, *, timeout=30):
         self._settings = json.loads(Path(endpoint or default_endpoint()).read_text(encoding="utf-8"))
+        self._settings['timeout'] = timeout
         self._root = _proxy(self._settings)
         self._root_lock = RLock()
         self._closed = False

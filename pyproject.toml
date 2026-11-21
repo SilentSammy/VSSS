@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "vsss-robot-client"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["Pyro5>=5.17,<6", "bleak>=0.22"]
+dependencies = ["Pyro5>=5.17,<6", "bleak>=0.22", "pymunk>=7,<8", "inputs>=0.5", "pynput>=1.7"]
 
 [project.optional-dependencies]
-plot = ["numpy", "opencv-python"]
+plot = ["numpy", "opencv-contrib-python>=4.8"]
 
 [project.scripts]
 vsss-observer = "vsss.cli:observe"
@@ -18,11 +18,11 @@ vsss-playback = "vsss.playback:main"
 vsss-bag = "vsss.playback:main"
 vsss-live = "vsss.live:main"
 vsss-sim = "vsss.simulation:main"
-vsss-plot = "vsss.desktop:plot"
-vsss-teleop = "vsss.desktop:teleop"
+vsss-plot = "vsss.plot:main"
+vsss-teleop = "vsss.teleop:main"
 
 [tool.setuptools]
-packages = ["vsss"]
+packages = ["vsss", "aruco_gps"]
 
 [tool.setuptools.package-dir]
 vsss = "vsss"
