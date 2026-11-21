@@ -18,6 +18,8 @@ vsss-playback = "vsss.playback:main"
 vsss-bag = "vsss.playback:main"
 vsss-live = "vsss.live:main"
 vsss-sim = "vsss.simulation:main"
+vsss-plot = "vsss.desktop:plot"
+vsss-teleop = "vsss.desktop:teleop"
 
 [tool.setuptools]
 packages = ["vsss"]

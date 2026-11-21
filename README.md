@@ -18,6 +18,53 @@ the module commands below also run directly from this directory if Pyro5 and
 Bleak are already installed. No camera/OpenCV, gamepad or firmware dependencies
 are imported by simulation or playback.
 
+## Manual test: separate terminals
+
+Open PowerShell terminals in this checkout, using the same Python environment.
+Install the current command entry points once (repeat after switching branches):
+
+```powershell
+cd C:\Users\SAMMY_LOQ\Desktop\Python\VSSS
+python -m pip install -e .
+```
+
+1. Terminal A: `vsss-sim`. Leave it running throughout the simulation tests.
+2. Terminal B: `vsss-plot`. A field window shows car1 and ball0. Escape or the
+   close button closes this client. Positions use meters, +x right and +y up.
+3. Terminal C: `vsss-teleop --car 1 --speed 0.3`. Focus the teleop window and
+   hold W/S to move forward/back, A/D to strafe left/right, Q/E to rotate.
+   Release keys, press Space, or change focus to stop. Escape exits and stops.
+   Motion is relative to the car's heading. Watch the separate plot window.
+4. Terminal D: `vsss-sim --load examples/goalie_easy.jsonl`. This connects to
+   the existing simulator, replaces its world, clears commands and exits.
+   The plot and teleop stay connected. Car1 now faces up near the bottom of
+   the field. This example defines starting poses; it does not run a goalie
+   strategy. Repeat with `vsss-sim --load examples/scenario.jsonl` to reset.
+5. Terminal D: `vsss-record trial01.jsonl`. Use teleop to move/rotate car1 and
+   optionally load another scenario while recording. In terminal D press Ctrl+C
+   to finish the recording. Use a new filename for each take; overwrites fail.
+6. Close teleop and plot, then Ctrl+C in terminal A to stop the simulator.
+   Run `vsss-playback trial01.jsonl --speed 0.5` in terminal A, then
+   `vsss-plot` in terminal B. Playback waits for the plot's subscription and
+   replays at half speed. It stays open at the final frame; Ctrl+C stops it.
+   `--loop` repeats the recording. Teleop is rejected during playback.
+7. For event text in another terminal: `vsss-observer`. It shows position,
+   command and lifecycle events. Stop it with Ctrl+C.
+
+Only one provider (sim/live/playback) runs on the default endpoint at a time.
+Clients can run together. If a provider is restarted, restart its clients.
+`vsss-sim examples/goalie_easy.jsonl` starts a new server with that initial
+scenario; `vsss-sim --load ...` changes an existing server.
+
+To try real hardware instead, stop playback/simulation and start
+`vsss-live --vision-server 192.168.12.1`, then use the same plot, teleop,
+record and observer commands. Teleop now moves the physical car; start with
+`vsss-teleop --car 1 --speed 0.1`. The plot requires incoming vision telemetry.
+
+The desktop clients use Python's Tkinter (included in the normal Windows Python
+installer), with no extra plotting/gamepad package. The simulator has basic
+car motion; balls stay still and there are no collisions or autonomous behaviors.
+
 ## One client API
 
 ```python
@@ -100,8 +147,8 @@ state, not a mid-run restoration of timers/random generators.
 
 ## Record and replay
 
-Installed commands include `vsss-live`, `vsss-sim`, `vsss-playback` (also
-`vsss-bag`), `vsss-observer`, and `vsss-record`:
+Installed commands include `vsss-live`, `vsss-sim`, `vsss-plot`, `vsss-teleop`,
+`vsss-playback` (also `vsss-bag`), `vsss-observer`, and `vsss-record`:
 
 ```powershell
 vsss-record experiment.jsonl

@@ -150,8 +150,19 @@ def main(argv=None):
     from .cli import provider_parser, run_provider
     parser = provider_parser(__doc__)
     parser.add_argument("scenario", nargs="?")
+    parser.add_argument("--load", metavar="FILE", help="Load a scenario into the running simulator and exit")
     parser.add_argument("--rate", type=float, default=30)
     args = parser.parse_args(argv)
+    if args.load:
+        if args.scenario:
+            parser.error("use either a startup scenario or --load")
+        state = scenario_state(args.load)
+        with VSSSProvider.connect(args.endpoint) as client:
+            if not client.describe()["capabilities"]["simulation_edit"]:
+                parser.error("the running provider is not a simulator")
+            client.load_scenario(state)
+        print(f"Loaded {args.load} into the running simulator; commands cleared", flush=True)
+        return
     state = scenario_state(args.scenario) if args.scenario else None
     run_provider(VSSSSim(state, rate=args.rate).start(), args)
 
