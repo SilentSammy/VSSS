@@ -133,7 +133,7 @@ class ToolsTest(unittest.TestCase):
     def test_original_renderer_and_headless_cli(self):
         from aruco_gps.plotter2d import BoardPlotter2D
         with tempfile.TemporaryDirectory() as directory, VSSSSim().start() as sim:
-            plotter = make_plotter(sim.gps.state().field, 320)
+            plotter = make_plotter(width=320)
             self.assertIsInstance(plotter, BoardPlotter2D)
             frame = render_state(plotter, sim.gps.state())
             self.assertEqual(frame.shape[1], 320)

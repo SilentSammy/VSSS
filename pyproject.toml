@@ -26,3 +26,6 @@ packages = ["vsss", "aruco_gps"]
 
 [tool.setuptools.package-dir]
 vsss = "vsss"
+
+[tool.setuptools.package-data]
+aruco_gps = ["marker_config.json", "ball_thresholds.txt", "resources/board_*.png", "resources/sprites/*.png"]

@@ -16,7 +16,7 @@ API, CLI tools or schema-3 recording files.
 | `simulation.py` | Physics lifecycle, scenario replacement, atomic position patches. |
 | `physics.py` | Pymunk rigid bodies, 240 Hz steps, motors, contacts and rolling drag. |
 | `input.py` / `teleop.py` | Previous keyboard/gamepad input API and 50 Hz RPC teleoperation. |
-| `plot.py` | Existing BoardPlotter2D artwork, headless output, provider-following viewer. |
+| `plot.py` | Local lab setup/config/assets, BoardPlotter2D, headless output, provider-following viewer. |
 | `recording.py` | Protocol-agnostic JSONL snapshots/events and completion markers. |
 | `playback.py` | One playback clock dispatching observations into both components. |
 | `cli.py` | Foreground provider, recorder and observer entry points. |
@@ -86,7 +86,7 @@ check. No nonzero velocity is sent by this check. Keep raw logs in ignored
 
 ## Experiment verification, 2026-11-21
 
-- The original core had 12 passing tests; the expanded suite now has 30,
+- The original core had 12 passing tests; the expanded suite now has 38,
   including all three provider main loops under pending SIGINT, provider changes,
   original renderer/headless CLI output, 50 Hz teleop and contact physics.
 - A wheel built successfully with the new package and console entry points.
@@ -130,3 +130,15 @@ are simulated-device figures, not post-fix hardware measurements. Restart the
 running provider to load the fix before comparing actual driving behavior.
 Regression tests cover blocked-write input coalescing, failure propagation,
 idle lease renewal, heartbeat/command races, and nonblocking discovery.
+
+Plot imports VISION_SETUPS/DEFAULT_SETUP from the existing vision submodule.
+Importing those definitions opens no camera. It copies the selected board to
+resolve its artwork path relative to that submodule without mutating the shared
+setup object. Local marker styles resolve images relative to their JSON file;
+no remote metadata supplies geometry or pixels. Setup selection is fixed while
+the feed reconnects. Package data includes the board PNGs, marker JSON and sprite
+PNGs so the installed-wheel behavior matches an editable checkout.
+
+[PARITY.md](PARITY.md) records the functional comparison against `overhaul` at
+8a58b90, including missing waypoint/configuration/feedback behavior, simulation
+and editing gaps, incompatible student integrations, and acceptance priorities.

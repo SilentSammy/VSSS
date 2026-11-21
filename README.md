@@ -5,6 +5,9 @@ One provider composes a `GPS` and a `CarCmd`. The same client reads positions,
 sends commands, and assigns callbacks against live or simulated providers.
 Playback supplies the same observations and rejects commands.
 
+See [PARITY.md](PARITY.md) for the source-based comparison with `overhaul`,
+remaining functional gaps, and proposed acceptance checks before advancing it.
+
 Python 3.10+ is required. From this checkout:
 
 ```powershell
@@ -65,8 +68,31 @@ To try real hardware instead, stop playback/simulation and start
 record and observer commands. Teleop now moves the physical car; start with
 `vsss-teleop --car 1 --speed 0.1`. The plot requires incoming vision telemetry.
 
-The plot reuses `aruco_gps.plotter2d.BoardPlotter2D`, the 3x5 ArUco board artwork,
-pastel marker labels and orientation indicators, with no vision metadata request.
+The plot reuses `aruco_gps.plotter2d.BoardPlotter2D` and the local lab definitions
+in `aruco_gps/vision_setup.py`. It uses `DEFAULT_SETUP` by default (currently
+`setup_160cm`), including the board PNG artwork, marker dimensions, margins,
+colors, labels and image sprites from the setup's `marker_config.json`.
+Select the same setup as the lab server:
+
+```powershell
+vsss-plot
+vsss-plot --list-setups
+vsss-plot --setup setup_letter
+vsss-plot --setup setup_90cm
+vsss-plot --setup setup_160cm
+vsss-plot --setup setup_90cm --marker-config my_markers.json
+```
+
+Setup and artwork are local files; they are not fetched through UDP, HTTP or
+RPC. Keep the lab and plot checkout/config/assets synchronized manually.
+Relative sprite paths resolve from the marker JSON's directory. Marker height
+overrides belong to lab detection; plot only uses visual overrides. Restart
+plot after editing the local config. Setup geometry stays fixed across provider
+changes; selecting a setup does not resize the simulator or change the server.
+A field-size mismatch appears in the plot status, but matching sizes do not
+prove that artwork/settings match. PNG artwork and default marker config/sprites
+are included in built wheels as well as usable directly from the checkout.
+
 Install the plot extra and initialize the submodule (`git submodule update --init`)
 on a fresh checkout. `vsss-plot --duration 2 --output field.png` saves a headless
 frame to a new file. `--width 720` sets resolution; Q/Escape closes the window.
