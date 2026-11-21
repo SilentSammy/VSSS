@@ -1,74 +1,38 @@
-"""Passive observation of the active live, bag or simulation provider."""
-import json
-import select
-import socket
-import time
+"""A provider composes interchangeable GPS and command components."""
+import uuid
 
-from ._provider_connection import connect
+from .components import rpc_method
+from .rpc import RPCHost, ProviderClient
 
 
-def available_cars(*, refresh=False):
-    """List available BLE car numbers; the live provider caches scans for 30s."""
-    with connect('discover', refresh=refresh) as sock:
-        sock.settimeout(10)
-        with sock.makefile('r', encoding='utf-8') as reader:
-            result = json.loads(reader.readline())
-    if 'error' in result:
-        raise ConnectionError(result['error'])
-    return result['cars']
+class VSSSProvider:
+    def __init__(self, gps, cars, *, mode="live"):
+        if gps.events is not cars.events:
+            raise ValueError("components must share an event hub")
+        self.gps, self.cars = gps, cars
+        self.events = gps.events
+        self.mode = mode
+        self.source_id = uuid.uuid4().hex
 
+    @rpc_method
+    def describe(self):
+        return {"mode": self.mode, "source_id": self.source_id,
+                "capabilities": {"positions": True, "commands": self.mode != "playback",
+                                 "simulation_edit": self.mode == "simulation"}}
 
-class ProviderClient:
-    """Observe selected topics. Disconnection/overflow explicitly ends the stream.
+    def serve(self, **settings):
+        return RPCHost(self, **settings)
 
-    Each instance has one reader. Call close() from another thread to interrupt it.
-    Reconnection is a consumer policy: recorders fail incomplete; GPS reconnects.
-    """
-    def __init__(self, topics=('ble', 'udp'), vision=None, *, auto_start=True, connect_timeout=8):
-        self.socket = connect('observe', topics=list(topics), vision=vision or {},
-                              auto_start=auto_start, timeout=connect_timeout)
-        self.buffer = b''
-        self.finished = False
-        try:
-            self.socket.setblocking(False)
-            hello = self.read(5)
-            if hello != {'provider': 'observing'}:
-                raise ConnectionError('Provider rejected observation settings: ' + str(hello))
-            self.snapshot = self.read(5)
-            if not self.snapshot or self.snapshot.get('type') != 'provider_snapshot':
-                raise ConnectionError('Provider did not supply its snapshot')
-        except Exception:
-            self.close()
-            raise
-
-    def read(self, timeout=.2):
-        if self.finished:
-            return None
-        deadline = time.monotonic() + timeout
-        while b'\n' not in self.buffer:
-            remaining = max(0., deadline - time.monotonic())
-            ready, _, _ = select.select([self.socket], [], [], remaining)
-            if not ready:
-                return None
-            chunk = self.socket.recv(65536)
-            if not chunk:
-                raise ConnectionError('VSSS provider disconnected; observation stream incomplete')
-            self.buffer += chunk
-        line, self.buffer = self.buffer.split(b'\n', 1)
-        event = json.loads(line)
-        if event.get('type') == 'stream_end':
-            self.finished = True
-        return event
+    @staticmethod
+    def connect(endpoint=None):
+        return ProviderClient(endpoint)
 
     def close(self):
-        try:
-            self.socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        self.socket.close()
+        self.cars.close()
+        self.gps.close()
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *args):
         self.close()
