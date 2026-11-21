@@ -1,3 +1,0 @@
-{"type":"sim_scenario","schema":1,"config":{"field":[1.5,2.9],"random_seed":123,"wait_for_control":true}}
-{"time":0.0,"cars":[{"id":1,"x":0.0,"y":1.2,"angle":0.0}],"balls":[{"x":-0.25,"y":-0.7}]}
-{"time":0.1,"cars":[{"id":1,"x":0.0,"y":1.2,"angle":0.0}],"balls":[{"x":-0.23,"y":-0.62}]}
