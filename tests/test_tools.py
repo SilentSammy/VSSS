@@ -81,6 +81,38 @@ class ToolsTest(unittest.TestCase):
         for call in provider.cars.available.call_args_list:
             self.assertEqual(call.kwargs, {'refresh': True})
 
+    def test_local_provider_uses_same_controls_without_rpc(self):
+        inp = SimpleNamespace(KEYBOARD_AVAILABLE=True, pressed_keys=set())
+        with VSSSSim() as local:
+            with patch('vsss.teleop.VSSSProvider.connect', side_effect=AssertionError('RPC forbidden')) as connect, \
+                 patch('vsss.provider.RPCHost', side_effect=AssertionError('RPC server forbidden')), \
+                 patch.dict(sys.modules, {'vsss.input': inp, 'inputs': SimpleNamespace(devices=SimpleNamespace(gamepads=[]))}), \
+                 patch('vsss.teleop.velocity', return_value=dict(x=0, y=0, w=0)), \
+                 patch('vsss.teleop.time.sleep', side_effect=KeyboardInterrupt), \
+                 patch.object(local.cars, 'stop', wraps=local.cars.stop) as stop, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                factory = Mock(return_value=local)
+                teleop(['--car', '1'], provider_factory=factory)
+                factory.assert_called_once_with(None)
+                connect.assert_not_called()
+                self.assertEqual(stop.call_count, 2)
+            self.assertEqual(local._velocities[1], Velocity())
+
+    def test_direct_demo_constructs_local_components(self):
+        from examples.teleop_direct import local_provider
+        from vsss import GPSState, EventHub
+        events = EventHub()
+        gps = GPSState(events)
+        with patch('examples.teleop_direct.EventHub', return_value=events), \
+             patch('examples.teleop_direct.GPSLive', return_value=gps), \
+             patch('examples.teleop_direct.CarCmdLive') as cars_type:
+            cars_type.return_value.events = events
+            provider = local_provider()
+            self.assertIs(provider.gps, gps)
+            self.assertIs(provider.cars, cars_type.return_value)
+            provider.close()
+            cars_type.return_value.close.assert_called_once()
+
     def test_plot_reconnects_across_sim_and_playback(self):
         with tempfile.TemporaryDirectory() as directory:
             endpoint = Path(directory) / 'rpc.json'

@@ -142,7 +142,11 @@ def explicit_assignments(specs, methods):
     return assignments
 
 
-def main(argv=None):
+def main(argv=None, *, provider_factory=None):
+    """Use the same controls with an RPC client or a local provider factory.
+
+    The factory receives the endpoint argument; its result is closed on exit.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--endpoint', help='Provider discovery JSON path')
     parser.add_argument('--speed', type=float, default=1., help='Multiply normal/boost speeds by this value, (0, 1]')
@@ -161,7 +165,7 @@ def main(argv=None):
     writer = None
     assignments = []
     try:
-        provider = VSSSProvider.connect(args.endpoint)
+        provider = (provider_factory or VSSSProvider.connect)(args.endpoint)
         if not provider.describe()['capabilities']['commands']:
             parser.error('playback is read-only')
         numbers = None

@@ -91,6 +91,21 @@ keeps at most one pending command per car while the input loop continues at
 unsent intermediate input. Shutdown discards pending motion, finishes the
 in-flight call, and then sends an acknowledged STOP.
 
+To compare driving responsiveness with IPC removed, stop teleop and `vsss-live`
+first to release the BLE connection, then run in the same activated environment:
+
+```powershell
+python examples/teleop_direct.py --car 1
+```
+
+This instantiates `VSSSProvider(GPSLive(...), CarCmdLive(...))` in the teleop
+process, without hosting or connecting to RPC. It uses the exact same input
+loop, latest-command writer, speed flags, BLE adapter and vision defaults as
+the RPC setup. Ctrl+C stops and closes the local provider. For comparison, exit
+the direct script, restart `vsss-live`, and run `vsss-teleop --car 1`. Use the
+same controls and speed in both runs. Direct mode is not visible to RPC plot or
+record clients because it does not publish an endpoint.
+
 ## One client API
 
 ```python
