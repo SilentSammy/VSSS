@@ -86,7 +86,7 @@ check. No nonzero velocity is sent by this check. Keep raw logs in ignored
 
 ## Experiment verification, 2026-11-21
 
-- The original core had 12 passing tests; the expanded suite now has 24,
+- The original core had 12 passing tests; the expanded suite now has 30,
   including all three provider main loops under pending SIGINT, provider changes,
   original renderer/headless CLI output, 50 Hz teleop and contact physics.
 - A wheel built successfully with the new package and console entry points.
@@ -105,3 +105,28 @@ from `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`; tracked source also
 remains available through Git. `mp/`, `aruco_gps/`, the environment, editor
 settings and `.hardware_backup/` are retained. No push or `overhaul` merge is
 part of this implementation.
+
+## Teleop latency investigation
+
+On 2026-11-21 the existing live provider measured 0.426 ms median for a
+read-only RPC (40 calls), versus 150.014 ms median and 282.814 ms maximum for
+STOP calls including BLE acknowledgement (15 calls; all commands zero).
+These do not measure motor actuation latency. The separate-process no-hardware
+command probe measured 0.593 ms median, 0.834 ms p95 and 1.857 ms maximum over
+300 calls. The earlier simulation-only RPC number did not include BLE waits.
+
+Two behavioral regressions relative to the former worker were found: teleop
+sampled input synchronously behind each BLE acknowledgement, and the periodic
+heartbeat repeated writes regardless of recent successful commands. The input
+loop now hands off to a bounded latest-value writer. Synchronous API semantics
+are retained; final STOP is still acknowledged after the writer finishes.
+Heartbeats recheck last-write time after acquiring a per-car GATT lock. Scanning
+uses its own lock, rather than holding the command lock for a four-second scan.
+
+A controlled comparison with the same 80 ms fake GATT write delay produced
+7 redundant heartbeat writes for 15 commands before the change and zero after.
+Worst observed completion fell from 186.06 ms to 94.43 ms in that test; those
+are simulated-device figures, not post-fix hardware measurements. Restart the
+running provider to load the fix before comparing actual driving behavior.
+Regression tests cover blocked-write input coalescing, failure propagation,
+idle lease renewal, heartbeat/command races, and nonblocking discovery.

@@ -82,8 +82,14 @@ vsss-teleop --auto
 
 I/K, J/L, U/O and M are the second keyboard layout. Gamepad left stick
 translates, right stick rotates, and RT boosts. `--speed 0.3` multiplies both
-normal and boosted speeds. Discovery caches for 30 seconds; explicit car
-assignments bypass discovery. Only changed, quantized inputs send commands.
+normal and boosted speeds. Interactive startup (`vsss-teleop` with no selection
+flags) always forces a new scan. `--auto` and `--list` may use the 30-second
+discovery cache unless `--refresh` is supplied; explicit car assignments bypass
+discovery. Only changed, quantized inputs send commands. A background writer
+keeps at most one pending command per car while the input loop continues at
+50 Hz, even when the BLE acknowledged write is slow. Newer input replaces
+unsent intermediate input. Shutdown discards pending motion, finishes the
+in-flight call, and then sends an acknowledged STOP.
 
 ## One client API
 
@@ -190,11 +196,20 @@ Legacy schema-3 bags are intentionally rejected. See `examples/recording.jsonl`.
 ```powershell
 python -m unittest discover -s tests -v
 python tests/hardware_smoke.py --car 1
+python tests/latency_probe.py --samples 300
 ```
 
 The normal tests use synthetic UDP, fake BLE and real subprocess RPC; they do
 not move hardware. The explicit hardware check scans, reads status and sends
 only STOP. It is not part of automatic test discovery.
+
+The latency probe normally measures acknowledged command RPCs to a separate
+local process with no hardware. Add `--stop-only --car 1` to compare those with
+the running provider's read-only RPCs and actual BLE STOP completions. This
+explicit mode refuses to run while a nonzero command is observed. These timings
+measure call completion, not the instant of motor response. Live heartbeats
+are sent only after 200 ms without a successful velocity write; active commands
+renew the lease themselves, so they do not require duplicate heartbeat writes.
 
 The original package and docs remain in Git (`overhaul`, commit `8a58b90`).
 Obsolete tools/tests/scripts, old scenarios and generated artifacts were moved

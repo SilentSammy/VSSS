@@ -6,7 +6,7 @@ import logging
 import re
 import socket
 import struct
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import time
 from urllib.request import build_opener, ProxyHandler
 
@@ -107,14 +107,16 @@ class CarCmdLive(CarCmd):
         self._loop = asyncio.new_event_loop()
         self._clients = {}
         self._active = {}
+        self._last_write = {}
         self._ready = Event()
         self._closing = False
         self._discovered = None
         self._discovered_at = 0.
+        self._discovery_lock = Lock()
 
         def run():
             asyncio.set_event_loop(self._loop)
-            self._io_lock = asyncio.Lock()
+            self._io_locks = {}
             self._heartbeat = self._loop.create_task(self._keepalive())
             self._ready.set()
             self._loop.run_forever()
@@ -142,12 +144,17 @@ class CarCmdLive(CarCmd):
 
     @rpc_method
     def available(self, refresh=False):
-        with self._lock:
+        # Scanning must not hold the command/ownership lock for four seconds.
+        with self._discovery_lock:
             if refresh or self._discovered is None or time.monotonic() - self._discovered_at >= 30:
                 self._discovered = self._call(self._scan())
                 self._discovered_at = time.monotonic()
-            return sorted(set(self._discovered) | {car_id for car_id, client in self._clients.items()
+            return sorted(set(self._discovered) | {car_id for car_id, client in tuple(self._clients.items())
                                                        if client.is_connected})
+
+    def _io_lock(self, car_id):
+        # Called only on the asyncio thread. GATT operations serialize per car.
+        return self._io_locks.setdefault(car_id, asyncio.Lock())
 
     async def _connect(self, car_id):
         from bleak import BleakClient, BleakScanner
@@ -169,6 +176,7 @@ class CarCmdLive(CarCmd):
             raise
         self._clients[car_id] = client
         self._active[car_id] = bytes(3)
+        self._last_write[car_id] = time.monotonic()
         return client
 
     @staticmethod
@@ -176,7 +184,7 @@ class CarCmdLive(CarCmd):
         return struct.pack("<bbb", *(max(-128, min(127, round(v * 128))) for v in (velocity.x, velocity.y, velocity.w)))
 
     async def _write(self, car_id, velocity):
-        async with self._io_lock:
+        async with self._io_lock(car_id):
             client = await self._connect(car_id)
             payload = self._payload(velocity)
             try:
@@ -186,12 +194,13 @@ class CarCmdLive(CarCmd):
                 await client.disconnect()
                 raise
             self._active[car_id] = payload
+            self._last_write[car_id] = time.monotonic()
 
     def _apply(self, car_id, velocity):
         self._call(self._write(car_id, velocity))
 
     async def _status(self, car_id):
-        async with self._io_lock:
+        async with self._io_lock(car_id):
             client = await self._connect(car_id)
             data = await asyncio.wait_for(client.read_gatt_char(STATUS_UUID), 2)
             mode, flags, fault, _, x, y, angle, count = struct.unpack("<BBBBfffI", data)
@@ -207,23 +216,33 @@ class CarCmdLive(CarCmd):
     async def _keepalive(self):
         try:
             while True:
-                await asyncio.sleep(.2)
-                async with self._io_lock:
-                    for car_id, payload in tuple(self._active.items()):
-                        try:
-                            client = self._clients[car_id]
-                            await asyncio.wait_for(client.write_gatt_char(VELOCITY_UUID, payload, response=True), 1)
-                        except Exception as error:
-                            self._active.pop(car_id, None)
-                            self.events.publish("lifecycle", {"kind": "car_disconnected", "car_id": car_id, "error": str(error)})
+                await asyncio.sleep(.02)
+                due = [car_id for car_id in self._active
+                       if time.monotonic() - self._last_write.get(car_id, 0) >= .2]
+                await asyncio.gather(*(self._heartbeat_car(car_id) for car_id in due))
         except asyncio.CancelledError:
             return
+
+    async def _heartbeat_car(self, car_id):
+        async with self._io_lock(car_id):
+            # A command may have completed while we waited for this lock.
+            # Fresh writes renew the lease themselves; do not repeat them.
+            if car_id not in self._active or time.monotonic() - self._last_write.get(car_id, 0) < .2:
+                return
+            try:
+                client = self._clients[car_id]
+                payload = self._active[car_id]
+                await asyncio.wait_for(client.write_gatt_char(VELOCITY_UUID, payload, response=True), 1)
+                self._last_write[car_id] = time.monotonic()
+            except Exception as error:
+                self._active.pop(car_id, None)
+                self.events.publish("lifecycle", {"kind": "car_disconnected", "car_id": car_id, "error": str(error)})
 
     async def _shutdown(self):
         self._heartbeat.cancel()
         await self._heartbeat
-        async with self._io_lock:
-            for client in self._clients.values():
+        for car_id, client in tuple(self._clients.items()):
+            async with self._io_lock(car_id):
                 try:
                     if client.is_connected:
                         await asyncio.wait_for(client.write_gatt_char(VELOCITY_UUID, bytes(3), response=True), 1)

@@ -1,5 +1,6 @@
 """Guided keyboard and gamepad control of nearby VSSS cars."""
 import argparse
+from threading import Condition, Thread
 import time
 
 from .models import Velocity
@@ -9,6 +10,58 @@ KEYBOARDS = {
     'wasd': ('w', 's', 'd', 'a', 'e', 'q', 'c'),
     'ijkl': ('i', 'k', 'l', 'j', 'o', 'u', 'm'),
 }
+
+
+class LatestCommands:
+    """Keep sampling inputs while an acknowledged device write is in flight.
+
+    At most one pending value per car; intermediate joystick positions are
+    replaced rather than played back later. Ordinary RPC remains synchronous.
+    """
+    def __init__(self, cars):
+        self.cars = cars
+        self.error = None
+        self._condition = Condition()
+        self._pending = {}
+        self._closed = False
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def submit(self, car_id, command):
+        with self._condition:
+            if self.error:
+                raise RuntimeError('Command writer failed') from self.error
+            if self._closed:
+                raise RuntimeError('Command writer is closed')
+            self._pending[car_id] = command
+            self._condition.notify()
+
+    def _run(self):
+        while True:
+            with self._condition:
+                self._condition.wait_for(lambda: self._closed or self._pending)
+                if self._closed:
+                    return
+                car_id = next(iter(self._pending))
+                command = self._pending.pop(car_id)
+            try:
+                self.cars.set_velocity(car_id, command)
+            except Exception as error:
+                with self._condition:
+                    self.error = error
+                    self._pending.clear()
+                    self._closed = True
+                return
+
+    def close(self):
+        with self._condition:
+            self._closed = True
+            self._pending.clear()
+            self._condition.notify()
+        # Finish the one in-flight write before the final acknowledged STOP.
+        self._thread.join(timeout=31)
+        if self._thread.is_alive():
+            raise TimeoutError('Command writer did not finish')
 
 
 def assign_inputs(cars, methods, prompt=input):
@@ -105,6 +158,7 @@ def main(argv=None):
     if args.car and args.refresh:
         parser.error('--refresh applies to discovery, not explicit --car assignments')
     provider = None
+    writer = None
     assignments = []
     try:
         provider = VSSSProvider.connect(args.endpoint)
@@ -114,7 +168,8 @@ def main(argv=None):
         if not args.car:
             if not args.list:
                 print('Looking for available cars...', flush=True)
-            numbers = provider.cars.available(refresh=args.refresh)
+            # Interactive startup always scans; never reuse a cached empty scan.
+            numbers = provider.cars.available(refresh=args.refresh or not (args.auto or args.list))
         if args.list:
             print(numbers)
             return
@@ -146,15 +201,18 @@ def main(argv=None):
         # Clear keys used by the assignment prompts before enabling motion.
         inp.pressed_keys.clear()
         sent = {}
+        writer = LatestCommands(provider.cars)
         while True:
             started = time.monotonic()
+            if writer.error:
+                raise RuntimeError(f'Command writer failed: {writer.error}') from writer.error
             for number, controls in assignments:
                 command = velocity(controls, inp)
                 # Preserve the previous client's 0.05 input resolution.
                 rounded = tuple(round(command[axis] * args.speed / .05)
                                 for axis in ('x', 'y', 'w'))
                 if sent.get(number) != rounded:
-                    provider.cars.set_velocity(number, Velocity(*(max(-1., min(1., v * .05)) for v in rounded)))
+                    writer.submit(number, Velocity(*(max(-1., min(1., v * .05)) for v in rounded)))
                     sent[number] = rounded
             time.sleep(max(0., .02 - (time.monotonic() - started)))
     except (KeyboardInterrupt, EOFError):
@@ -164,11 +222,15 @@ def main(argv=None):
     finally:
         if provider is not None:
             try:
-                for number, _ in assignments:
-                    try:
-                        provider.cars.stop(number)
-                    except Exception:
-                        pass
+                try:
+                    if writer is not None:
+                        writer.close()
+                finally:
+                    for number, _ in assignments:
+                        try:
+                            provider.cars.stop(number)
+                        except Exception:
+                            pass
             finally:
                 provider.close()
 

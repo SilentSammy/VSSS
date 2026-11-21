@@ -48,12 +48,15 @@ class ToolsTest(unittest.TestCase):
             waits.append(delay)
             if len(waits) == 4: raise KeyboardInterrupt
         with patch('vsss.teleop.VSSSProvider.connect', return_value=provider), \
+             patch('vsss.teleop.LatestCommands') as writer_type, \
              patch.dict(sys.modules, {'vsss.input': inp, 'inputs': SimpleNamespace(devices=SimpleNamespace(gamepads=[]))}), \
              patch('vsss.teleop.velocity', side_effect=commands), patch('vsss.teleop.time.sleep', side_effect=sleep), \
              contextlib.redirect_stdout(io.StringIO()):
+            writer_type.return_value.error = None
             teleop(['--car', '1=wasd'])
-        self.assertEqual(provider.cars.set_velocity.call_count, 2)
-        self.assertEqual(provider.cars.set_velocity.call_args_list[0].args, (1, Velocity()))
+        self.assertEqual(writer_type.return_value.submit.call_count, 2)
+        self.assertEqual(writer_type.return_value.submit.call_args_list[0].args, (1, Velocity()))
+        writer_type.return_value.close.assert_called_once()
         self.assertEqual(provider.cars.stop.call_count, 2)
         self.assertTrue(all(0 < delay <= .02 for delay in waits))
         provider.close.assert_called_once()
@@ -66,6 +69,17 @@ class ToolsTest(unittest.TestCase):
             teleop(['--list', '--refresh'])
         provider.cars.available.assert_called_once_with(refresh=True)
         provider.cars.stop.assert_not_called()
+
+    def test_no_args_forces_scan_every_time_even_after_empty_result(self):
+        provider = Mock()
+        provider.describe.return_value = {'capabilities': {'commands': True}}
+        provider.cars.available.return_value = []
+        with patch('vsss.teleop.VSSSProvider.connect', return_value=provider), contextlib.redirect_stdout(io.StringIO()):
+            teleop([])
+            teleop([])
+        self.assertEqual(provider.cars.available.call_count, 2)
+        for call in provider.cars.available.call_args_list:
+            self.assertEqual(call.kwargs, {'refresh': True})
 
     def test_plot_reconnects_across_sim_and_playback(self):
         with tempfile.TemporaryDirectory() as directory:
