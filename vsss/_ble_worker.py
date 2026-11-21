@@ -13,6 +13,7 @@ from threading import Thread
 from bleak import BleakClient, BleakScanner
 from vsss._ble_protocol import (CONTROL_UUID, CONTROL_RECONNECT_TELEMETRY, CONTROL_RESTART,
                           CONTROLLER_KEYS, CONTROLLER_STRUCT, CONTROLLER_UUID,
+                          CONFIG_CHUNK_BYTES, CONFIG_UUID, normalize_robot_config,
                           LEASE_UUID, STATUS_STRUCT, STATUS_UUID, TRIM_MATRIX_UUID,
                           TRIM_STRUCT, VELOCITY_UUID, WAYPOINT_STRUCT, WAYPOINT_UUID)
 HEARTBEAT_SECONDS = 0.2
@@ -86,7 +87,7 @@ class TracedBLE:
     def event(self, phase, operation, uuid, request, **details):
         names = {VELOCITY_UUID: 'velocity', LEASE_UUID: 'lease', TRIM_MATRIX_UUID: 'trim',
                  WAYPOINT_UUID: 'waypoint', CONTROL_UUID: 'recovery',
-                 CONTROLLER_UUID: 'controller', STATUS_UUID: 'status'}
+                 CONTROLLER_UUID: 'controller', STATUS_UUID: 'status', CONFIG_UUID: 'config'}
         self.commands.report(event=dict(type='ble', phase=phase, operation=operation,
                                        uuid=str(uuid), request=request,
                                        connection_id=self.connection_id,
@@ -97,8 +98,12 @@ class TracedBLE:
     async def write_gatt_char(self, uuid, payload, response=True, reason=None):
         self.sequence += 1
         request = self.sequence
-        details = dict(payload_hex=bytes(payload).hex(), response=response, reason=reason or 'command',
+        # The complete configuration may contain Wi-Fi credentials.  Trace its
+        # operation but never place its bytes in a diagnostic event.
+        details = dict(response=response, reason=reason or 'command',
                        origin_session_id=self.commands.event_session)
+        if uuid != CONFIG_UUID:
+            details['payload_hex'] = bytes(payload).hex()
         try:
             if uuid == VELOCITY_UUID:
                 details['value'] = dict(zip(('x', 'y', 'w'), (v / 128 for v in struct.unpack('<bbb', payload))))
@@ -130,7 +135,10 @@ class TracedBLE:
         except BaseException as error:
             self.event('error', 'read', uuid, request, error=str(error) or type(error).__name__, origin_session_id=origin)
             raise
-        self.event('complete', 'read', uuid, request, payload_hex=bytes(result).hex(), origin_session_id=origin)
+        details = dict(origin_session_id=origin)
+        if uuid != CONFIG_UUID:
+            details['payload_hex'] = bytes(result).hex()
+        self.event('complete', 'read', uuid, request, **details)
         return result
 
 
@@ -179,6 +187,10 @@ async def control(client, commands):
     except Exception:
         controller_supported = False
         commands.report(controller_config=None)
+    # Do not read the full configuration at connection time: it may contain
+    # Wi-Fi credentials and is intentionally available only on explicit API
+    # calls.  Older firmware is detected when such a call is made.
+    config_supported = None
     commands.ready = True
     commands.report(ready=True, message='Connected')
     last_velocity = bytes(3)
@@ -239,6 +251,21 @@ async def control(client, commands):
                     actual = await asyncio.wait_for(
                         client.read_gatt_char(STATUS_UUID), WRITE_TIMEOUT)
                     result['robot_status'] = STATUS_STRUCT.unpack(actual)
+                elif operation in ('read_robot_config', 'write_robot_config'):
+                    if config_supported is False:
+                        raise RuntimeError('Firmware does not support full robot configuration')
+                    if operation == 'write_robot_config':
+                        config = normalize_robot_config(message['config'])
+                        payload = json.dumps(config, separators=(',', ':'), allow_nan=False).encode()
+                        for offset in range(0, len(payload), CONFIG_CHUNK_BYTES):
+                            packet = b'\x01' + struct.pack('<HH', offset, len(payload)) + payload[offset:offset + CONFIG_CHUNK_BYTES]
+                            await asyncio.wait_for(client.write_gatt_char(
+                                CONFIG_UUID, packet, response=True), WRITE_TIMEOUT)
+                        last_write = asyncio.get_running_loop().time()
+                    actual = bytes(await asyncio.wait_for(
+                        client.read_gatt_char(CONFIG_UUID), WRITE_TIMEOUT))
+                    result['robot_config'] = normalize_robot_config(json.loads(actual.decode()))
+                    config_supported = True
                 elif operation in ('reconnect_telemetry', 'restart'):
                     code = (CONTROL_RECONNECT_TELEMETRY if operation == 'reconnect_telemetry'
                             else CONTROL_RESTART)
@@ -252,6 +279,8 @@ async def control(client, commands):
                     raise ValueError('Unknown BLE operation')
                 commands.report(operation_done=message['request'], **result)
             except Exception as error:
+                if operation in ('read_robot_config', 'write_robot_config'):
+                    config_supported = False
                 commands.report(operation_done=message['request'], operation_error=str(error))
         if not commands.waypoints.empty():
             message = commands.waypoints.get_nowait()

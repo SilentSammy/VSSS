@@ -68,28 +68,53 @@ def main(argv=None):
     started = time.monotonic()
     deadline = started + args.duration if args.duration else None
     provider = None
+    drag = transport = None
     retry_at = 0.
+
+    def mouse(event, x, y, flags, param):
+        if drag is not None and transport is not None and not transport.failed:
+            drag.on_mouse(event, x, y, flags, param)
+
+    def close_editor():
+        nonlocal drag, transport
+        drag = None
+        if transport is not None:
+            transport.close()
+            transport = None
+
     try:
         if args.output is None:
             cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+            cv2.setMouseCallback(window, mouse)
         while deadline is None or time.monotonic() < deadline:
             try:
                 if provider is None and time.monotonic() >= retry_at:
                     provider = provider_from_args(args)
                     plotter = plotter_from_snapshot(provider.snapshot, args.width, fallback)
+                    vision = provider.snapshot.get('vision') or {}
+                    control = vision.get('simulation_control')
+                    if args.output is None and control and not vision.get('replay'):
+                        from tools._plot_sim import EditTransport, SimDrag
+                        setup = vision['metadata']['status']['setup']
+                        transport = EditTransport(control['source_id'])
+                        drag = SimDrag(plotter, setup['simulation']['body'],
+                                       setup['ball_detector']['radius_m'], transport.send)
+                        print('Simulation editing: drag car centre to move, edge to rotate, or ball to move.', flush=True)
                     latest = None
                 event = provider.read(.02) if provider is not None else None
                 if event and event.get('type') == 'stream_end' and not event.get('complete', True):
                     raise RuntimeError(event.get('error', 'Provider stream ended incomplete'))
                 if event and event.get('type') == 'udp' and event.get('valid'):
-                    latest = plotter.render_packet(event['packet'])
+                    latest = drag.render(event['packet']) if drag else plotter.render_packet(event['packet'])
                 if provider is not None and provider.finished:
                     if not args.persist:
                         break
+                    close_editor()
                     provider.close()
                     provider = None
                     retry_at = time.monotonic() + .5
             except (ConnectionError, OSError):
+                close_editor()
                 if not args.persist:
                     raise
                 if provider is not None:
@@ -97,6 +122,10 @@ def main(argv=None):
                     provider = None
                 retry_at = time.monotonic() + .5
             if args.output is None:
+                if transport is not None and transport.error:
+                    print('Simulation edit:', transport.error, flush=True)
+                    transport.error = None
+                    drag.active = None
                 if latest is not None:
                     cv2.imshow(window, latest)
                 if cv2.waitKey(1) & 0xff in (ord('q'), 27):
@@ -108,6 +137,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        close_editor()
         if provider is not None:
             provider.close()
         if args.output is None:

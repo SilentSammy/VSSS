@@ -13,6 +13,7 @@ _SERVICE_UUID_LE = bytes.fromhex('f0debc9a785634127856341278563412')
 # Global state
 control_callbacks = {}  # Dictionary mapping UUID strings to callback functions
 initial_values = {}
+buffer_sizes = {}  # Optional minimum readable buffer size per characteristic.
 _connections = set()    # Set of connected devices
 _handles = {}           # Dictionary mapping UUID strings to characteristic handles
 _deadlines = {}
@@ -156,7 +157,7 @@ def start():
         handle = service_handles[0][i]
         _handles[uuid_str] = handle
         value = initial_values.get(uuid_str, bytes([0]))
-        _ble.gatts_set_buffer(handle, max(20, len(value)))
+        _ble.gatts_set_buffer(handle, max(20, len(value), buffer_sizes.get(uuid_str, 0)))
         _ble.gatts_write(handle, value)
         
     # Set up event handler and start advertising

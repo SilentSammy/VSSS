@@ -22,7 +22,7 @@ DEFAULT_CONTROLLER = {
     "hold_ms": 600,
     "position_hysteresis": 1.5,
     "heading_hysteresis": 1.5,
-    "telemetry_recovery_ms": 2000,
+    "telemetry_recovery_ms": 3000,
     "waypoint_timeout_ms": 30000,
 }
 

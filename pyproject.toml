@@ -14,15 +14,21 @@ plot = ["numpy", "opencv-python"]
 [project.scripts]
 calibrate = "tools.calibrate:main"
 vsss-teleop = "tools.vsss_teleop:main"
+vsss-dance = "tools.vsss_dance:main"
 vsss-observer = "tools.vsss_observer:main"
 vsss-plot = "tools.vsss_plot:main"
 vsss-bag = "tools.vsss_bag:main"
 vsss-live = "tools.vsss_live:main"
+vsss-sim = "tools.vsss_sim:main"
 
 [tool.setuptools]
-packages = ["vsss", "tools", "aruco_gps"]
+packages = ["vsss", "tools", "aruco_gps", "mp"]
 
 [tool.setuptools.package-dir]
 vsss = "vsss"
 tools = "tools"
 aruco_gps = "aruco_gps"
+mp = "mp"
+
+[tool.setuptools.package-data]
+vsss = ["sim_defaults.json"]

@@ -3,6 +3,10 @@ import math
 import network
 import struct
 import time
+try:
+    import ujson as json
+except ImportError:
+    import json
 
 from axis_trim import AxisTrim
 from mecanum import MecanumCar
@@ -18,6 +22,8 @@ WAYPOINT_UUID = "12345678-1234-5678-1234-56789abcdef6"
 CONTROL_UUID = "12345678-1234-5678-1234-56789abcdef7"
 CONTROLLER_UUID = "12345678-1234-5678-1234-56789abcdef8"
 STATUS_UUID = "12345678-1234-5678-1234-56789abcdef9"
+CONFIG_UUID = "12345678-1234-5678-1234-56789abcdefa"
+CONFIG_MAX_BYTES = 2048
 
 MODE_IDLE = 0
 MODE_MANUAL = 1
@@ -27,6 +33,11 @@ MODE_FAULT = 4
 FAULT_NONE = 0
 FAULT_TELEMETRY = 1
 FAULT_TIMEOUT = 2
+
+# Keep the car object available from the REPL after main() is interrupted.
+# It is assigned during startup and remains usable for diagnostics/manual tests.
+car = None
+
 def connect_wifi(ssid, password, timeout_ms=20000):
     wlan = network.WLAN(network.STA_IF)
     if wlan.isconnected():
@@ -50,9 +61,12 @@ def controller_payload(parameters):
 
 
 def main():
+    global car
     configuration = RobotConfig()
     settings = configuration.data
-    car = MecanumCar()
+    car = MecanumCar(motor_pins=settings["motor_pins"],
+                     wheel_gains=settings.get("wheel_gains"))
+    car.wheel_reverse_gains = tuple(settings.get("wheel_reverse_gains", (1., 1., 1., 1.)))
     car.stop()
     try:
         wlan = connect_wifi(settings["wifi_ssid"], settings["wifi_password"])
@@ -69,19 +83,69 @@ def main():
         "control_frame": None, "control_command": (0., 0., 0.),
         "control_raw": (0., 0., 0.), "control_dt_ms": None, "waypoint_id": 0,
         "save_trim": False, "save_controller": False,
+        "config_update": None, "config_rx": None, "config_rx_size": 0,
         "reconnect_at": None, "restart_at": None,
     }
 
     def trim_changed(_matrix):
         state["save_trim"] = True
 
-    trim = AxisTrim(settings["trim_matrix"], trim_changed)
+    trim = AxisTrim(settings["trim_matrix"], trim_changed, settings["mixed_trim"])
     controller = OnboardController(**settings["controller"])
     freshness = TelemetryFreshness(settings["controller"]["telemetry_recovery_ms"])
 
     def stop_requested():
         state["stop"] = True
         car.stop()
+
+    def config_payload(candidate=None):
+        """Return the complete canonical file, including credentials.
+
+        This characteristic is intentionally administrative: a BLE peer that
+        can connect to the car can read and replace all persisted settings.
+        """
+        if candidate is None:
+            candidate = dict(settings)
+            candidate["trim_matrix"] = list(trim.matrix)
+            candidate["controller"] = dict(settings["controller"])
+        return json.dumps(validate(candidate)).encode()
+
+    def on_config(data):
+        """Accept a full JSON file or a numbered chunked JSON transfer.
+
+        Long values exceed conservative BLE write limits on some hosts.  A
+        chunk starts with 0x01, then little-endian offset and total length.
+        Chunks must arrive contiguously; the response always remains the last
+        complete configuration so ordinary GATT reads are stable.
+        """
+        payload = bytes(data)
+        try:
+            if payload[:1] == b"\x01":
+                if len(payload) < 5:
+                    raise ValueError("short config chunk")
+                offset, total = struct.unpack("<HH", payload[1:5])
+                chunk = payload[5:]
+                if not 1 <= total <= CONFIG_MAX_BYTES or offset + len(chunk) > total:
+                    raise ValueError("invalid config chunk")
+                if offset == 0:
+                    state["config_rx"] = bytearray(total)
+                    state["config_rx_size"] = 0
+                if state["config_rx"] is None or len(state["config_rx"]) != total or offset != state["config_rx_size"]:
+                    raise ValueError("out-of-order config chunk")
+                state["config_rx"][offset:offset + len(chunk)] = chunk
+                state["config_rx_size"] += len(chunk)
+                if state["config_rx_size"] != total:
+                    return config_payload()
+                payload = bytes(state["config_rx"])
+                state["config_rx"] = None
+                state["config_rx_size"] = 0
+            candidate = validate(json.loads(payload.decode()))
+            state["config_update"] = candidate
+            return config_payload(candidate)
+        except (ValueError, TypeError, UnicodeError):
+            state["config_rx"] = None
+            state["config_rx_size"] = 0
+            return config_payload()
 
     def on_velocity(data):
         if state["reconnect_at"] is not None or state["restart_at"] is not None:
@@ -158,13 +222,15 @@ def main():
         CONTROL_UUID: on_control,
         CONTROLLER_UUID: on_controller,
         STATUS_UUID: lambda data: None,
+        CONFIG_UUID: on_config,
     }
     ble_server.initial_values = {
         VELOCITY_UUID: bytes(3), LEASE_UUID: bytes(1),
         TRIM_MATRIX_UUID: trim.read(), WAYPOINT_UUID: bytes(12),
         CONTROL_UUID: bytes(2), CONTROLLER_UUID: controller_payload(settings["controller"]),
-        STATUS_UUID: bytes(20),
+        STATUS_UUID: bytes(20), CONFIG_UUID: config_payload(),
     }
+    ble_server.buffer_sizes = {CONFIG_UUID: CONFIG_MAX_BYTES}
 
     try:
         ble_server.start()
@@ -217,13 +283,30 @@ def main():
             if state["save_trim"]:
                 state["save_trim"] = False
                 configuration.set_trim(trim.matrix)
+                ble_server.set_value(CONFIG_UUID, config_payload())
                 nav_log.configuration(trim.matrix, settings["controller"])
             if state["save_controller"]:
                 state["save_controller"] = False
                 configuration.set_controller(settings["controller"])
+                ble_server.set_value(CONFIG_UUID, config_payload())
                 controller = OnboardController(**settings["controller"])
                 freshness = TelemetryFreshness(settings["controller"]["telemetry_recovery_ms"])
                 nav_log.configuration(trim.matrix, settings["controller"])
+            if state["config_update"] is not None:
+                # Never write flash or rebuild hardware from the BLE IRQ.
+                # Rebooting makes every setting (identity, Wi-Fi and pins) take
+                # effect atomically after the persisted configuration is valid.
+                candidate = state["config_update"]
+                state["config_update"] = None
+                car.stop()
+                configuration.replace(candidate)
+                settings.clear()
+                settings.update(configuration.data)
+                state["save_trim"] = state["save_controller"] = False
+                nav_log.event('configuration_update', car_id=settings['car_id'],
+                              motor_pins=settings['motor_pins'])
+                nav_log.flush()
+                state["restart_at"] = time.ticks_add(time.ticks_ms(), 750)
 
             if state["mode"] == MODE_MANUAL:
                 car.set_velocity(*trim.apply(state["velocity"]))

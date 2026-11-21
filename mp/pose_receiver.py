@@ -13,7 +13,7 @@ class PoseReceiver:
     """Subscribe to the vision server and retain one marker's latest pose."""
 
     def __init__(self, marker_id, server="192.168.12.1", port=5000,
-                 stale_ms=500, subscribe_ms=1000, subscribe=True):
+                 stale_ms=800, subscribe_ms=1000, subscribe=True):
         self.marker_id = int(marker_id)
         self.server = server
         self.port = int(port)

@@ -6,7 +6,8 @@ import subprocess
 from threading import Condition, Lock, Thread
 import time
 
-from vsss._ble_protocol import CONTROLLER_KEYS, RobotStatus, normalize_controller
+from vsss._ble_protocol import (CONTROLLER_KEYS, RobotStatus, normalize_controller,
+                                normalize_robot_config)
 from vsss._provider_connection import ProviderConnection
 
 def to_byte(val):
@@ -43,6 +44,7 @@ class MecanumBLEClient:
         self.last_error = None
         self.trim_matrix = None
         self.controller_config = None
+        self.robot_config = None
         self.robot_status = None
         self._operation_request = 0
         self._operation_results = {}
@@ -91,6 +93,8 @@ class MecanumBLEClient:
                         values = message['controller_config']
                         self.controller_config = (None if values is None else
                                                   {key: values[key] for key in CONTROLLER_KEYS})
+                    if 'robot_config' in message:
+                        self.robot_config = message['robot_config']
                     if 'robot_status' in message:
                         self.robot_status = RobotStatus(*message['robot_status'])
                     if 'operation_done' in message:
@@ -209,6 +213,25 @@ class MecanumBLEClient:
 
     def read_controller(self):
         return self._operation('read_controller')['controller_config']
+
+    def read_robot_config(self):
+        """Read the complete persisted robot_config.json, including credentials."""
+        config = dict(self._operation('read_robot_config')['robot_config'])
+        # Older firmware leaves the administrative GATT value cached after a
+        # dedicated trim/controller write. Overlay their authoritative readbacks
+        # so a subsequent full-config edit cannot undo the latest calibration.
+        config['trim_matrix'] = [value for row in self.read_trim() for value in row]
+        config['controller'] = self.read_controller()
+        return config
+
+    def set_robot_config(self, configuration):
+        """Replace all persistent settings and schedule a safe firmware reboot.
+
+        If the configuration changes ``car_id``, reconnect using a new client
+        for that car number after the current BLE connection closes.
+        """
+        configuration = normalize_robot_config(configuration)
+        return self._operation('write_robot_config', config=configuration)['robot_config']
 
     def read_status(self):
         return RobotStatus(*self._operation('read_status')['robot_status'])

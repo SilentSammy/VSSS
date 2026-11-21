@@ -77,7 +77,8 @@ class TelemetryRecovery:
             try:
                 self.receiver = self.receiver_factory(
                     self.settings['car_id'], server=self.settings['telemetry_host'],
-                    port=self.settings['telemetry_port'], subscribe=True)
+                    port=self.settings['telemetry_port'],
+                    stale_ms=self.settings.get('telemetry_stale_ms', 800), subscribe=True)
             except OSError as error:
                 print('Telemetry receiver creation failed:', error)
         if self.receiver is not None:

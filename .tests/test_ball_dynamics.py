@@ -4,10 +4,23 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tools.ball_dynamics import BallModel, detect_rolls, load_samples
+from tools.ball_dynamics import BallModel, analyze_slow_rolls, detect_rolls, load_samples
 
 
 class BallDynamicsTests(unittest.TestCase):
+    def test_slow_roll_report_distinguishes_quiet_detector_steps(self):
+        rows = [dict(type='udp', valid=True, wall_time_ns=10 ** 12 + index * 100_000_000,
+                     packet=dict(markers=[dict(id=1, x=0, y=0)], balls=[dict(x=.4, y=0)]))
+                for index in range(20)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'quiet.jsonl'
+            path.write_text('\n'.join(json.dumps(row) for row in rows))
+            report = analyze_slow_rolls(path)
+        self.assertEqual(report['stationary_frame_steps'], 19)
+        self.assertEqual(report['stationary_step_median_m'], 0)
+        self.assertEqual(report['stationary_step_p95_m'], 0)
+        self.assertEqual(report['terminal_episodes'], [])
+
     def test_impact_transfers_only_closing_normal_velocity(self):
         model = BallModel(.8, .1)
         self.assertEqual(model.impact_velocity((-.4, 0), (0, 0), (1, 0)), (0, 0))

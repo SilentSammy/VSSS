@@ -117,6 +117,17 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(status.packet_count, 7)
         self.assertAlmostEqual(status.angle, 90.)
 
+    def test_full_robot_configuration_round_trips_without_tracing_credentials(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        config = self.client.read_robot_config()
+        self.assertEqual(config['car_id'], 1)
+        config['car_id'] = 7
+        config['motor_pins'] = [[2, 3], [4, 5], [6, 7], [8, 9]]
+        self.assertEqual(self.client.set_robot_config(config)['car_id'], 7)
+        self.assertEqual(self.client.read_robot_config()['motor_pins'][0], [2, 3])
+        self.assertFalse(any('test-password' in str(event) for event in self.events()))
+
     def test_controller_configuration_rejects_invalid_values_before_ble(self):
         self.client.connect()
         self.client.wait_until_connected(4)
@@ -126,6 +137,16 @@ class ProcessTests(unittest.TestCase):
                        {'horizon': float('nan')}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 self.client.set_controller(update)
+
+    def test_full_config_reflects_dedicated_trim_write_even_if_snapshot_is_cached(self):
+        self.client.connect()
+        self.client.wait_until_connected(4)
+        before = self.client.read_robot_config()
+        matrix = ((1., .03, 0.), (0., 1., -.02), (.01, 0., 1.))
+        applied = self.client.set_trim(matrix)
+        current = self.client.read_robot_config()
+        self.assertEqual(current['trim_matrix'], [v for row in applied for v in row])
+        self.assertNotEqual(current['trim_matrix'], before['trim_matrix'])
 
     def test_rejected_configuration_writes_are_reported(self):
         with patch.dict(os.environ, {'BLE_TEST_REJECT_CONFIG': '1'}):
@@ -367,7 +388,7 @@ class MotorCommandTests(unittest.TestCase):
     def test_changing_speeds_fit_four_timers_and_release_all_channels(self):
         class Pin:
             OUT = 1
-            def __init__(self, *args): pass
+            def __init__(self, *args, value=0): pass
             def value(self, value): pass
 
         class PWM:

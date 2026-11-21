@@ -130,6 +130,8 @@ class Provider:
                 if not isinstance(name, str) or not name or len(name) > 128:
                     return
                 self.control(conn, reader, name)
+            elif role == 'simulation':
+                self.simulation_control(conn, reader, hello)
         except (OSError, ValueError, TypeError) as error:
             try:
                 conn.sendall((json.dumps({'provider': 'error', 'error': str(error)}) + '\n').encode())
@@ -186,8 +188,6 @@ class Provider:
                     self.release_source(key, source)
 
     def control(self, conn, reader, name):
-        from ._provider_car import CarSession
-
         def emit(kind, **values):
             if kind == 'ble_event':
                 event = dict(values.pop('event'), car=name, **values)
@@ -198,7 +198,7 @@ class Provider:
         with self.car_lock:
             session = self.controllers.get(name)
             if session is None:
-                session = CarSession(name, emit)
+                session = self.create_car_session(name, emit)
                 self.controllers[name] = session
             session_id, queue = session.attach()
 
@@ -230,6 +230,14 @@ class Provider:
                     session.close()
             queue.put_nowait(None)
             thread.join(timeout=1)
+
+    def create_car_session(self, name, emit):
+        from ._provider_car import CarSession
+        return CarSession(name, emit)
+
+    def simulation_control(self, conn, reader, hello):
+        conn.sendall((json.dumps(dict(ready=False,
+            error='Active provider does not support simulation editing')) + '\n').encode())
 
     def run(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

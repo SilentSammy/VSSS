@@ -117,6 +117,14 @@ class Car:
         """Read the controller parameters currently stored on the robot."""
         return self._client.read_controller()
 
+    def read_robot_config(self):
+        """Read the complete persisted configuration, including Wi-Fi credentials."""
+        return self._client.read_robot_config()
+
+    def set_robot_config(self, configuration):
+        """Replace all robot settings and safely reboot the firmware."""
+        return self._client.set_robot_config(configuration)
+
     @property
     def controller_config(self):
         return self._client.controller_config

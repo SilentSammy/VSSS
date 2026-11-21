@@ -2,21 +2,37 @@
 from machine import Pin, PWM
 import time
 
-# Motor pin assignments (PWM control)
-MOTOR_PINS = [
-    (3, 2),
+# Motor pin assignments (PWM control).
+# Avoid GPIO6's reset pull-up and UART0 TX (GPIO21).
+# GPIO8 was tested on this robot; it also drives the built-in LED and is a
+# strapping pin, so verify boot/download operation with the driver connected.
+DEFAULT_MOTOR_PINS = (
+    (3, 4),
     (1, 0),
-    (20, 21),
-    (9, 10),
-]
+    (7, 5),
+    (8, 9),
+)
+# Kept as an alias for scripts that imported the original module constant.
+MOTOR_PINS = DEFAULT_MOTOR_PINS
+
+# Legacy mapping retained for older robots. Do not use with the new wiring:
+# LEGACY_MOTOR_PINS = [
+#     (3, 2),
+#     (1, 0),
+#     (20, 21),
+#     (9, 10),
+# ]
 
 class Motor:
     def __init__(self, pin1, pin2, min_freq=10, max_freq=100):
         """Initialize motor with two pins for H-bridge control."""
         self.pin1_num = pin1
         self.pin2_num = pin2
-        self.pin1 = Pin(pin1, Pin.OUT)
-        self.pin2 = Pin(pin2, Pin.OUT)
+        # Drive both inputs LOW as soon as MicroPython starts. This cannot
+        # affect the earlier ROM boot interval, so the driver should also have
+        # its EN/STBY held disabled in hardware during reset.
+        self.pin1 = Pin(pin1, Pin.OUT, value=0)
+        self.pin2 = Pin(pin2, Pin.OUT, value=0)
         self.pwm1 = None
         self.pwm2 = None
         self.min_freq = min_freq
@@ -28,7 +44,7 @@ class Motor:
         # Clamp power to valid range
         power = max(-1.0, min(1.0, power))
         
-        # Calculate frequency based on power (higher power = higher frequency)
+        # Preserve low-speed starting torque with the original variable carrier.
         speed = abs(power)
         freq = max(self.min_freq, int(self.max_freq * speed)) if speed > 0 else self.min_freq
         
@@ -88,12 +104,20 @@ class Motor:
         self.pin2.value(0)
 
 class MecanumCar:
-    def __init__(self, motor_fl=None, motor_fr=None, motor_bl=None, motor_br=None):
+    def __init__(self, motor_fl=None, motor_fr=None, motor_bl=None, motor_br=None,
+                 motor_pins=None, wheel_gains=None):
         """Initialize mecanum car with 4 motors (front-left, front-right, back-left, back-right)."""
-        self.motor_fl = motor_fl if motor_fl else Motor(*MOTOR_PINS[0])
-        self.motor_fr = motor_fr if motor_fr else Motor(*MOTOR_PINS[1])
-        self.motor_bl = motor_bl if motor_bl else Motor(*MOTOR_PINS[2])
-        self.motor_br = motor_br if motor_br else Motor(*MOTOR_PINS[3])
+        pins = DEFAULT_MOTOR_PINS if motor_pins is None else tuple(tuple(pair) for pair in motor_pins)
+        if len(pins) != 4 or any(len(pair) != 2 for pair in pins):
+            raise ValueError("motor_pins must contain four pin pairs")
+        self.motor_fl = motor_fl if motor_fl else Motor(*pins[0])
+        self.motor_fr = motor_fr if motor_fr else Motor(*pins[1])
+        self.motor_bl = motor_bl if motor_bl else Motor(*pins[2])
+        self.motor_br = motor_br if motor_br else Motor(*pins[3])
+        self.wheel_gains = tuple(wheel_gains or (1., 1., 1., 1.))
+        self.wheel_reverse_gains = (1., 1., 1., 1.)
+        if len(self.wheel_gains) != 4:
+            raise ValueError("wheel_gains must contain four values")
         self._x = 0.0
         self._y = 0.0
         self._w = 0.0
@@ -145,6 +169,10 @@ class MecanumCar:
         fr = self._x + self._y + self._w
         bl = self._x + self._y - self._w
         br = self._x - self._y + self._w
+        fl, fr, bl, br = (value * (gain if value >= 0 else reverse_gain)
+                          for value, gain, reverse_gain in
+                          zip((fl, fr, bl, br), self.wheel_gains,
+                              self.wheel_reverse_gains))
         
         # Normalize if any value exceeds ±1
         max_val = max(abs(fl), abs(fr), abs(bl), abs(br))

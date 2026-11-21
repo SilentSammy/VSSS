@@ -39,6 +39,17 @@ class BleakClient:
                                       2000., 30000.)
         self.status = struct.pack('<BBBBfffI', 0, 3, 0, 0, .1, .2, 90., 7)
         self.control = bytes(2)
+        self.config = dict(version=1, car_id=1, wifi_ssid='embedded', wifi_password='test-password',
+                           telemetry_host='192.168.12.1', telemetry_port=5000,
+                           motor_pins=[[3, 4], [1, 0], [7, 5], [8, 9]],
+                           trim_matrix=[1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                           controller=dict(zip((
+                               'kp_dist', 'kp_heading', 'max_speed', 'max_w', 'horizon',
+                               'velocity_alpha', 'min_speed', 'min_w', 'position_tolerance',
+                               'heading_tolerance_deg', 'hold_ms', 'position_hysteresis',
+                               'heading_hysteresis', 'telemetry_recovery_ms', 'waypoint_timeout_ms'),
+                               struct.unpack('<15f', self.controller))))
+        self.config_chunks = bytearray()
 
     async def connect(self):
         self.is_connected = True  # Physical connection can precede GATT readiness.
@@ -68,6 +79,17 @@ class BleakClient:
             if data == bytes((3,)) and not os.environ.get('BLE_TEST_OLD_CONTROL'):
                 asyncio.get_running_loop().call_later(.15, self._lose_connection)
             return
+        if uuid.endswith('defa'):
+            if bytes(data[:1]) != b'\x01' or len(data) < 5:
+                raise ValueError('expected configuration chunk')
+            offset, total = struct.unpack('<HH', bytes(data[1:5]))
+            if offset == 0:
+                self.config_chunks = bytearray(total)
+            self.config_chunks[offset:offset + len(data[5:])] = data[5:]
+            if offset + len(data[5:]) == total:
+                self.config = json.loads(bytes(self.config_chunks).decode())
+            record('robot_config', length=len(data))
+            return
         record('write', data=list(data))
         if any(data) and os.environ.get('BLE_TEST_DROP_ON_MOVE') and drop_once:
             drop_once = False
@@ -87,6 +109,8 @@ class BleakClient:
             return self.status
         if uuid.endswith('def7'):
             return self.control
+        if uuid.endswith('defa'):
+            return json.dumps(self.config, separators=(',', ':')).encode()
         raise LookupError('Characteristic not found')
 
     def _lose_connection(self):

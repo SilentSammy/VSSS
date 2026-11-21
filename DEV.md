@@ -42,12 +42,368 @@ overflow rather than silently losing data or blocking control.
 | `vsss/_provider_vision.py` | Shared UDP subscriptions, packet validation and periodic HTTP status polling/cache. |
 | `vsss/_bag.py` | Streaming JSONL reader and replay timing. |
 | `vsss/_bag_provider.py` | Replay source served through the provider protocol, including end-of-stream and loop handling. |
+| `vsss/_sim.py` | Deterministic planar world, convex body contacts, ball model, and firmware waypoint control. |
+| `vsss/_sim_provider.py` | Simulation telemetry and car sessions implementing the normal provider protocol. |
+| `vsss/sim.py` | External `SimClient` for simulator state, repositioning, grabs and releases. |
 | `vsss/_runtime.py` | Implementation of the public `@run` cleanup decorator. |
 
 `vsss/provider.py` is the common observation/discovery client.
 Live and bag modes share its wire protocol. Bag mode never opens physical BLE
-or UDP connections and rejects car commands. Simulation can implement the same
-protocol later.
+or UDP connections and rejects car commands. Simulation implements the same
+protocol with controllable virtual cars and a shared generated field feed.
+
+## Simulation model
+
+`tools/vsss_sim.py` starts an explicit provider that stays selected until Ctrl+C.
+It uses the normal endpoint/token and therefore refuses to replace an active
+provider. No physical BLE worker, scanner, UDP receiver, or metadata poller is
+started. Observer `udp`/`ble` records retain their normal layouts and carry
+`simulated: true`; control records describe emulated operations, not real GATT.
+Snapshots include portable field metadata and the initial simulation settings.
+Consequently simulator bags can be plotted and replayed without this machine's
+ignored run files. Lease events are emulated while a car session is connected.
+
+The world advances at fixed steps (default 200 Hz), with separate control and
+telemetry sampling (30 Hz). Monotonic wall time paces steps; catch-up is capped
+after suspension, rather than making one large physical jump. Direct `SimWorld`
+tests advance without wall time and are repeatable for the same seed and time
+steps. Contacts use adaptive
+substeps, convex polygon/circle geometry, positional separation, and closing
+normal velocity. Rotating bumpers include their contact-point velocity. Field
+walls and ball-to-ball bounce use configurable restitution. Cars are driven
+kinematic bodies with symmetric car/car separation; masses, inertia, wheel slip,
+and tangential contact friction have not been identified. Dense stacks are only
+approximately resolved. Body geometry is independent of the motion and ball
+models; the initial polygon is a 14 cm square centered on the reported pose.
+
+Manual normalized commands undergo trim, mecanum wheel saturation, body-to-field
+rotation, and a first-order motion response. Defaults are 0.6 m/s, 180 deg/s,
+and a 0.12 s response time. These are tunable approximations, not a fitted motor
+model. Waypoints run the actual `mp.onboard_controller.OnboardController` at the
+telemetry cadence, with its normal arrival/hold and timeout behavior. Firmware
+sources are included as the `mp` Python package so this works in installed
+distributions too. No hardware-facing firmware module is imported by simulation.
+Position measurements are exact but delayed: camera noise, occlusion, packet
+loss, radio faults, and reboot downtime are not modeled. Restart/reconnect
+commands stop motion; configuration persists in memory until provider exit.
+
+Bundled ball parameters reproduce `20261114T_ball_dynamics_model.json`, fitted
+from `tools/runs/20261114T_live_observation_02.jsonl`: 1,371 correlated samples,
+eight free-roll episodes, seven ending at rest. Impact gain is 0.88037, rolling
+deceleration 0.07490 m/s², drift acceleration (+0.02146, -0.00381) m/s², and the
+rest threshold 0.05 m/s. Leave-one-out endpoint MAE is 0.181 m with observed
+launch velocity and 0.401 m including predicted impact; launch-speed MAE is
+0.115 m/s. Drift is a field-specific fit and can be disabled in configuration.
+The fitter's historical 0.18/0.21 m contact/release thresholds are detection
+heuristics, not collision geometry. Pushes, dribbling, angular impacts, and wall
+restitution were not validated by that fit. The fitter and simulator share
+`BallModel`; historical endpoint analysis remains reproducible.
+
+Terminal-motion inspection (`python -m tools.ball_dynamics BAG --slow-rolls`)
+extends the seven completed episodes in the second observation bag by up to
+1.5 seconds after the old fitter's stop criterion. Net displacements are
+1.46-4.96 cm, often with a curved or changing direction. Quiet, uncontacted
+observations have a 1.41 mm median and 3.61 mm p95 frame-to-frame displacement
+(182 pairs). Uncontacted smoothed tracks show median absolute lateral
+acceleration residuals around 0.05-0.06 m/s^2 after removing the fitted field
+bias. The first observation bag has no clean complete free-roll episodes.
+These roughly 10 Hz data include detector noise; they do not uniquely identify
+a physical roughness process. The settings below are a conservative heuristic,
+not a newly validated dynamics fit. The original fitted parameters and endpoint
+analysis are unchanged.
+
+`BallWobble` adds per-ball bounded Ornstein-Uhlenbeck lateral and braking
+variation below 0.14 m/s. The 0.25 s correlation time avoids white position
+jitter; lateral acceleration strength is 0.06 m/s^2. Its contribution grows as
+speed falls and fades to zero at rest. Heading is perturbed by rotating the
+free-roll velocity, while braking varies by up to 35 percent and gradually
+softens to 40 percent of the original net deceleration at very low speed.
+The terminal rest threshold is 0.01 m/s, extending the short final roll beyond
+the original 0.05 m/s cutoff. Roughness cannot add translational speed. Static
+and held balls do not consume random draws, and grabs/repositioning clear the
+roughness state. There is no kick on release or artificial camera jitter.
+Disabling `ball_wobble.enabled` restores the historical smooth integration and
+stop threshold exactly. Configuration mappings for `ball_wobble` merge by key.
+
+`random_seed: null` chooses a fresh seed; `--seed N` overrides it. The resolved
+seed is printed and saved in the portable simulation config, so recordings can
+restore it. Each ball has an independent random stream. Repeatability requires
+the same seed, initial state, command timing and physics steps; seeding from a
+bag still starts objects at rest rather than restoring a mid-roll RNG state.
+
+The `latency` mapping sets fixed UDP and BLE delays (defaults 100 and 40 ms).
+UDP snapshots queue until their delivery time, retaining the capture timestamp;
+`frame_age_ms` reports their age at delivery, while observer event timestamps
+report receipt. The world maintains a delayed pose history for onboard control
+and status readback too. BLE requests serialize under each car session lock,
+queue until their configured delivery time, then apply and acknowledge. This is
+one lumped
+request/acknowledgement delay, not a model of radio packet timing or bandwidth.
+Connection readers keep draining while requests are in transit. Disconnects
+discard that client's queued requests; repositioning discards pending motion.
+Delayed requests do not hold the world lock or stop physics/telemetry; heartbeats
+skip busy session locks. Motion-owner departure stops and simulator edits remain
+immediate. Supported UDP delay is 0-400 ms, within the normal freshness budget;
+BLE delay is 0-1000 ms. Zero disables the corresponding delay. Settings merge
+by key and are saved with the simulator config. These are illustrative defaults,
+not newly calibrated measurements of the lab's transport.
+
+`ball_to_zone.py` is a separate student-level example. It uses only the public
+`Car`, `gps`, and `run` API, with no simulator client, private modules, physics
+coefficients or configuration changes. Geometry puts the car behind the ball;
+short arc waypoints avoid crossing it on the initial approach. During the push,
+a feed-forward push supplies a normalized cruise command of 0.40, tapering to
+0.30 near the goal. Capture is capped at 0.30. Bounded lateral corrections
+(up to 0.10) maintain contact; yaw is limited to 0.05 before contact, with
+gain 0.2 rather than 0.6. Once the observed center gap is below 18 cm, rotation
+is locked to zero until a fresh waypoint approach, even if the gap opens again.
+This conservative contact band allows for delayed observations and the 14 cm
+square body. Misalignment above 30 degrees, goal-relative lateral error above
+9 cm, or a forward gap below 13 cm with body-side offset above 6 cm requires a
+fresh approach. Forward speed no longer collapses when a
+position-only controller reaches the bumper/ball gap. It releases within 95
+percent of the goal radius to allow for the faster final coast, then requires
+1.2 seconds of low observed displacement within the zone. A loose ball must
+settle for 0.6 seconds before another approach is planned. This is a
+clear-field demonstration, not obstacle avoidance or precision shot planning.
+It defaults to the live bags' usable 1.5 by 2.9 metre field, checks observed
+positions, and refuses outward pushes near an edge. Stopping cannot brake a
+loose ball. It refuses approaches outside the configured field and stops on missing/multiple
+balls, feedback loss, onboard faults, or timeout. Only simulation trials have
+been executed; real-world success has not been validated.
+
+The initial gentle-controller validation covered ten trials (five starting layouts, two wobble
+seeds each): straight, car initially in front of the ball, diagonal, leftward,
+and a nearby goal. Nine used 100/40 ms UDP/BLE delays and one used 200/80 ms.
+All ten balls stopped inside an 18 cm goal radius, with 2.2-10.7 cm final errors
+in 9-37 seconds. These are a small deterministic-seed simulation sample, not a
+general success-rate estimate. The process regression also exercises the
+student script against a separate simulator with latency and wobble enabled.
+
+The subsequent real-bag review used `.bags/live_ball_to_zone4`, `5`, `6`, and
+`live_ball_to_zone_manual`. For nearby forward-moving samples (gap <0.18 m,
+ball speed >0.03 m/s), ball-speed medians were 0.176, 0.139, 0.149 and 0.273 m/s,
+respectively. Median forward commands were 0.297, 0.25, 0.25 and 0.5. The three
+automatic bags contained 21, 26 and 27 samples with rotation-only commands
+while the ball was still moving; the manual bag had none. Bag 4 also had 101
+of 315 valid UDP frames without a ball detection. Speed changes cannot replace
+visibility checks. These are descriptive subsets from different trajectories,
+not a controlled experiment or proof of physical contact.
+
+Median camera ages were 112-115 ms, and matched velocity/waypoint GATT write
+durations were 109-140 ms. Completion duration is not one-way motor latency.
+Controller comparisons therefore also use a conservative 120 ms UDP / 125 ms
+BLE configuration, without changing the simulator's physics or defaults to
+force agreement. The manual full-power burst also veered substantially, so
+the earlier manual-tuned revision followed its sustained 0.5 pace and retained
+terminal braking. The comparison below describes that revision.
+
+Matched simulator comparisons used each bag's first field frame, seed 123,
+the same unchanged physics, and 120/125 ms UDP/BLE delay. The manual bag is
+used only for its initial state in this benchmark; its recorded control is
+not replayed. Results for previous/revised controllers were:
+
+| Starting bag | Time, previous/revised | Re-approaches, previous/revised | Revised final goal error |
+| --- | --- | --- | --- |
+| `live_ball_to_zone4` | 31.5 / 24.2 s | 2 / 1 | 6.7 cm |
+| `live_ball_to_zone5` | 29.9 / 28.0 s | 2 / 1 | 2.6 cm |
+| `live_ball_to_zone6` | 30.2 / 25.0 s | 2 / 1 | 5.6 cm |
+| `live_ball_to_zone_manual` | 29.6 / 25.3 s | 1 / 1 | 1.7 cm |
+
+All eight completed within the 18 cm zone. Revised mean time was 25.6 s versus
+30.3 s, with four re-approaches versus seven. A complete revised back-and-forth
+demo also completed at the default simulator latency, with 4.9 and 7.3 cm final
+goal errors. These are small simulator comparisons with exact measurements;
+they do not establish a hardware success rate or isolate speed as the sole cause.
+
+Reproduce the recording diagnostics with:
+
+```sh
+python -m tools.ball_control_analysis .bags/live_ball_to_zone4 .bags/live_ball_to_zone5 .bags/live_ball_to_zone6 .bags/live_ball_to_zone_manual
+```
+
+The next review used `live_ball_to_zone7` and `8`, both recorded **after
+sanding the ball**. Nearby ball-speed medians were 0.303 and 0.309 m/s with
+median forward command 0.5. In bag 8 the first push began with about 3.4 cm
+of body-relative lateral offset. The car stopped around 26.39 seconds, but
+the loose ball coasted across x=-0.75 around 29.86 seconds; 74 UDP frames had
+no ball. Bag 7 recovered and finished near (0, 1.06); its two isolated outside
+detections jump back immediately and should not be interpreted as travel.
+
+The intermediate revision used 0.35 cruise, slower centered capture,
+earlier glancing-contact rejection, and field checks described above. On the
+recorded first push pose from bag 8 it commands lateral centering with zero
+forward motion. Its alignment guard rejects the later recorded slip around
+25.66 seconds, about 0.73 seconds before the recorded stop. These are command
+checks on recorded poses, not a counterfactual physical trajectory.
+
+Using first-frame layouts from bags 7 and 8, seed 123 and 120/125 ms UDP/BLE
+delays, that intermediate controller finished in 37.5/37.5 seconds with 7.1/6.7 cm
+final errors. The 0.5 revision also succeeded (35.2/34.7 seconds, 4.3/5.2 cm).
+The simulator does not reproduce the physical escape, so this comparison
+checks operation and the speed tradeoff rather than proving a hardware fix.
+An intermediate default-latency round trip also settled within both 18 cm zones
+(15.9 and 12.7 cm errors). Ball roughness defaults remain unchanged: these
+bags include sanding but do not isolate its effect. A fresh physical run is
+needed to validate each revised controller.
+
+Bag 12 contains six motion attempts, targeting y=0, 1, 0, 1, 1, 0, plus a
+connection attempt that never found the robot. The pasted terminal log reports
+three successful arrivals, two feedback aborts and a final approach timeout.
+The recording has no missing-ball frames or outside detections, but a maximum
+UDP receive gap of 529 ms. A status response around 146.69 s has flags=1
+(Wi-Fi connected, onboard pose not fresh), fault=0. The example now reports
+this as stale onboard pose instead of the misleading "fault: none".
+
+Nearby forward ball speed in bag 12 had median 0.174 m/s and forward command
+0.25, substantially below bags 7/8's approximately 0.30 m/s. These are different
+trajectories, not controlled speed trials. The intermediate controller issued
+85 nonzero writes with zero forward motion across the six attempts. Repeated
+centering threshold crossings interrupted approach and pursuit; its minimum
+yaw steps also drove rapid reversals. For example, attempt 6 oscillated between
+centering and forward feed around 307.65-309.97 s. The API's 0.05 command
+resolution magnifies small-controller threshold changes. The user's report of
+extra kicks during rotation is consistent with a square bumper's moving contact
+surface; the bag does not isolate the cause of each ball acceleration.
+
+The current revision removes the discontinuous centering mode, raises the
+short-push floor to 0.30 and cruise to 0.40, reduces pre-contact yaw, and locks
+yaw after contact as described above. Boundary and feedback checks remain.
+Regression cases use the recorded bag-8 capture and bag-12 centering-crossing
+poses, plus rotation locking across a reopening gap. These checks establish
+the intended commands on those poses, not the resulting physical trajectory.
+With bag 12's first layout, seed 123 and 120/125 ms UDP/BLE delays, a current
+public-API sequence targeting y=0, then 1, then 0 settled inside all three
+18 cm zones (8.2, 10.7 and 8.9 cm final errors; 41.6, 31.8 and 31.9 seconds).
+The trial also asserted zero requested yaw after contact was latched. This is
+an operation check in the existing simulator, which does not reproduce all
+hardware contact effects; it does not establish improved real-world success.
+
+```sh
+python -m tools.ball_control_analysis .bags/live_ball_to_zone7 .bags/live_ball_to_zone8 .bags/live_ball_to_zone12
+```
+
+The tool handles decoded velocity values and raw velocity payloads, aligns
+motion samples with recorded commands, and reports missing ball detections
+and matched write durations. Header geometry also supplies a raw count of
+outside-ball detections, which may include outliers. It never connects to a
+provider or moves a car.
+
+`kick_ball.py` and `kick_ball_simple.py` are separate one-shot student examples.
+They reuse the public-API observation/waypoint helpers from `ball_to_zone.py`,
+but never invoke its push/settling controller. Aim is a unit vector from the
+initial ball position toward a point. The happy path goes 30 cm behind it;
+the general path checks segment/disk clearance and, if blocked, uses three
+rectangular legs on the car's existing side of the shot line. This is a
+clear-field route, not obstacle avoidance or a field-edge route search.
+
+The run-through uses full forward command, no lateral/yaw command, and ends
+when observed car position projects 2 cm beyond the original ball position.
+It has a 1.5 s limit and stops on feedback loss or field bounds. It does not
+require continued ball detection during the kick or wait for ball arrival.
+The approach rejects a ball that moved more than 2.5 cm and final heading error
+above 8 degrees. Whole-route and follow-through geometry checks reject layouts
+without space. The aim point need not be an in-field stopping location.
+
+Seven focused tests cover detour clearance, the happy-path sequence, full
+forward/zero rotation, feedback loss/timeout cleanup, field space and moved-ball
+rejection. Isolated subprocess trials with seed 123 and 120/125 ms UDP/BLE delays
+exercised both CLIs: the happy path from behind, and the rectangular detour from
+in front. Both launched in the requested +y direction; ball speed at script
+completion was about 0.58 m/s. These simulator checks do not establish physical
+shot accuracy or a hardware speed limit.
+
+`--config` merges top-level overrides into `vsss/sim_defaults.json`; `motion`,
+`ball_model`, `ball_wobble` and `latency` mappings merge by key, while car/ball/body lists
+replace defaults.
+Car IDs must be unique, initial bodies must fit without overlap, body polygons
+must be strictly convex and CCW around the origin, and rates/physics parameters
+must be finite and within the supported ranges. `--cars` replaces initial cars;
+`--ball-model` replaces the ball model after config loading. Settings modified
+through car APIs remain per-car and affect the shared world immediately.
+
+`vsss-sim [BAG]` streams only through the first valid UDP frame with a detected
+board, accepting schema-3 headers and legacy provider snapshots. It does not
+require a clean tail, playback timestamps, or later bag events. Header setup
+metadata preserves the portable board drawing, marker styling and ball radius;
+simulator recordings additionally restore their recorded physical configuration.
+The first frame replaces recorded initial car/ball lists, with zero velocities.
+Frames without a detected board are skipped; a usable frame without cars is an
+error. Bags without field metadata retain bundled defaults. Explicit JSON config
+overrides the seed, then model/fleet CLI overrides apply. Initial overlap and
+field validation still apply. Saved setup metadata is stripped of embedded
+simulation snapshots before reusing it, to avoid nesting configuration histories.
+
+`vsss/_sim_scenarios.py` adds schema-1 JSONL scenarios: one `sim_scenario` header
+with optional config overrides, followed by two frames containing `time`,
+`cars` and `balls`. Start pose is frame one; finite, increasing timestamps
+derive translational velocity in m/s and shortest-wrapped car angular velocity
+in degrees/s. Cars match by ID, balls by stable list index. Both frames must
+have the same identities/counts. Initial car velocities are residual physical
+motion, damped toward the subsequent command; they are not latched commands.
+Normal initial geometry and speed bounds still validate the resulting world.
+Only the first two frames are consumed. The same opt-in `--scenario BAG`
+uses bag capture timestamps (receipt wall time if absent), header metadata,
+and the first two valid board-detected frames. Ordinary bag seeding is unchanged.
+
+`--scenario goalie` generates a seeded shot at 0.8 m/s from x in [-0.55, 0.55],
+y in [-1, 0], toward x in [-0.55, 0.55] on the y=1.45 edge. The goalie starts
+at (0, 1.20), angle 0. Generated position frames are 0.1 s apart. `--seed`
+controls generation and physical wobble; `--save-scenario` serializes the
+resolved config and two position frames with exclusive-create semantics.
+
+The `wait_for_control` config flag defaults false. In waiting mode, world
+time, onboard feedback queues and observer frames progress while bodies keep
+their initial poses and velocities. The first valid explicit velocity command
+(including zero) or waypoint releases physics. Readback, observation, connection
+and heartbeat do not release it. This keeps scenario timing independent of how
+long the user takes to open plot/controller terminals. It is a one-time gate,
+not a general pause/resume mechanism; restart the provider to reset a scenario.
+
+`goalie.py` is a public student-API-only example. It estimates a straight
+crossing from observations at least 80 ms apart, uses X-only proportional
+velocity (gain 5, command limited to +/-1), and ignores receding/passed shots.
+It assumes heading zero, captures the initial Y as its fixed lane, and aborts
+on feedback loss or lane/heading departure. It does not plan around obstacles,
+predict wall bounces or change car calibration. Tests cover two-frame loading,
+angle wrap, invalid pairs, saved-file round trips, 100 seeded shot directions,
+the initial wait gate, real CLI startup/export/control release, and X-only
+goalie commands. Five isolated public-API subprocess trials (seeds 1, 2, 3,
+42, 123; default UDP/BLE delays and wobble) blocked the first shot: maximum
+ball Y was 1.110-1.116, below the goalie center line, with zero car Y/heading
+change. This is a small happy-path simulator sample, not hardware validation.
+
+Simulation editing is an additional `simulation` role on the existing loopback
+provider server, authenticated by the same temporary token. No second port or
+server process is required. `SimClient` disables auto-start and can bind to a
+specific feed `source_id`. The simulator advertises its live editing capability
+in `vision.simulation_control`; plotter editing is disabled on replay sources,
+and live/bag providers reject the editing role. An old plot cannot edit a new
+provider instance through a stale connection or source ID.
+
+Editing uses synchronous newline-JSON requests and replies. The handshake sends
+`ready` and `source_id`; requests use `operation: state`, or
+`operation: move|grab|release`, `kind: car|ball`, and `id`. Move requests add `x`,
+`y`, and optional car `angle`. Replies contain `ok` plus `state` or `error`.
+Requests are bounded at 64 KiB and malformed/invalid edits leave the world intact.
+Ball indices remain stable within a simulator process. Each connection owns its
+grabs exclusively; EOF releases all its objects. Edits are atomic under the
+world lock and use the same session/world lock ordering as control requests.
+Car edits stop motion, cancel navigation and clear motion ownership; invalid
+edits do not steal ownership. All poses are clamped so the body stays inside the
+field. Grabs anchor the body against physics and incoming motion commands until
+release; they do not pause other objects. Placing objects in contact or overlap
+is allowed, with normal constraint resolution against held bodies. No release
+velocity is inferred from mouse motion. Mutations and disconnect releases appear
+as `simulation_edit` events in observers subscribed to control (`ble`) topics.
+
+`tools/_plot_sim.py` maps image pixels through the current renderer's origin,
+scale and inverted Y axis. Center hits translate with the original click offset;
+outer-body hits rotate about the original center by the pointer's angular delta.
+A background editor connection serializes gestures and coalesces intermediate
+move requests, keeping IPC out of the GUI callback. Release ordering is retained,
+and closing/changing feeds closes the editor and releases grabs. OpenCV's mouse
+callback supplies image-relative coordinates, including for resized windows.
 
 ## Tools and recordings
 

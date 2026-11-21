@@ -6,6 +6,7 @@ import unittest
 from mp.robot_config import RobotConfig, validate
 from mp.onboard_controller import CONTROLLER_KEYS as FIRMWARE_CONTROLLER_KEYS
 from vsss._ble_protocol import CONTROLLER_KEYS as HOST_CONTROLLER_KEYS
+from vsss._ble_protocol import normalize_robot_config
 
 
 class RobotConfigTests(unittest.TestCase):
@@ -43,7 +44,7 @@ class RobotConfigTests(unittest.TestCase):
                                                'telemetry_recovery_ms', 'waypoint_timeout_ms')}
         migrated = validate(legacy)
         self.assertEqual(migrated['controller']['position_hysteresis'], 1.5)
-        self.assertEqual(migrated['controller']['telemetry_recovery_ms'], 2000)
+        self.assertEqual(migrated['controller']['telemetry_recovery_ms'], 3000)
 
     def test_rejects_unsafe_limits(self):
         candidate = json.loads(json.dumps(validate({})))
@@ -57,6 +58,21 @@ class RobotConfigTests(unittest.TestCase):
             candidate['controller'][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate(candidate)
+
+    def test_motor_pins_are_persisted_and_must_be_unique_esp32c3_gpio(self):
+        candidate = validate({})
+        candidate['motor_pins'] = [[2, 3], [4, 5], [6, 7], [8, 9]]
+        self.assertEqual(validate(candidate)['motor_pins'][0], [2, 3])
+        candidate['motor_pins'][3][1] = 2
+        with self.assertRaises(ValueError):
+            validate(candidate)
+
+    def test_host_rejects_incomplete_or_invalid_remote_configuration(self):
+        candidate = validate({})
+        self.assertEqual(normalize_robot_config(candidate)['motor_pins'][3], [8, 9])
+        del candidate['motor_pins']
+        with self.assertRaises(ValueError):
+            normalize_robot_config(candidate)
 
 
 if __name__ == '__main__':

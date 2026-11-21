@@ -1,6 +1,6 @@
 """Fit and validate a simple planar ball model from a VSSS observer bag.
 
-The model deliberately has two stages that are useful in a future simulator:
+The fitted model has two stages shared with the simulator:
 
 * impact: the car transfers closing velocity along the car-to-ball normal;
 * roll: the released ball decelerates at a constant magnitude until it stops.
@@ -17,6 +17,8 @@ import json
 import math
 from pathlib import Path
 from statistics import median
+
+from vsss._sim import BallModel, load_config
 
 
 @dataclass(frozen=True)
@@ -48,42 +50,6 @@ class Roll:
     observed_end_x: float
     observed_end_y: float
     termination: str
-
-
-@dataclass(frozen=True)
-class BallModel:
-    impact_gain: float
-    rolling_deceleration: float
-    drift_acceleration_x: float = 0.0
-    drift_acceleration_y: float = 0.0
-    stop_speed: float = 0.05
-
-    def impact_velocity(self, car_velocity, ball_velocity, normal):
-        relative = ((car_velocity[0] - ball_velocity[0]) * normal[0] +
-                    (car_velocity[1] - ball_velocity[1]) * normal[1])
-        impulse = self.impact_gain * max(0.0, relative)
-        return (ball_velocity[0] + impulse * normal[0],
-                ball_velocity[1] + impulse * normal[1])
-
-    def stopping_point(self, position, velocity):
-        x, y = map(float, position)
-        vx, vy = map(float, velocity)
-        dt = .01
-        for _ in range(1500):
-            speed = math.hypot(vx, vy)
-            if speed <= self.stop_speed:
-                break
-            ax = -self.rolling_deceleration * vx / speed + self.drift_acceleration_x
-            ay = -self.rolling_deceleration * vy / speed + self.drift_acceleration_y
-            next_vx, next_vy = vx + ax * dt, vy + ay * dt
-            # Static friction holds the ball once the integration step would
-            # reverse it instead of letting a small field bias move it forever.
-            if vx * next_vx + vy * next_vy <= 0:
-                break
-            x += (vx + next_vx) * .5 * dt
-            y += (vy + next_vy) * .5 * dt
-            vx, vy = next_vx, next_vy
-        return x, y
 
 
 def _distance(a, b):
@@ -353,14 +319,75 @@ def analyze(path, car_id=1):
                                      if speed_errors else None)}
 
 
+def analyze_slow_rolls(path, car_id=1):
+    """Describe terminal motion separately from stationary detector jitter.
+
+    This is a diagnostic, not a new noise-free fit: camera sampling and local
+    derivative smoothing cannot uniquely identify ball roughness.
+    """
+    samples = load_samples(path, car_id)
+    rolls = detect_rolls(samples)
+    quiet_steps = []
+    bias = load_config()['ball_model']
+    lateral = dict(fast=[], slow=[], near_stop=[])
+    for a, b in zip(samples, samples[1:]):
+        dt = b.time - a.time
+        if not .05 < dt < .2 or min(math.hypot(p.car_x - p.ball_x, p.car_y - p.ball_y)
+                                    for p in (a, b)) < .25:
+            continue
+        speed = math.hypot(a.ball_vx, a.ball_vy)
+        if max(speed, math.hypot(b.ball_vx, b.ball_vy)) < .015:
+            quiet_steps.append(math.hypot(b.ball_x - a.ball_x, b.ball_y - a.ball_y))
+        if speed > .015:
+            # Remove the previously fitted field-fixed bias; rolling resistance
+            # is parallel to velocity, so does not enter this projection.
+            ax = (b.ball_vx - a.ball_vx) / dt - bias['drift_acceleration_x']
+            ay = (b.ball_vy - a.ball_vy) / dt - bias['drift_acceleration_y']
+            label = 'fast' if speed >= .2 else 'slow' if speed >= .05 else 'near_stop'
+            lateral[label].append(abs((-a.ball_vy * ax + a.ball_vx * ay) / speed))
+    tails = []
+    for index, roll in enumerate(rolls, 1):
+        if roll.termination != 'stopped':
+            continue
+        first = samples[roll.end]
+        tail = []
+        previous = first
+        for point in samples[roll.end:]:
+            if (point.time - first.time > 1.5 or point.time - previous.time > .35 or
+                    math.hypot(point.car_x - point.ball_x, point.car_y - point.ball_y) < .22):
+                break
+            tail.append(point)
+            previous = point
+        if len(tail) < 2:
+            continue
+        last = tail[-1]
+        tails.append(dict(episode=index, duration_s=last.time - first.time,
+                          initial_speed_mps=math.hypot(first.ball_vx, first.ball_vy),
+                          net_displacement_m=math.hypot(last.ball_x - first.ball_x, last.ball_y - first.ball_y),
+                          path_length_m=sum(math.hypot(b.ball_x - a.ball_x, b.ball_y - a.ball_y)
+                                            for a, b in zip(tail, tail[1:])),
+                          points=[dict(t=p.time - first.time, x=p.ball_x, y=p.ball_y) for p in tail]))
+    quiet_steps.sort()
+    return dict(source=str(path), samples=len(samples), free_roll_episodes=len(rolls),
+                stationary_frame_steps=len(quiet_steps),
+                stationary_step_median_m=median(quiet_steps) if quiet_steps else None,
+                stationary_step_p95_m=quiet_steps[min(len(quiet_steps) - 1, int(.95 * len(quiet_steps)))] if quiet_steps else None,
+                removed_field_drift_mps2=[bias['drift_acceleration_x'], bias['drift_acceleration_y']],
+                median_absolute_lateral_acceleration_mps2={key: median(value) if value else None
+                                                         for key, value in lateral.items()},
+                terminal_episodes=tails,
+                interpretation='Terminal motion includes physical motion and camera noise; roughness settings remain heuristic.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('bag', type=Path)
     parser.add_argument('--car', type=int, default=1)
+    parser.add_argument('--slow-rolls', action='store_true', help='inspect terminal motion and stationary detector jitter')
     parser.add_argument('--output', type=Path,
                         help='write the fitted model and diagnostics as new JSON')
     args = parser.parse_args()
-    result = analyze(args.bag, args.car)
+    result = analyze_slow_rolls(args.bag, args.car) if args.slow_rolls else analyze(args.bag, args.car)
     text = json.dumps(result, indent=2)
     print(text)
     if args.output:

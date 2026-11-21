@@ -165,6 +165,19 @@ class Monitor:
             raise RuntimeError('pulse rotation exceeded the 70-degree guard')
         return pose
 
+    def wait_rotation(self, seconds, deadline, starting_heading, target_degrees=25.):
+        """Stop sampling once useful yaw is observed, or at the time limit."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            pose = self.check(deadline)
+            rotation = abs(angle_delta(pose.angle, starting_heading))
+            if rotation > MAX_PULSE_ROTATION_DEG:
+                raise RuntimeError('pulse rotation exceeded the 70-degree guard')
+            if rotation >= target_degrees:
+                return pose
+            time.sleep(.04)
+        return self.check(deadline)
+
     def wait_stopped(self, seconds, deadline, starting_heading=None):
         """Wait for continuous fresh feedback while already stopped.
 
@@ -198,33 +211,77 @@ class Monitor:
 
 
 def recenter(monitor, deadline):
-    """Use onboard control and require a new position-mode observation."""
-    car = monitor.car
+    """Return to the calibration center using guarded host pose feedback."""
     monitor.phase = 'recenter'
-    monitor.check(deadline)
-    car.go_to(*monitor.center)
-    saw_position = False
-    until = min(deadline, time.monotonic() + 7.)
-    next_status = 0.
+    drive_to(monitor, monitor.center, deadline, timeout=12.)
+
+
+def wait_idle(monitor, deadline, timeout=2.):
+    """Confirm that a stop command has propagated through BLE firmware state."""
+    until = min(deadline if deadline is not None else float('inf'),
+                time.monotonic() + timeout)
+    while time.monotonic() < until:
+        monitor.check(deadline)
+        status = monitor.check_robot_status()
+        if status.mode_name == 'idle':
+            return status
+        time.sleep(.04)
+    raise TimeoutError('robot did not confirm idle after stop')
+
+
+def drive_to(monitor, target, deadline, *, timeout=25., max_speed=.22, max_w=.18):
+    """Guarded host-side pose servo, independent of onboard waypoint tuning."""
+    car = monitor.car
+    until = min(deadline if deadline is not None else float('inf'),
+                time.monotonic() + timeout)
+    stable_since = None
     try:
         while time.monotonic() < until:
-            monitor.check(deadline)
-            now = time.monotonic()
-            if now >= next_status:
-                status = monitor.check_robot_status()
-                next_status = time.monotonic() + .35
-                saw_position |= status.mode_name == 'position'
-                if saw_position and status.mode_name == 'reached':
+            pose = monitor.check(deadline)
+            status = monitor.check_robot_status()
+            if status.mode_name == 'fault':
+                raise RuntimeError('host transit controller fault')
+            dx, dy = target[0] - pose.x, target[1] - pose.y
+            distance = math.hypot(dx, dy)
+            heading_error = angle_delta(target[2], pose.angle)
+            if distance < .04 and abs(heading_error) < 5.:
+                stable_since = time.monotonic() if stable_since is None else stable_since
+                car.stop()
+                if time.monotonic() - stable_since >= .25:
+                    wait_idle(monitor, deadline)
                     return
+                time.sleep(.04)
+                continue
+            stable_since = None
+            theta = math.radians(pose.angle)
+            # Do not combine translation with a substantial heading correction.
+            # Mecanum cross-coupling otherwise turns a nominally straight transit
+            # into a large arc, especially before trim is known to be good.
+            heading_ready = abs(heading_error) < 8.
+            field_speed = (min(max_speed, max(.04, 1.4 * distance))
+                           if distance >= .04 and heading_ready else 0.)
+            if distance:
+                field_x, field_y = field_speed * dx / distance, field_speed * dy / distance
+            else:
+                field_x = field_y = 0.
+            command_x = field_x * math.cos(theta) + field_y * math.sin(theta)
+            command_y = -field_x * math.sin(theta) + field_y * math.cos(theta)
+            command_w = max(-max_w, min(max_w, math.radians(heading_error) * .7))
+            if abs(heading_error) < 5.:
+                command_w = 0.
+            elif 0 < abs(command_w) < .03:
+                command_w = .03 if command_w > 0 else -.03
+            car.set_velocity(command_x, command_y, command_w)
             time.sleep(.04)
-        raise TimeoutError('onboard recenter did not complete')
+        raise TimeoutError('host pose servo did not reach target')
     finally:
         car.stop()
 
 
 def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
               yaw_level=.20, pulse_seconds=PULSE_SECONDS, yaw_seconds=YAW_SECONDS,
-              ask_apply=False, save_json=None, center=CENTER):
+              ask_apply=False, save_json=None, center=CENTER, strafe_seconds=None,
+              seed_rows=None):
     if yaw_seconds is None:
         yaw_seconds = pulse_seconds
     original_trim = car.read_trim()
@@ -248,6 +305,9 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
             'axis', 'command', 'command_x', 'command_y', 'command_w',
             'forward_m', 'left_m', 'heading_deg', 'frames', 'duration_s'))
         pulse_writer.writeheader()
+        rows = list(seed_rows or ())
+        for row in rows:
+            pulse_writer.writerow(row)
         pulse_file.flush()
         monitor = Monitor(car, gps, writer, events, status.packet_count, center)
         try:
@@ -259,10 +319,11 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
             deadline = time.monotonic() + MOTION_BUDGET
             pose = monitor.check(deadline)
             if math.hypot(pose.x-center[0], pose.y-center[1]) > .08 or abs(angle_delta(pose.angle, center[2])) > 8:
-                print('recentering before pulses', flush=True)
-                recenter(monitor, deadline)
-            rows = []
+                raise RuntimeError('place robot within 8 cm and 8 degrees of calibration center')
             for axis in range(3):
+                if sum(row['axis'] == axis for row in rows) == 2:
+                    print('reusing saved axis', axis, 'samples', flush=True)
+                    continue
                 monitor.check_robot_status()
                 for sign in (1, -1):
                     for attempt in range(3):
@@ -275,13 +336,24 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
                         interrupted = False
                         try:
                             car.set_velocity(*command)
-                            duration = yaw_seconds if axis == 2 else pulse_seconds
-                            monitor.wait(duration, deadline, start_pose.angle)
+                            duration = (yaw_seconds if axis == 2 else
+                                        strafe_seconds if axis == 1 and strafe_seconds is not None else pulse_seconds)
+                            if axis == 2:
+                                monitor.wait_rotation(duration, deadline, start_pose.angle)
+                            else:
+                                monitor.wait(duration, deadline, start_pose.angle)
                         except PoseUnavailable:
                             interrupted = True
                         finally:
                             car.stop()
+                            # The command is synchronously acknowledged as zero;
+                            # do not project the preceding pulse velocity through
+                            # the stopped settling interval. Fresh camera frames
+                            # immediately rebuild velocity if the car still coasts.
+                            monitor.velocity = (0., 0.)
+                            monitor.previous = None
                         stopped_at = time.monotonic()
+                        duration = stopped_at - pulse_started
                         if not interrupted:
                             break
                         print('pulse interrupted by telemetry loss; stopped, discarding attempt', flush=True)
@@ -290,7 +362,7 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
                             raise PoseUnavailable('active pulse lost telemetry on three attempts')
                         pose = monitor.wait_stopped(SETTLE_SECONDS, deadline, start_pose.angle)
                         if math.hypot(pose.x-center[0], pose.y-center[1]) > .12:
-                            recenter(monitor, deadline)
+                            raise RuntimeError('interrupted pulse left robot too far from center')
                     monitor.phase = 'settle'
                     end_pose = monitor.wait_stopped(SETTLE_SECONDS, deadline, start_pose.angle)
                     samples = {seq for received, seq, pose, usable in monitor.frames
@@ -305,11 +377,12 @@ def calibrate(car, gps, directory, auto_apply=False, *, translation_level=.50,
                     pulse_file.flush()
                     print('pulse', axis, sign, 'response', (round(forward, 4), round(left, 4), round(heading, 2)),
                           'frames', len(samples), flush=True)
-                # Counter-pulses ordinarily return close to center; recenter if not.
+                # Counter-pulses should return close to center. Do not involve a
+                # second controller in the open-loop measurement being fitted.
                 pose = monitor.check(deadline)
-                if math.hypot(pose.x-center[0], pose.y-center[1]) > .08 or abs(angle_delta(pose.angle, center[2])) > 8:
-                    print('recentering', flush=True)
-                    recenter(monitor, deadline)
+                if (math.hypot(pose.x-center[0], pose.y-center[1]) > .18 or
+                        abs(angle_delta(pose.angle, center[2])) > 30):
+                    raise RuntimeError('paired pulses did not return close enough to center')
             monitor.phase = 'complete'
             car.stop()
             monitor.check_robot_status()
@@ -366,11 +439,15 @@ def main(argv=None):
                         help='signed yaw pulse magnitude in .05 steps (default: .20, max: .70)')
     parser.add_argument('--pulse-seconds', type=float, default=PULSE_SECONDS,
                         help='translation pulse duration (default: .8, max: 1.2 seconds)')
+    parser.add_argument('--strafe-seconds', type=float,
+                        help='strafe pulse duration (default: same as translation)')
     parser.add_argument('--yaw-seconds', type=float, default=YAW_SECONDS,
                         help='yaw pulse duration (default: .70 seconds)')
     parser.add_argument('--center', type=float, nargs=3, metavar=('X', 'Y', 'ANGLE'), default=CENTER,
                         help='calibration center in meters and degrees (default: 0 0 90)')
     parser.add_argument('--output', type=Path, help='new run directory (default: tools/runs/timestamp)')
+    parser.add_argument('--resume-pulses', type=Path, metavar='CSV',
+                        help='reuse completed axis pairs from an earlier pulses.csv')
     args = parser.parse_args(argv)
     if args.car < 0:
         parser.error('car id must be nonnegative')
@@ -381,6 +458,9 @@ def main(argv=None):
         parser.error('pulse levels must be .10 to .70 in .05 steps and duration .10 to 1.20 seconds')
     if args.yaw_seconds is not None and (not math.isfinite(args.yaw_seconds) or not .1 <= args.yaw_seconds <= 1.2):
         parser.error('yaw duration must be .10 to 1.20 seconds')
+    if args.strafe_seconds is not None and (not math.isfinite(args.strafe_seconds) or
+                                            not .1 <= args.strafe_seconds <= 1.2):
+        parser.error('strafe duration must be .10 to 1.20 seconds')
     if not all(math.isfinite(v) for v in args.center) or not (-INNER_X < args.center[0] < INNER_X and -INNER_Y < args.center[1] < INNER_Y):
         parser.error('center must be finite and inside the field safety margins')
     if args.apply or args.reset:
@@ -406,14 +486,24 @@ def main(argv=None):
     directory = args.output or Path(__file__).with_name('runs') / time.strftime('%Y%m%dT%H%M%SZ_calibration', time.gmtime())
     directory.mkdir(parents=True, exist_ok=False)
     print('Recording:', directory.resolve(), flush=True)
-    gps = GPS(stale_after=.35)
+    seed_rows = []
+    if args.resume_pulses:
+        with args.resume_pulses.open(newline='', encoding='utf-8') as source:
+            for saved in csv.DictReader(source):
+                seed_rows.append({key: int(saved[key]) if key in ('axis', 'frames') else float(saved[key])
+                                  for key in saved})
+        if any(sum(row['axis'] == axis for row in seed_rows) not in (0, 2) for axis in range(3)):
+            parser.error('resume CSV must contain complete positive/negative axis pairs')
+    gps = GPS(stale_after=.8)
     try:
         with Car(args.car, timeout=50) as car:
             try:
                 calibrate(car, gps, directory, args.auto_apply,
                           translation_level=args.translation_level, yaw_level=args.yaw_level,
                           pulse_seconds=args.pulse_seconds, yaw_seconds=args.yaw_seconds,
-                          ask_apply=args.ask_apply, save_json=args.save_json, center=args.center)
+                          strafe_seconds=args.strafe_seconds,
+                          ask_apply=args.ask_apply, save_json=args.save_json, center=args.center,
+                          seed_rows=seed_rows)
             except CalibrationQualityError as error:
                 print('\n%s\nNo trim was applied. Measurements are saved in %s. '
                       'Check the track and repeat the calibration; avoid applying a failed proposal.'
