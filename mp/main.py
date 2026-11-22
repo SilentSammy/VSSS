@@ -167,6 +167,9 @@ def main():
         if len(data) == 12:
             x, y, angle = struct.unpack("<fff", data)
             if all(math.isfinite(v) for v in (x, y, angle)) and -0.8 <= x <= 0.8 and -1.5 <= y <= 1.5:
+                if state["mode"] == MODE_POSITION and state["waypoint"] == (x, y, angle):
+                    return data  # Keep arrival hold/history for an unchanged target.
+                tracking = state["mode"] == MODE_POSITION and controller.target is not None
                 state["waypoint"] = (x, y, angle)
                 state["waypoint_id"] += 1
                 state["control_frame"] = None
@@ -174,7 +177,10 @@ def main():
                 state["control_raw"], state["control_dt_ms"] = (0., 0., 0.), None
                 # A new BLE waypoint replaces the active target immediately.
                 # The main loop installs it on the next iteration.
-                controller.clear_target()
+                if tracking:
+                    controller.target = None  # Retain measured motion across retargets.
+                else:
+                    controller.clear_target()
                 state["mode"] = MODE_POSITION
                 state["fault"] = FAULT_NONE
                 freshness.reset()
@@ -318,7 +324,7 @@ def main():
             elif state["mode"] == MODE_POSITION:
                 if controller.target is None and state["waypoint"] is not None:
                     x, y, angle = state["waypoint"]
-                    controller.set_target(x, y, math.radians(angle))
+                    controller.set_target(x, y, math.radians(angle), preserve_motion=True)
                     state["control_frame"] = None
                     state["control_command"] = (0., 0., 0.)
                     state["deadline"] = time.ticks_add(

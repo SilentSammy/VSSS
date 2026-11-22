@@ -65,9 +65,12 @@ class OnboardController:
         self.position_acquired = False
         self.heading_acquired = False
 
-    def set_target(self, x, y, angle_radians):
+    def set_target(self, x, y, angle_radians, preserve_motion=False):
+        previous, velocity = self.previous, self.velocity[:]
         self.target = (float(x), float(y), float(angle_radians))
         self.reset()
+        if preserve_motion and previous is not None:
+            self.previous, self.velocity = previous, velocity
 
     def clear_target(self):
         self.target = None
