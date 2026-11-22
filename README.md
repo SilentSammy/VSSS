@@ -21,6 +21,21 @@ the module commands below also run directly from this directory if Pyro5 and
 Bleak are already installed. No camera/OpenCV, gamepad or firmware dependencies
 are imported by simulation or playback.
 
+## Student Blockly editor
+
+```powershell
+.\.venv\Scripts\python.exe python_blockly/server.py
+```
+
+Open http://127.0.0.1:8765. Choose Live or a simulator scenario from Environment;
+the server starts the corresponding ordinary VSSS provider if needed. Scenario
+changes reset an existing simulator without restarting it. Start/reset reloads
+the selected scenario. Stop a running student program before switching modes.
+The embedded plot shares `vsss-plot` rendering and supports car/ball dragging in
+simulation. Providers started in another terminal are reused and left running;
+stop them there before changing between Live and Simulation. See
+[python_blockly/README.md](python_blockly/README.md) for examples and tests.
+
 ## Manual test: separate terminals
 
 Open PowerShell terminals in this checkout, using the same Python environment.
@@ -350,7 +365,7 @@ fabricated fresh onboard feedback. Admin arguments/results are not recorded.
 
 ```powershell
 python -m unittest discover -s .tests -v
-python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
+python -m unittest discover -s python_blockly -p test_live_runtime.py -v
 python .tests/hardware_smoke.py --car 1
 python .tests/latency_probe.py --samples 300
 ```

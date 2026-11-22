@@ -15,7 +15,7 @@ new provider architecture has been promoted to `overhaul`.
 | P1 | Configurable/identified physics and delay | Convex bodies, motor response, mass, wall restitution, normal impact gain, rolling/drift/roughness parameters, deterministic wobble and BLE/UDP delay queues. `examples/physics_lab.json` carries the former fitted coefficients. Normal impact-gain semantics and analytical rolling distance have regression checks. This is still a new contact solver, not proof of numerical/hardware equivalence. `.tests/test_physics.py`, `test_p1_scenarios.py`, `test_p1_acceptance.py`. |
 | P1 | Interactive sim plot | Centre/ball translation, edge rotation, coalesced worker-side requests, exclusive session/source-bound grab tokens, pinned bodies, clamped poses, release on EOF and invalidation on scenario reset. Existing local setup/artwork selection remains. `.tests/test_p1_editing.py`, `test_plot_setups.py`. |
 | P1 | Fleet responsiveness | Car locks cover one car instead of holding a fleet lock across I/O. Teleop has independent per-car workers and generic forked connections. The blocked-radio regression verifies a second car receives a command and STOP before the first radio is released. `.tests/test_p1_fleet.py`, `test_latency.py`, `test_teleop_reconnect.py`. |
-| P1 | Student/autonomous/Blockly workflows | `Car`, `ClientGPS`, lazy `gps` and `@run` delegate to the new provider; they do not restore the former transport stack. Velocity, observe, waypoint and goalie examples are restored. Blockly discovers the facade signatures and excludes admin/injected-provider options. Actual subprocess velocity/waypoint/goalie tests pass, along with the existing Blockly runtime suite. `.tests/test_p1_students.py`, `blockly_python_demo/test_live_runtime.py`. |
+| P1 | Student/autonomous/Blockly workflows | `Car`, `ClientGPS`, lazy `gps` and `@run` delegate to the new provider; they do not restore the former transport stack. Velocity, observe, waypoint and goalie examples are restored. Blockly discovers the facade signatures and excludes admin/injected-provider options. Actual subprocess velocity/waypoint/goalie tests pass, along with the existing Blockly runtime suite. `.tests/test_p1_students.py`, `python_blockly/test_live_runtime.py`. |
 
 Recordings now also preserve observed typed onboard statuses, so waypoint/status
 observations can be replayed. Missing recorded status is reported as unknown.
@@ -30,6 +30,10 @@ This is domain data, not the old raw BLE/UDP trace format.
   contacts and defends five deterministic seeded first shots in simulation.
 - 24 Blockly runtime tests pass: approved blocks, example programs, editor lease
   expiry, interruption, connection/cleanup failures and multiple cars/gamepads.
+- 4 Blockly environment/plot tests pass: simulator start/reset/reuse, provider
+  ownership and mode switching, read-only live views, drag expiry and stale-world
+  protection. Browser checks cover both the student toolbox and real simulator
+  selection, canvas dragging, Run/Stop, and switching controls.
 - Exported student code is checked against the real new facade with mocked
   provider I/O; velocity-only code keeps GPS lazy.
 - Existing local lab setup/artwork assets remain packaged and source-selected.

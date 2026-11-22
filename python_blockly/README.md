@@ -1,29 +1,40 @@
-﻿# VSSS student blocks
+# VSSS student blocks
 
-A student toolbox for programming real VSSS cars. The default example is plain
-Python printing and addition, so opening the editor and running that example does
-not connect to hardware. There is no track simulator.
+A student toolbox for programming VSSS cars in simulation or live. The default
+environment is `goalie_easy`; opening the page does not start hardware. Choose
+an environment or press Run to start. Generated Python uses the same Car/GPS API.
 
 ## Start
 
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe blockly_python_demo\server.py
+.\.venv\Scripts\python.exe python_blockly\server.py
 ```
 
 Open **http://127.0.0.1:8765**. Restart an older server and refresh the browser after
 updating. The server uses the existing VSSS environment. A fresh copy needs the
 parent Python requirements and `npm.cmd ci` in this folder. No sign-in or API key
 is required. Use `--port 8767` if needed.
+`--endpoint PATH --provider-port 0` gives the editor an isolated provider endpoint
+and a free RPC port; student code and the embedded plot use that endpoint too.
 
-On `ipc_cleanup`, start `vsss-live` or `vsss-sim` separately before running robot
-examples. The student `Car`, lazy `gps`, and `@run` helpers now delegate to the
-generic provider RPC API; there is no automatic provider startup. To isolate a
-session, set `VSSS_ENDPOINT` to the same discovery path passed to the provider's
-`--endpoint` option before starting this server. Input methods and examples keep
-their previous behavior; configuration and injected-provider constructor options
-remain outside the student-approved block surface.
+The Environment dropdown offers Live, `goalie_easy`, `scenario`, and the generated
+`goalie` shot, plus JSONL files found in the repository's `scenarios/` folder.
+Selecting a scenario starts the normal VSSSSim provider, or resets the running
+simulator over RPC. Start/reset reloads the current scenario. Live starts the
+normal GPSLive/CarCmdLive provider and may control physical cars. These are the
+same implementations as `vsss-live` and `vsss-sim`, hosted by the editor server.
+Other VSSS tools can connect normally. Switching environment requires stopping
+the student program first. A provider started externally is reused but never
+terminated; stop it in its own terminal before switching Live/Simulation mode.
+
+The built-in plot reuses `vsss.plot.EmbeddedPlot`, the BoardPlotter2D renderer,
+ProviderFeed, and SimDrag. In simulation, drag car centres/balls to move and car
+edges to rotate. Live is observation-only. Stale gestures are rejected after a
+scenario/provider change; abandoned grabs expire. The server stops only providers
+it owns on Ctrl+C. Set `VSSS_ENDPOINT` before starting to isolate a session.
+Install the parent plot extra (`python -m pip install -e ".[plot]"`) for the view.
 
 ## Examples
 
@@ -43,7 +54,8 @@ In partial teleop, releasing W/S (or holding both) gives X=0, and centering RX
 gives yaw=0. The loop runs every .05 seconds until Stop or Ctrl+C. Input is read
 on the server computer. No GPS is needed.
 
-The rotation and waypoint examples move a physical car when Run live is clicked.
+The rotation and waypoint examples use the selected environment. Live can move a
+physical car; simulator scenarios control the simulated car.
 Check the car number and available space first. Waypoints use field X/Y metres
 and heading degrees; yaw velocity is a normalized CCW command, not degrees/s.
 The waypoint example checks onboard feedback/fault state and fails after ten
@@ -58,7 +70,7 @@ position-reading program when the output fills up.
 For example, run a standalone script from the repository root with:
 
 ```powershell
-.\.venv\Scripts\python.exe blockly_python_demo\examples\03_rotate_back_and_forth.py
+.\.venv\Scripts\python.exe python_blockly\examples\03_rotate_back_and_forth.py
 ```
 
 For standalone robot scripts, VSSS must be installed in that environment
@@ -140,10 +152,13 @@ From this folder:
 npm.cmd test
 ```
 
-Tests use fake devices and actual input API functions with seeded state. They
+Runtime tests use fake devices and actual input API functions with seeded state. They
 check multi-car routing/cleanup, instructor-operation rejection, source-driven
 schema, each Python example, opposite rotation commands, repeated waypoint targets,
 position-only observation, generated blocks, export, save/load, Stop and page
 closure. Physical Bluetooth, gamepads and motion still need a supervised lab check.
+The environment tests and `smoke_environment.cjs` also use a real local simulator
+and RPC, including browser canvas dragging and scenario reset. They never select
+physical hardware.
 Save blocks explicitly before closing; there is no autosave. This localhost runner
 is intended for a trusted classroom computer, not untrusted-code hosting.

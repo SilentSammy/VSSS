@@ -17,7 +17,7 @@ former provider/worker transport stack.
 | `simulation.py` | Delayed commands/observations, existing onboard controller, settings/status, atomic edits and grab ownership. |
 | `car.py` / `gps.py` / `runtime.py` | Small student views and cleanup over the provider API; lazy GPS. |
 | `input.py` / `teleop.py` | Existing input API, 50 Hz sampling and per-car latest-value workers. |
-| `plot.py` | Local setup/artwork, persistent feed and worker-side gestures; all GUI calls on main thread. |
+| `plot.py` | Local setup/artwork, persistent feed and worker-side gestures; EmbeddedPlot exposes frames/pointer input to other GUIs without opening a native window. |
 | `recording.py` / `playback.py` | Domain snapshots/events, typed command/status replay and delivery/source time separation. |
 
 ## Invariants
@@ -68,12 +68,16 @@ former provider/worker transport stack.
 
 ```powershell
 python -m unittest discover -s .tests -v
-python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
-python blockly_python_demo/verify_export.py boilerplate_velocity.py
+python -m unittest discover -s python_blockly -p test_live_runtime.py -v
+python -m unittest discover -s python_blockly -p test_environment.py -v
+python python_blockly/verify_export.py boilerplate_velocity.py
 python .tests/latency_probe.py --samples 300
 ```
 
-The feature suite has 71 passing tests and Blockly has 24. Tests use temporary
+The feature suite has 71 passing tests and Blockly has 24 runtime tests plus
+4 environment/embedded-plot integration tests. The two browser checks are
+`node python_blockly/smoke_test.cjs` and `node python_blockly/smoke_environment.cjs`.
+Tests use temporary
 endpoints, synthetic UDP, fake GATT firmware and separate simulator/student
 processes. Student subprocess tests explicitly set VSSS_ENDPOINT so they cannot
 accidentally target the lab provider. They do not move hardware. Package tests

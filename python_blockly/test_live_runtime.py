@@ -239,7 +239,7 @@ class LiveTests(unittest.TestCase):
         expected={'01_print_and_add.py':'Hello, Python!\n12\n',
                   '02_variables_and_loops.py':'2\n4\n6\n8\n10\n'}
         for name,output in expected.items():
-            code=(ROOT/'blockly_python_demo/examples'/name).read_text()
+            code=(ROOT/'python_blockly/examples'/name).read_text()
             validate(code)
             result=self.finish(self.runner.start(code)['run_id'])
             self.assertEqual(result['state'],'finished',result)
@@ -248,7 +248,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.devices.field_reads,0)
 
     def test_partial_teleop_maps_keys_and_rx_independently(self):
-        code=(ROOT/'blockly_python_demo/examples/06_partial_teleop.py').read_text()
+        code=(ROOT/'python_blockly/examples/06_partial_teleop.py').read_text()
         validate(code)
         self.devices.input.pressed_keys.clear()
         self.devices.input._axis_states[0]['RX']=0
@@ -270,7 +270,7 @@ class LiveTests(unittest.TestCase):
 
     def test_gamepad_reader_prints_buttons_sticks_and_triggers_without_car(self):
         self.devices.input._axis_states[0].update(RX=-32768,RY=32767,LT=0,RT=255)
-        code=(ROOT/'blockly_python_demo/examples/07_read_gamepad.py').read_text()
+        code=(ROOT/'python_blockly/examples/07_read_gamepad.py').read_text()
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:'Triggers LT/RT: 0.0 1.0' in self.runner.status(run)['output'])
@@ -286,7 +286,7 @@ class LiveTests(unittest.TestCase):
     def test_infinite_rotation_alternates_until_stopped(self):
         self.runner=self.devices.runner()
         self.assertIsNone(self.runner.max_seconds)
-        code=(ROOT/'blockly_python_demo/examples/03_rotate_back_and_forth.py').read_text()
+        code=(ROOT/'python_blockly/examples/03_rotate_back_and_forth.py').read_text()
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='velocity'])>=3)
@@ -299,7 +299,7 @@ class LiveTests(unittest.TestCase):
         self.assert_closed()
 
     def test_position_example_only_reads_field(self):
-        code=(ROOT/'blockly_python_demo/examples/04_read_car_position.py').read_text()
+        code=(ROOT/'python_blockly/examples/04_read_car_position.py').read_text()
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:'Pose(' in self.runner.status(run)['output'])
@@ -309,7 +309,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.devices.field_reads,1)
 
     def test_alternating_waypoints_wait_and_can_be_stopped(self):
-        code=(ROOT/'blockly_python_demo/examples/05_alternate_waypoints.py').read_text()
+        code=(ROOT/'python_blockly/examples/05_alternate_waypoints.py').read_text()
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='waypoint'])>=3)
@@ -321,7 +321,7 @@ class LiveTests(unittest.TestCase):
 
     def test_waypoint_fault_or_timeout_does_not_send_the_next_target(self):
         from vsss._ble_protocol import RobotStatus
-        code=(ROOT/'blockly_python_demo/examples/05_alternate_waypoints.py').read_text()
+        code=(ROOT/'python_blockly/examples/05_alternate_waypoints.py').read_text()
         for fault,expected in ((1,'Onboard position/control unavailable'),(0,'Waypoint timed out')):
             with self.subTest(fault=fault):
                 self.devices.cars.clear()

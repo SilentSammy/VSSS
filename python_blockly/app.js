@@ -59,7 +59,7 @@ function updateCode() {
   catch (error) { document.getElementById('code').textContent = `# ${error.message}`; }
   try {
     checkCarBlocks(workspace);
-    if (!busy) document.getElementById('status').textContent = 'Ready to run live';
+    if (!busy) document.getElementById('status').textContent = 'Ready';
   } catch (error) { document.getElementById('status').textContent = error.message; }
 }
 function loadExample() {loadLesson('printing');}
@@ -69,7 +69,7 @@ document.getElementById('car-example').onclick = loadCarExample;
 document.getElementById('lesson').onchange = event => {if(event.target.value) loadLesson(event.target.value);};
 async function request(path, payload = {}, options = {}) {
   const response = await fetch(path, {method: 'POST', headers: {
-    'Content-Type': 'application/json', 'X-Blockly-Demo': '1'
+    'Content-Type': 'application/json', 'X-VSSS-Blockly': '1'
   }, body: JSON.stringify(payload), ...options});
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
@@ -77,12 +77,12 @@ async function request(path, payload = {}, options = {}) {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['run', 'car-example', 'example', 'load', 'lesson']) document.getElementById(id).disabled = value;
+  for (const id of ['run', 'car-example', 'example', 'load', 'lesson', 'environment', 'reset-environment']) document.getElementById(id).disabled = value;
 }
 function showRun(result) {
   document.getElementById('output').textContent = result.output + (result.error ? '\n' + result.error : '') || '(No output yet.)';
   const labels = {
-    running: 'Running live', stopping: 'Stopping and disconnecting…',
+    running: 'Running', stopping: 'Stopping and disconnecting…',
     finished: 'Finished — car stopped and disconnected', stopped: result.reason || 'Stopped',
     failed: 'Run failed — see output', idle: 'No program running'
   };
@@ -104,7 +104,7 @@ async function pollRun(runId = activeRun) {
 }
 document.getElementById('run').onclick = async () => {
   setBusy(true);
-  document.getElementById('status').textContent = 'Starting live program…';
+  document.getElementById('status').textContent = 'Starting program…';
   document.getElementById('output').textContent = 'Starting…';
   try {
     checkCarBlocks(workspace);
@@ -165,3 +165,92 @@ startEditor().catch(error => {
   document.getElementById('output').textContent = error.message;
   document.getElementById('run').disabled = true;
 });
+
+// The Python server renders the same plot as vsss-plot; canvas only displays it.
+const plotCanvas = document.getElementById('field');
+let plotState = null;
+let dragPoint = null;
+let dragState = null;
+let pointerQueue = Promise.resolve();
+const plotOwner = crypto.randomUUID();
+function sendPointer(operation, point = dragPoint, state = dragState) {
+  if (!point || !state) return;
+  const payload = {operation, ...point, owner: plotOwner,
+    source_id: state.source_id, generation: state.generation};
+  pointerQueue = pointerQueue.then(() => request('/plot/pointer', payload)).catch(error => {
+    document.getElementById('plot-status').textContent = error.message;
+    dragPoint = dragState = null;
+  });
+}
+function fieldPoint(event) {
+  const rect = plotCanvas.getBoundingClientRect();
+  return {x: (event.clientX-rect.left)*plotCanvas.width/rect.width,
+          y: (event.clientY-rect.top)*plotCanvas.height/rect.height};
+}
+plotCanvas.onpointerdown = event => {
+  if (event.button !== 0 || !plotState?.editable) return;
+  event.preventDefault();
+  plotCanvas.setPointerCapture(event.pointerId);
+  dragPoint = fieldPoint(event); dragState = {...plotState};
+  sendPointer('down');
+};
+plotCanvas.onpointermove = event => { if (dragPoint) dragPoint = fieldPoint(event); };
+function releasePointer(event) {
+  if (dragPoint) sendPointer('up', event ? fieldPoint(event) : dragPoint);
+  dragPoint = dragState = null;
+}
+plotCanvas.onpointerup = releasePointer;
+plotCanvas.onpointercancel = () => releasePointer();
+plotCanvas.onlostpointercapture = () => releasePointer();
+window.addEventListener('blur', () => releasePointer());
+setInterval(() => { if (dragPoint) sendPointer('move'); }, 100);
+
+async function pollPlot() {
+  try {
+    const response = await fetch('/api/plot', {cache: 'no-store'});
+    if (response.status === 404) return; // Explicit fake-device test server.
+    if (!response.ok) throw new Error('Plot unavailable');
+    const metadata = JSON.parse(response.headers.get('X-VSSS-State'));
+    const bitmap = await createImageBitmap(await response.blob());
+    if (dragState && (dragState.source_id !== metadata.source_id || dragState.generation !== metadata.generation)) releasePointer();
+    plotCanvas.width = bitmap.width; plotCanvas.height = bitmap.height;
+    plotCanvas.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close();
+    plotState = metadata;
+    plotCanvas.classList.toggle('editable', metadata.editable);
+    document.getElementById('plot-status').textContent = metadata.status +
+      (metadata.editable ? ' · Drag centres/balls to move; edges to rotate.' : ' · Observation only');
+  } catch (error) { document.getElementById('plot-status').textContent = error.message; }
+  setTimeout(pollPlot, 80);
+}
+let currentEnvironment = 'goalie_easy';
+function environmentLabel(result) {
+  currentEnvironment = result.selected;
+  const live = result.selected === 'live';
+  document.getElementById('mode-badge').textContent = live ? 'LIVE ROBOTS' : 'SIMULATION';
+  document.getElementById('run').textContent = live ? '▶ Run live' : '▶ Run';
+  document.getElementById('reset-environment').textContent = live ? 'Connect live' : 'Start / reset scenario';
+  document.getElementById('run-hint').textContent = live ?
+    'Live controls real cars. Check car numbers and clear the field.' : 'Run controls the selected simulator scenario.';
+  document.getElementById('environment-status').textContent = result.mode ?
+    `${result.selected} · ${result.mode}` : 'Choose a scenario, or press Run to start.';
+}
+async function chooseEnvironment() {
+  releasePointer();
+  setBusy(true);
+  document.getElementById('environment-status').textContent = 'Opening environment…';
+  try {
+    const result = await request('/environment', {selection: document.getElementById('environment').value});
+    environmentLabel(result);
+  } catch (error) {
+    document.getElementById('environment').value = currentEnvironment;
+    document.getElementById('environment-status').textContent = error.message;
+  }
+  finally { setBusy(false); }
+}
+document.getElementById('environment').onchange = chooseEnvironment;
+document.getElementById('reset-environment').onclick = chooseEnvironment;
+fetch('/api/environment').then(response => response.json()).then(result => {
+  const select = document.getElementById('environment');
+  for (const item of result.options) select.add(new Option(item.label, item.id));
+  if (result.options.length) { select.value = result.selected; environmentLabel(result); pollPlot(); }
+}).catch(error => { document.getElementById('environment-status').textContent = error.message; });

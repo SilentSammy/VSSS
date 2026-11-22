@@ -277,6 +277,65 @@ class SimDrag:
         return frame
 
 
+class EmbeddedPlot:
+    """Window-free plot for other GUIs, with the same renderer and sim gestures.
+
+    Pointer positions use rendered pixels. Each gesture carries the displayed
+    source/generation so delayed GUI input cannot edit a replacement world.
+    A short renewed lease releases a grab if its GUI disappears.
+    """
+    def __init__(self, endpoint=None, *, width=480, setup=None):
+        self.plotter = make_plotter(setup, width)
+        self.feed = ProviderFeed(endpoint)
+        self.drag = SimDrag(self.plotter, self.feed)
+        self.lock = Lock()
+        self.owner = None
+        self.touched = 0.
+
+    def _release(self):
+        if self.drag.active:
+            active = self.drag.active
+            self.feed.gesture('release', active['kind'], active['number'], source_id=active['source'])
+        self.drag.active, self.owner = None, None
+
+    def frame(self):
+        with self.lock:
+            if self.owner and time.monotonic()-self.touched > 1:
+                self._release()
+            state, status, source = self.feed.snapshot()
+            info = self.feed.info()
+            frame = self.drag.render(render_state(self.plotter, state), state)
+            metadata = dict(source_id=source, generation=info.get('simulation', {}).get('generation'),
+                            editable=info.get('capabilities', {}).get('simulation_edit', False), status=status)
+            return frame, metadata
+
+    def pointer(self, operation, x, y, *, owner, source_id, generation):
+        import cv2
+        if operation not in ('down', 'move', 'up') or not isinstance(owner, str) or not 1 <= len(owner) <= 80:
+            raise ValueError('Invalid plot pointer')
+        if not all(type(v) in (int, float) and math.isfinite(v) for v in (x, y)):
+            raise ValueError('Invalid plot coordinates')
+        with self.lock:
+            if self.owner and time.monotonic()-self.touched > 1: self._release()
+            info = self.feed.info()
+            if source_id != self.feed.snapshot()[2] or generation != info.get('simulation', {}).get('generation'):
+                raise ValueError('Plot changed; wait for a fresh frame')
+            if not info.get('capabilities', {}).get('simulation_edit'):
+                raise ValueError('Dragging is available in simulation only')
+            if self.owner and self.owner != owner:
+                raise ValueError('Plot is being dragged in another editor')
+            if operation == 'down': self.owner = owner
+            elif self.owner != owner: return
+            self.touched = time.monotonic()
+            event = dict(down=cv2.EVENT_LBUTTONDOWN, move=cv2.EVENT_MOUSEMOVE, up=cv2.EVENT_LBUTTONUP)[operation]
+            self.drag.mouse(event, x, y, cv2.EVENT_FLAG_LBUTTON if operation != 'up' else 0)
+            if operation == 'up': self.owner = None
+
+    def close(self):
+        with self.lock: self._release()
+        self.feed.close()
+
+
 def main(argv=None):
     setups, default = lab_setups()
     parser = argparse.ArgumentParser(description=__doc__)

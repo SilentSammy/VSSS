@@ -22,7 +22,7 @@ const path = require('node:path');
     page.on('pageerror',error=>{errors.push(error.message);process.stderr.write(error.stack+'\n');});
     await page.goto('http://127.0.0.1:8766');
     await page.waitForFunction(()=>typeof workspace!=='undefined'&&workspace&&document.querySelector('#code').textContent.includes('Hello, Python!'));
-    assert.equal(await page.locator('#field').count(),0);
+    assert.equal(await page.locator('#field').count(),1);
     const initial=await page.locator('#code').innerText();
     assert.match(initial,/print\('Hello, Python!'\)/);
     assert.match(initial,/print\(7 \+ 5\)/);
@@ -78,7 +78,7 @@ const path = require('node:path');
       if(lesson==='rotation'){assert.match(code,/w=0.2/);assert.match(code,/w=-0.2/);assert.match(code,/while True:/);}
       if(lesson==='waypoints'){assert.match(code,/y=0.5/);assert.match(code,/y=-0.5/);assert.match(code,/arrival_status.mode_name == 'reached'/);}
       await page.click('#run');
-      await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running live');
+      await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running');
       await page.waitForTimeout(350);
       if(lesson==='read_gamepad')await page.waitForFunction(()=>document.querySelector('#output').textContent.includes('Triggers LT/RT'));
       assert.equal(await page.locator('#stop').isEnabled(),true);
@@ -121,7 +121,7 @@ const path = require('node:path');
     for(const item of generated){
       const response=await page.evaluate(async code=>{
         // Validate without running any of the advanced configuration blocks.
-        return (await fetch('/validate',{method:'POST',headers:{'Content-Type':'application/json','X-Blockly-Demo':'1'},body:JSON.stringify({code})})).status;
+        return (await fetch('/validate',{method:'POST',headers:{'Content-Type':'application/json','X-VSSS-Blockly':'1'},body:JSON.stringify({code})})).status;
       },item.code);
       assert.equal(response,200,item.id+' did not validate');
     }
@@ -130,7 +130,7 @@ const path = require('node:path');
     await page.click('#example');
     await runUI();
     assert.equal(await page.locator('#output').innerText(),'Hello, Python!\n12\n');
-    const invalid=await page.evaluate(async()=> (await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json','X-Blockly-Demo':'1'},body:JSON.stringify({code:'import os'})})).status);
+    const invalid=await page.evaluate(async()=> (await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json','X-VSSS-Blockly':'1'},body:JSON.stringify({code:'import os'})})).status);
     assert.equal(invalid,400);
     assert.equal(await page.evaluate(async()=> (await fetch('/run',{method:'POST',body:'{}'})).status),403);
     const owner=await browser.newPage();
