@@ -16,6 +16,15 @@
   <header><div><span class="eyebrow">VSSS / STUDENT LAB</span><h1>Program your car with blocks.</h1><p>Connect blocks, run your car, and explore the Python behind it.</p></div><span class="badge" id="mode-badge">SIMULATION</span></header>
   <div class="environment-bar"><label for="environment">Environment</label><select id="environment" aria-label="Environment"></select><button id="reset-environment">Start / reset scenario</button><span id="environment-status" role="status">Choose a scenario to start.</span></div>
   <nav aria-label="Program actions"><button id="run">▶ Run</button><button id="stop">■ Stop</button><button id="example">Python basics</button><button id="car-example">Rotate car</button><select id="lesson" aria-label="Load an example"><optgroup label="Python basics"><option value="printing">Print and add</option><option value="variables">Variables and loops</option></optgroup><optgroup label="Robot examples"><option value="rotation">Rotate back and forth (forever)</option><option value="position">Read car position</option><option value="waypoints">Alternate waypoints (forever)</option><option value="teleop">Partial teleop: W/S + RX</option><option value="read_gamepad">Read gamepad inputs</option></optgroup><optgroup label="More examples"><option value="multi">Two cars in one loop</option><option value="gamepads">Two gamepads / two cars</option><option value="keyboard">Keyboard control</option><option value="observe">Observe the field</option></optgroup></select><button id="save">Save blocks</button><button id="load">Open blocks</button><button id="export">Export Python</button><input type="file" id="file" accept=".json" hidden><span id="status" role="status">Ready</span></nav>
-  <main><section class="editor"><h2>01 / Your blocks</h2><div id="blocklyDiv"></div></section><aside><section class="field-panel"><h2>Field</h2><canvas id="field" width="480" height="780" aria-label="Field plot. Drag car centres or balls to move; drag car edges to rotate."></canvas><p class="hint" id="plot-status">Waiting for provider</p></section><section><h2>02 / Generated Python</h2><p class="hint" id="run-hint">Run uses the selected environment.</p><pre id="code"></pre></section><section><h2>03 / Output</h2><pre id="output" aria-live="polite">Ready.</pre></section><p class="hint">Stop ends the program and disconnects every car. Keyboard and gamepads are read on the server computer.</p></aside></main>
+  <main>
+    <div class="workspace-column">
+      <section class="editor"><h2>01 / Your blocks</h2><div id="blocklyDiv"></div></section>
+      <section class="code-panel"><h2>02 / Generated Python</h2><p class="hint" id="run-hint">Run uses the selected environment.</p><pre id="code"></pre></section>
+    </div>
+    <aside>
+      <section class="output-panel"><h2>03 / Output</h2><pre id="output" aria-live="polite">Ready.</pre><p class="hint">Stop ends the program and disconnects every car. Keyboard and gamepads are read on the server computer.</p></section>
+      <section class="field-panel"><h2>04 / Field</h2><canvas id="field" width="480" height="780" aria-label="Field plot. Drag car centres or balls to move; drag car edges to rotate."></canvas><p class="hint" id="plot-status">Waiting for provider</p></section>
+    </aside>
+  </main>
 </body>
 </html>
