@@ -234,7 +234,7 @@ function loadLesson(kind) {
   } else if(kind==='goalie') {
     // The waypoint controller corrects position and heading for us.
     steps=[connect('car1',1),forever([assign('ball',firstBall()),
-      carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),y:num(-1.2),angle:num(90)}),wait(.05)])];
+      carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),y:num(1.2),angle:num(-90)}),wait(.05)])];
   } else if(kind==='observe') {
     steps=[expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain([
       print(expression('api_gps_feedback_problem')),print(expression('api_gps_cars')),print(expression('api_gps_balls')),wait(.1)

@@ -72,7 +72,7 @@ shown above. Re-run `python -m pip install -e ".[plot]"` after entry-point chang
    the plot has focus, as in the previous tool.
 4. Terminal D: `vsss-sim --load examples/goalie_easy.jsonl`. This connects to
    the existing simulator, replaces its world, clears commands and exits.
-   The plot and teleop stay connected. Car1 now faces up near the bottom of
+   The plot and teleop stay connected. Car1 now faces down near the top of
    the field. This example defines starting poses; it does not run a goalie
    strategy. Repeat with `vsss-sim --load examples/scenario.jsonl` to reset.
 5. Terminal D: `vsss-record trial01.jsonl`. Use teleop to move/rotate car1 and

@@ -54,7 +54,7 @@ The dropdown also includes **Kick ball to top wall** and **Goalie: follow the
 ball**. Kick reads the first ball, moves 30 cm behind it facing 90°, waits for
 arrival, then drives forward for .8 seconds and stops. Use the **1 car 1 ball**
 environment with a stationary ball and a clear approach; leave room behind it.
-Goalie sends `go_to(ball.x, -1.2, 90)` every .05 seconds. The onboard controller
+Goalie sends `go_to(ball.x, 1.2, -90)` every .05 seconds. The onboard controller
 handles the fixed heading and Y lane, even if the car starts rotated. There is
 no prediction or intercept algorithm. Both examples assume one visible ball
 and a clear field. Kick waits only for arrival; its extra validity, fault and
@@ -70,10 +70,10 @@ forward/left/turn at zero, then W/S, A/D and Q/E set the corresponding speed.
 Releasing keys therefore stops that axis. The same program is available as
 [10_keyboard.py](examples/10_keyboard.py).
 
-Both goalie scenarios place the car at Y=-1.2 m, facing 90°, with the ball above
-at Y=.8 m. Easy starts the car at X=.15 m and the ball at X=.3 m with velocity
-(-.1, -.6) m/s. Hard starts the car at X=-.3 m and the ball at X=.3 m with velocity
-(-.3, -1) m/s. Both keep the ball paused until the first movement
+Both goalie scenarios defend the top wall: the car starts at Y=1.2 m, facing
+-90° (downward), with the ball below at Y=-.8 m. Easy starts the car at X=.15 m
+and the ball at X=.3 m with velocity (-.1, .6) m/s. Hard starts the car at X=-.3 m
+and the ball at X=.3 m with velocity (-.3, 1) m/s. Both keep the ball paused until the first movement
 command so students can prepare the program before the shot starts.
 
 The same two programs are available as

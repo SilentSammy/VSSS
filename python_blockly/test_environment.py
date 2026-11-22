@@ -89,7 +89,7 @@ class EnvironmentTest(unittest.TestCase):
             pass
 
         def follows(heading):
-            state = WorldState(cars=[CarState(1,Pose(.15,-1.2,heading))],balls=[BallState(0,Pose(.3,.8))])
+            state = WorldState(cars=[CarState(1,Pose(.15,1.2,heading))],balls=[BallState(0,Pose(.3,-.8))])
             with VSSSSim(state) as sim:
                 ticks = 0
                 waypoints = []
@@ -120,11 +120,11 @@ class EnvironmentTest(unittest.TestCase):
                 try: scope['main']()
                 except ShotEnded: pass
                 self.assertGreater(len(waypoints),50)
-                self.assertTrue(all(target == (.3,-1.2,90) for target in waypoints))
+                self.assertTrue(all(target == (.3,1.2,-90) for target in waypoints))
                 pose = sim._world.cars[0].pose
                 self.assertAlmostEqual(pose.x,.3,delta=.04)
-                self.assertAlmostEqual(pose.y,-1.2,delta=.04)
-                self.assertLess(abs((pose.angle-90+180)%360-180),5)
+                self.assertAlmostEqual(pose.y,1.2,delta=.04)
+                self.assertLess(abs((pose.angle+90+180)%360-180),5)
         for heading in (0,90,-90):
             with self.subTest(heading=heading): follows(heading)
 
@@ -133,9 +133,9 @@ class EnvironmentTest(unittest.TestCase):
         easy, hard = [load_scenario(root / f'goalie_{level}.jsonl') for level in ('easy', 'hard')]
         for scenario in (easy, hard):
             self.assertTrue(scenario.wait_for_control)
-            self.assertLess(scenario.motion[-1].vy, 0)
-            self.assertEqual(scenario.state.cars[0].pose.angle, 90)
-            self.assertLess(scenario.state.cars[0].pose.y, -1)
+            self.assertGreater(scenario.motion[-1].vy, 0)
+            self.assertEqual(scenario.state.cars[0].pose.angle, -90)
+            self.assertGreater(scenario.state.cars[0].pose.y, 1)
             self.assertNotEqual(scenario.state.cars[0].pose.x, 0)
             with VSSSSim(scenario) as sim:
                 initial = sim._world.balls[0].pose
@@ -143,7 +143,7 @@ class EnvironmentTest(unittest.TestCase):
                 self.assertEqual(sim._world.balls[0].pose, initial)
                 sim.cars.set_velocity(1, Velocity())
                 sim.step(.1)
-                self.assertLess(sim._world.balls[0].pose.y, initial.y)
+                self.assertGreater(sim._world.balls[0].pose.y, initial.y)
         self.assertGreater(abs(hard.motion[-1].vy), abs(easy.motion[-1].vy))
         self.assertLess(hard.state.cars[0].pose.x * hard.state.balls[0].pose.x, 0)
 
@@ -191,7 +191,7 @@ class EnvironmentTest(unittest.TestCase):
                     lab.ensure()
                     self.assertAlmostEqual(client.gps.state().cars[0].pose.x, .3)
                     lab.select('goalie_easy')
-                    self.assertAlmostEqual(client.gps.state().cars[0].pose.y, -1.2)
+                    self.assertAlmostEqual(client.gps.state().cars[0].pose.y, 1.2)
                     lab.select('car1_ball1')
                     self.assertEqual(client.describe()['source_id'], first['source_id'])
                     self.assertAlmostEqual(client.gps.state().cars[0].pose.x, -.2)
@@ -207,7 +207,7 @@ class EnvironmentTest(unittest.TestCase):
                 lab = Environment(endpoint, port=0)
                 try:
                     lab.select('goalie_easy')
-                    self.assertAlmostEqual(sim.gps.state().cars[0].pose.y, -1.2)
+                    self.assertAlmostEqual(sim.gps.state().cars[0].pose.y, 1.2)
                     self.assertIsNone(lab.owned)
                     with self.assertRaisesRegex(ValueError, 'another terminal'):
                         lab.select('live')
