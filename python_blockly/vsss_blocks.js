@@ -182,10 +182,10 @@ function loadLesson(kind) {
     updateCode();
     return;
   }
-  const ids = ['car1','car2','pose','total','count','forward','turn','ball'];
+  const ids = ['car1','car2','pose','total','count','forward','left','turn','ball'];
   const forever = steps => expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:inputBlock(expression('logic_boolean',{BOOL:'TRUE'})),DO:inputBlock(chain(steps))});
   const assign = (name,block) => expression('variables_set',{VAR:varField(name)},{VALUE:inputBlock(block)});
-  const firstBall = () => expression('vsss_index',{}, {INDEX:num(0),OBJECT:inputBlock(expression('api_gps_balls'))});
+  const firstBall = () => expression('api_gps_ball');
   const ballCoordinate = name => field(variable('ball'),name);
   if(kind==='printing') {
     steps=[print(expression('text',{TEXT:'Hello, Python!'})),print(expression('math_arithmetic',{OP:'ADD'},{A:num(7),B:num(5)}))];
@@ -239,14 +239,24 @@ function loadLesson(kind) {
     steps=[expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain([
       print(expression('api_gps_feedback_problem')),print(expression('api_gps_cars')),print(expression('api_gps_balls')),wait(.1)
     ]))})];
-  } else if(kind==='gamepads' || kind==='keyboard' || kind==='multi') {
-    const names=kind==='keyboard'?['car1']:['car1','car2'];
+  } else if(kind==='keyboard') {
+    const keyIf = (key,name,amount) => expression('controls_if',{}, {
+      IF0:inputBlock(expression('vsss_key',{KEY:key,MODE:'is_pressed'})),
+      DO0:inputBlock(assign(name,expression('math_number',{NUM:amount})))});
+    steps=[connect('car1',1),forever([
+      ...['forward','left','turn'].map(name=>assign(name,expression('math_number',{NUM:0}))),
+      keyIf('w','forward',.3),keyIf('s','forward',-.3),
+      keyIf('a','left',.3),keyIf('d','left',-.3),
+      keyIf('q','turn',.3),keyIf('e','turn',-.3),
+      carBlock('set_velocity','car1',{x:inputBlock(variable('forward')),y:inputBlock(variable('left')),w:inputBlock(variable('turn'))}),wait(.05)
+    ])];
+  } else if(kind==='gamepads' || kind==='multi') {
+    const names=['car1','car2'];
     steps=names.map((name,i)=>connect(name,i+1));
     const loop=[];
     names.forEach((name,pad)=>{
       const axis=(axisName)=>expression('math_arithmetic',{OP:'MULTIPLY'},{A:inputBlock(expression('vsss_pad_axis',{PAD:pad,AXIS:axisName})),B:num(.3)});
-      const bipolar=(hi,lo)=>expression('api_input_get_bipolar_ctrl',{}, {high_key:text(hi),low_key:text(lo),keyboard_scale:num(.3),game_scale:num(0)});
-      const values=kind==='keyboard'?[bipolar('w','s'),bipolar('a','d'),bipolar('q','e')]:kind==='multi'?[expression('math_number',{NUM:.2}),expression('math_number',{NUM:0}),expression('math_number',{NUM:0})]:[axis('LY'),axis('LX'),axis('RX')];
+      const values=kind==='multi'?[expression('math_number',{NUM:.2}),expression('math_number',{NUM:0}),expression('math_number',{NUM:0})]:[axis('LY'),axis('LX'),axis('RX')];
       loop.push(carBlock('set_velocity',name,{x:inputBlock(values[0]),y:inputBlock(values[1]),w:inputBlock(values[2])}));
     });
     loop.push(wait(kind==='multi'?.1:.05));

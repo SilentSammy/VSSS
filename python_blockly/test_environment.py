@@ -104,7 +104,7 @@ class EnvironmentTest(unittest.TestCase):
                     def stop(self): sim.cars.stop(self.number)
                 class GPS:
                     @property
-                    def balls(self): return [b.pose for b in sim._world.balls]
+                    def ball(self): return sim._world.balls[0].pose
                 def sleep(dt):
                     nonlocal ticks
                     for _ in range(round(dt/.01)):

@@ -42,9 +42,11 @@ const path = require('node:path');
         assert.match(code,/while True:/);
         assert.match(code,/go_to\(x=.*ball.*\.x, y=-1\.2, angle=90\)/);
         assert.doesNotMatch(code,/set_velocity|response =/);
-        assert.match(code,/gps.balls/);
+        assert.match(code,/gps\.ball\b/);
       }
       assert.doesNotMatch(code,/raise |arrival_deadline|fault_name|pose_fresh/);
+      assert.doesNotMatch(code,/gps\.balls\[/);
+      assert.equal(await page.evaluate(()=>workspace.getAllBlocks(false).some(b=>b.type==='vsss_index')),false);
     }
     assert.equal(await page.evaluate(()=>{
       const before=generatedCode();
@@ -117,6 +119,11 @@ const path = require('node:path');
       if(['observe','position','read_gamepad'].includes(lesson))assert.doesNotMatch(code,/ = Car\(/);
       if(lesson==='read_gamepad'){for(const name of ['A0','B0','X0','Y0','LX0','LY0','RX0','RY0','LT0','RT0'])assert.ok(code.includes(name),name+' missing');assert.doesNotMatch(code,/from vsss import.*Car|gps/);}
       if(lesson==='teleop'){assert.match(code,/high_key=['"]w['"]/);assert.match(code,/low_key=['"]s['"]/);assert.match(code,/keyboard_scale=0.5/);assert.match(code,/input.get_axis\("RX0"\) \* 0.5/);assert.match(code,/y=0/);}
+      if(lesson==='keyboard'){
+        assert.doesNotMatch(code,/get_bipolar_ctrl/);
+        for(const key of ['w','s','a','d','q','e'])assert.match(code,new RegExp('if input.is_pressed\\("'+key+'"\\):'));
+        assert.match(code,/forward = 0/);assert.match(code,/left = 0/);assert.match(code,/turn = 0/);
+      }
       if(lesson==='rotation'){assert.match(code,/w=0.2/);assert.match(code,/w=-0.2/);assert.match(code,/while True:/);}
       if(lesson==='waypoints'){assert.match(code,/y=0.5/);assert.match(code,/y=-0.5/);assert.match(code,/arrival_status.mode_name == 'reached'/);}
       await page.click('#run');

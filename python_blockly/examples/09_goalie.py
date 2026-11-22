@@ -7,7 +7,7 @@ from vsss import Car, gps, run
 def main():
     car1 = Car(1)
     while True:
-        ball = gps.balls[0]
+        ball = gps.ball
         car1.go_to(x=ball.x, y=-1.2, angle=90)
         sleep(.05)
 

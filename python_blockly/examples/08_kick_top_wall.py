@@ -6,7 +6,7 @@ from vsss import Car, gps, run
 @run
 def main():
     car1 = Car(1)
-    ball = gps.balls[0]
+    ball = gps.ball
     car1.go_to(x=ball.x, y=ball.y - .3, angle=90)
     sleep(.1)
     while car1.read_status().mode_name != 'reached':

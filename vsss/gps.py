@@ -49,6 +49,12 @@ class GPS:
         return tuple(Position(b.pose.x, b.pose.y) for b in state.balls) if state and state.valid else ()
 
     @property
+    def ball(self):
+        """The first visible ball's position, or None when no ball is visible."""
+        balls = self.balls
+        return balls[0] if balls else None
+
+    @property
     def board_detected(self):
         state = self._state()
         return bool(state and state.valid)

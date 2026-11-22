@@ -18,7 +18,7 @@ CAR_METHODS = {
     'read_status': ('Advanced lessons', 'robot status', True),  # Used by readable status blocks, not shown raw.
 }
 CAR_PROPERTIES = {'number', 'pose', 'position'}
-GPS_PROPERTIES = {'cars', 'balls', 'board_detected', 'feedback_problem'}
+GPS_PROPERTIES = {'cars', 'ball', 'balls', 'board_detected', 'feedback_problem'}
 GPS_METHODS = {'get_car'}
 INPUT_METHODS = {'is_pressed', 'is_toggled', 'rising_edge', 'falling_edge', 'get_axis', 'get_bipolar_ctrl'}
 INPUT_PROPERTIES = set()
@@ -77,7 +77,7 @@ def schema():
             node = all_nodes[owner].get(name)
             blocks.append(dict(id=f'api_{owner}_{name}', owner=owner, member=name, kind='property',
                                category='Car feedback' if owner == 'car' else ('Field' if owner == 'gps' else 'Advanced lessons'),
-                               label=name.replace('_', ' '), returns=True, args=[],
+                               label='ball position' if owner == 'gps' and name == 'ball' else name.replace('_', ' '), returns=True, args=[],
                                tooltip=(ast.get_docstring(node) if node else None) or name))
     for owner, names in (('gps', GPS_METHODS), ('input', INPUT_METHODS)):
         for name in sorted(names):

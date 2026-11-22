@@ -38,7 +38,7 @@ class KickTest(unittest.TestCase):
             def sleep(dt):
                 for _ in range(round(dt/.01)): sim.step(.01)
             def imports(name,*args,**kwargs):
-                if name=='vsss': return SimpleNamespace(Car=Car,gps=SimpleNamespace(balls=[b.pose for b in sim._world.balls]),run=lambda fn:fn)
+                if name=='vsss': return SimpleNamespace(Car=Car,gps=SimpleNamespace(ball=sim._world.balls[0].pose),run=lambda fn:fn)
                 if name=='time': return SimpleNamespace(sleep=sleep,monotonic=lambda:sim._time)
                 return builtins.__import__(name,*args,**kwargs)
             scope={'__name__':'example','__builtins__':dict(vars(builtins),__import__=imports)}

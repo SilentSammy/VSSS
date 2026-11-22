@@ -67,6 +67,8 @@ class FakeCar:
 class FakeGPS:
     cars = {1: Pose(.1, .2, 90.), 2: Pose(.2, .2, 90.)}
     balls = (Position(.3, .4),)
+    @property
+    def ball(self): return self.balls[0] if self.balls else None
     board_detected = True
     feedback_problem = None
     port = configured_port = 5000

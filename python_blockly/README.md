@@ -61,6 +61,15 @@ and a clear field. Kick waits only for arrival; its extra validity, fault and
 timeout checks are omitted to keep the happy-path blocks small. Stop and the
 normal run cleanup still stop the cars.
 
+The Field pane offers **GPS ball position** (`gps.ball`): the first visible
+ball's position, or `None` when none is visible. Kick and goalie use this directly;
+the **GPS balls** list remains available for multi-ball programs.
+
+**Keyboard control** uses six simple held-key `if` blocks. Each loop starts with
+forward/left/turn at zero, then W/S, A/D and Q/E set the corresponding speed.
+Releasing keys therefore stops that axis. The same program is available as
+[10_keyboard.py](examples/10_keyboard.py).
+
 Both goalie scenarios place the car at Y=-1.2 m, facing 90°, with the ball above
 at Y=.8 m. Easy starts the car at X=.15 m and the ball at X=.3 m with velocity
 (-.1, -.6) m/s. Hard starts the car at X=-.3 m and the ball at X=.3 m with velocity

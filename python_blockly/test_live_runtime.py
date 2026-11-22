@@ -92,6 +92,15 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.devices.field_reads,1)
         self.assertGreater(self.devices.gps.closes,0)
 
+    def test_single_ball_position_and_no_ball(self):
+        run=self.start('ball = gps.ball\nprint(ball.x, ball.y)')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertEqual(result['output'],'0.3 0.4\n')
+        self.devices.gps.balls=()
+        run=self.start('print(gps.ball is None)')
+        self.assertEqual(self.finish(run)['output'],'True\n')
+
     def test_current_boilerplates_execute_unchanged(self):
         for name in ('velocity',):
             with self.subTest(name=name):
