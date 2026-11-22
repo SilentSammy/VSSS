@@ -27,15 +27,41 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 
 ### macOS (Terminal)
 
-Run once:
+Install [Homebrew](https://brew.sh/) first if the `brew` command is unavailable:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Run the shell setup command printed by the Homebrew installer, then close and
+reopen Terminal. Install and verify every prerequisite:
+
+```bash
+brew install git python node
+git --version
+python3 --version
+node --version
+npm --version
+```
+
+Each version command must succeed before continuing. Then run the project setup:
 
 ```bash
 git clone --recurse-submodules https://github.com/SilentSammy/VSSS.git
 cd VSSS
+ls pyproject.toml
+git submodule update --init --recursive
 python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip setuptools
 .venv/bin/python -m pip install -e '.[plot]'
 npm ci --prefix python_blockly --omit=dev
 ```
+
+`ls pyproject.toml` confirms that Terminal is in the repository root. This project
+uses `pyproject.toml`, so a missing `setup.py` is normal. If pip says the directory
+cannot be installed, stop and `cd` into the cloned `VSSS` folder before rerunning
+the two pip commands. If `npm` is not found, rerun `brew install node`, reopen
+Terminal, and confirm `npm --version` works.
 
 In every new Terminal window, open the `VSSS` folder and activate the environment:
 
