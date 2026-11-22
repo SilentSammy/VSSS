@@ -19,7 +19,7 @@ CONFIG_CHUNK_BYTES = 180
 CONFIG_MAX_BYTES = 2048
 
 TRIM_STRUCT = struct.Struct("<9f")
-WAYPOINT_STRUCT = struct.Struct("<fff")
+WAYPOINT_STRUCT = struct.Struct("<fff")  # field X metres, Y metres, heading degrees CCW
 CONTROLLER_STRUCT = struct.Struct("<15f")
 STATUS_STRUCT = struct.Struct("<BBBBfffI")
 

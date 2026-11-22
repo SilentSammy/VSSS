@@ -85,14 +85,29 @@ class SettingsTest(unittest.TestCase):
                     self.assertNotIn('NEVER-RECORD-THIS-SECRET', bag.read_text())
                 self.assertTrue(any(uuid == p.CONFIG_UUID for uuid, _ in fake.writes))
 
-    def test_live_waypoint_uses_radians_and_lease_not_velocity_heartbeat(self):
+    def test_live_waypoint_uses_firmware_degrees_and_lease_not_velocity_heartbeat(self):
         fake = FakeBLE()
         with patch.dict(sys.modules, {'bleak': fake.module}):
             cars = CarCmdLive(EventHub())
             try:
                 cars.go_to(1, Pose(.1, .2, 90))
                 payload = next(value for uuid, value in fake.writes if uuid == p.WAYPOINT_UUID)
-                self.assertAlmostEqual(p.WAYPOINT_STRUCT.unpack(payload)[2], 1.5707963, places=5)
+                self.assertEqual(p.WAYPOINT_STRUCT.unpack(payload)[2], 90.)
+                # Emulate the firmware's only unit conversion and verify all
+                # cardinal headings, including signed angles and a full turn.
+                import math
+                from mp.onboard_controller import OnboardController, wrap_angle
+                for heading in (0.,90.,180.,-90.,270.,360.):
+                    cars.go_to(1,Pose(.1,.2,heading))
+                    payload = [value for uuid,value in fake.writes if uuid==p.WAYPOINT_UUID][-1]
+                    x,y,wire_heading = p.WAYPOINT_STRUCT.unpack(payload)
+                    self.assertEqual(wire_heading,heading)
+                    controller = OnboardController()
+                    controller.set_target(x,y,math.radians(wire_heading))
+                    self.assertAlmostEqual(wrap_angle(controller.target[2]-math.radians(heading)),0.)
+                    # A car already facing the requested field heading must
+                    # receive zero turn, just like the simulator controller.
+                    self.assertAlmostEqual(controller.update((x,y,heading),0)[2],0.)
                 async def heartbeat():
                     cars._last_write[1] -= 1
                     await cars._heartbeat_car(1)

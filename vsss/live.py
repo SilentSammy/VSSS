@@ -3,7 +3,6 @@ import asyncio
 from dataclasses import replace
 import json
 import logging
-import math
 import re
 import socket
 import struct
@@ -252,7 +251,9 @@ class CarCmdLive(CarCmd):
     async def _send_waypoint(self, car_id, target):
         async with self._io_lock(car_id):
             client = await self._connect(car_id)
-            payload = protocol.WAYPOINT_STRUCT.pack(target.x, target.y, math.radians(target.angle))
+            # Firmware receives degrees and converts to radians in mp/main.py.
+            # Converting here turns a requested 90 degrees into 1.57 degrees.
+            payload = protocol.WAYPOINT_STRUCT.pack(target.x, target.y, target.angle)
             try:
                 await asyncio.wait_for(client.write_gatt_char(protocol.WAYPOINT_UUID, payload, response=True), 2)
             except Exception:
