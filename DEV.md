@@ -12,7 +12,7 @@ former provider/worker transport stack.
 | `events.py` / `rpc.py` | Bounded subscriptions, whitelist dispatch, sessions and generic forked connections. |
 | `provider.py` | Compose GPS/cars, host/connect lifecycle and disconnect hook. |
 | `live.py` | UDP timing validation, HTTP dimensions, asyncio BLE owner, configuration readback and position leases. |
-| `scenarios.py` | Validated physical parameters, typed/two-frame scenario files, seeded goalie generation and export. |
+| `scenarios.py` | Validated physical parameters, printable-board default field, typed/two-frame scenario files, seeded goalie generation and export. |
 | `physics.py` | Pymunk geometry, finite motor force, identified normal impact, rolling/drift and seeded wobble. |
 | `simulation.py` | Delayed commands/observations, existing onboard controller, settings/status, atomic edits and grab ownership. |
 | `car.py` / `gps.py` / `runtime.py` | Small student views and cleanup over the provider API; lazy GPS. |
@@ -73,7 +73,7 @@ python blockly_python_demo/verify_export.py boilerplate_velocity.py
 python .tests/latency_probe.py --samples 300
 ```
 
-The feature suite has 70 passing tests and Blockly has 24. Tests use temporary
+The feature suite has 71 passing tests and Blockly has 24. Tests use temporary
 endpoints, synthetic UDP, fake GATT firmware and separate simulator/student
 processes. Student subprocess tests explicitly set VSSS_ENDPOINT so they cannot
 accidentally target the lab provider. They do not move hardware. Package tests

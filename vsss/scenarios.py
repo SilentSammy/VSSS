@@ -18,6 +18,14 @@ DEFAULT_CONFIG = dict(
     latency=dict(udp_ms=0., ble_ms=0.))
 
 
+def printable_field():
+    """The default simulator boundary: the full printable lab board."""
+    # Keep vision/OpenCV imports lazy so scenarios that supply a field remain
+    # usable without loading camera infrastructure.
+    from aruco_gps.vision_setup import DEFAULT_SETUP
+    return Field(*DEFAULT_SETUP.board.get_print_dimensions())
+
+
 def physical_config(value=None):
     if value is not None and not isinstance(value, dict): raise ValueError('config must be a mapping')
     result = deepcopy(DEFAULT_CONFIG)
@@ -75,7 +83,7 @@ def load_scenario(path):
             finite(dt)
             if dt <= 0: raise ValueError('scenario frame times must increase')
             config = dict(first.get('config', {}))
-            field = Field(*config.pop('field', [1.5, 2.9]))
+            field = Field(*config.pop('field')) if 'field' in config else printable_field()
             state = WorldState(field=field, cars=[CarState(c['id'], Pose(c['x'], c['y'], c.get('angle', 0))) for c in a['cars']],
                 balls=[BallState(c.get('id', i), Pose(c['x'], c['y'])) for i, c in enumerate(a['balls'])])
             motion = []
@@ -104,7 +112,8 @@ def goalie_scenario(seed=None):
     x, y, target = rng.uniform(-.55, .55), rng.uniform(-1, 0), rng.uniform(-.55, .55)
     dx, dy = target-x, 1.45-y
     scale = .8 / math.hypot(dx, dy)
-    state = WorldState(cars=[CarState(1, Pose(0, 1.2))], balls=[BallState(0, Pose(x, y))])
+    state = WorldState(field=printable_field(), cars=[CarState(1, Pose(0, 1.2))],
+                       balls=[BallState(0, Pose(x, y))])
     # The generated shot must reach the goal line; generic illustrative drag
     # would stop a 0.8 m/s ball before some of the longer seeded trajectories.
     config = dict(ball_model=dict(rolling_deceleration=.07489989178563962,

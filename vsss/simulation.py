@@ -18,7 +18,7 @@ from .events import EventHub
 from .models import BallState, BodyMotion, CarState, Pose, SimScenario, StatePatch, Velocity, WorldState, decode
 from .physics import Physics
 from .provider import VSSSProvider
-from .scenarios import goalie_scenario, load_scenario as read_scenario, physical_config, save_scenario
+from .scenarios import goalie_scenario, load_scenario as read_scenario, physical_config, printable_field, save_scenario
 
 
 def scenario_state(path):
@@ -79,8 +79,8 @@ class VSSSSim(VSSSProvider):
     def __init__(self, state=None, *, rate=30, config=None, seed=None, wait_for_control=None):
         if type(rate) not in (int, float) or not math.isfinite(rate) or not 1 <= rate <= 200:
             raise ValueError('simulation rate must be 1..200 Hz')
-        scenario = state if isinstance(state, SimScenario) else SimScenario(state or
-            WorldState(cars=[CarState(1)], balls=[BallState(0, Pose(.3, .3))]))
+        scenario = state if isinstance(state, SimScenario) else SimScenario(state or WorldState(
+            field=printable_field(), cars=[CarState(1)], balls=[BallState(0, Pose(.3, .3))]))
         merged = physical_config(scenario.config)
         for key, value in (config or {}).items():
             if isinstance(value, dict) and isinstance(merged.get(key), dict): merged[key].update(value)

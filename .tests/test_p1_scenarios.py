@@ -6,11 +6,26 @@ import tempfile
 import unittest
 
 from vsss import *
-from vsss.scenarios import goalie_scenario, load_scenario, physical_config, save_scenario
+from vsss.scenarios import goalie_scenario, load_scenario, physical_config, printable_field, save_scenario
 from vsss.simulation import VSSSSim
 
 
 class ScenarioTest(unittest.TestCase):
+    def test_default_simulator_and_generated_scenarios_use_printable_field(self):
+        from aruco_gps.vision_setup import DEFAULT_SETUP
+        field = Field(*DEFAULT_SETUP.board.get_print_dimensions())
+        self.assertEqual(printable_field(), field)
+        self.assertEqual(goalie_scenario().state.field, field)
+        with VSSSSim() as sim:
+            self.assertEqual(sim.gps.state().field, field)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'frames.jsonl'
+            path.write_text('\n'.join(json.dumps(value) for value in [
+                dict(type='sim_scenario', schema=1),
+                dict(time=1, cars=[], balls=[]), dict(time=2, cars=[], balls=[]),
+            ]))
+            self.assertEqual(load_scenario(path).state.field, field)
+
     def test_goalie_seed_export_wait_gate_and_control_release(self):
         scenario = goalie_scenario(123)
         self.assertEqual(goalie_scenario(123), scenario)

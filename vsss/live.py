@@ -50,7 +50,10 @@ class GPSLive(GPSState):
         opener = build_opener(ProxyHandler({}))
         with opener.open(self.metadata_url, timeout=2) as response:
             data = json.loads(response.read(1024 * 1024))
-        width, height = data["setup"]["board"]["dimensions_m"]
+        board = data["setup"]["board"]
+        # New vision metadata distinguishes the printable field from the ArUco
+        # grid. Older servers expose only the latter.
+        width, height = board.get("print_dimensions_m", board["dimensions_m"])
         field = Field(width, height)
         with self._lock:
             self._state = replace(self._state, field=field)

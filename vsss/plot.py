@@ -292,7 +292,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.list_setups:
         for name, setup in setups.items():
-            width, height = setup.board.get_board_dimensions()
+            width, height = setup.board.get_print_dimensions()
             print(f'{name}: {width:g} x {height:g} m' + (' (default)' if name == default else ''))
         return
     if args.width < 100:
@@ -324,8 +324,8 @@ def main(argv=None):
                 latest = frame.copy()
             label = f'{args.setup} | {status}'
             if source is not None and not (
-                math.isclose(state.field.width, plotter.board_width, abs_tol=.001) and
-                math.isclose(state.field.height, plotter.board_height, abs_tol=.001)):
+                math.isclose(state.field.width, plotter.print_width, abs_tol=.001) and
+                math.isclose(state.field.height, plotter.print_height, abs_tol=.001)):
                 label += f' | field mismatch: feed {state.field.width:g}x{state.field.height:g} m'
             cv2.putText(frame, label[:140], (12, 22), cv2.FONT_HERSHEY_SIMPLEX, .45,
                         (60, 60, 60), 1, cv2.LINE_AA)

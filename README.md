@@ -72,7 +72,10 @@ The plot reuses `aruco_gps.plotter2d.BoardPlotter2D` and the local lab definitio
 in `aruco_gps/vision_setup.py`. It uses `DEFAULT_SETUP` by default (currently
 `setup_160cm`), including the board PNG artwork, marker dimensions, margins,
 colors, labels and image sprites from the setup's `marker_config.json`.
-Select the same setup as the lab server:
+The simulator's default field and plot mismatch check use the selected default
+board's printable dimensions, including its margins (currently 1.6 x 3.0 m),
+rather than the smaller ArUco grid dimensions. Select the same setup as the lab
+server:
 
 ```powershell
 vsss-plot

@@ -49,7 +49,7 @@ class EdgesTest(unittest.TestCase):
     def test_metadata_http(self):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                payload = b'{"setup":{"board":{"dimensions_m":[2,3]}}}'
+                payload = b'{"setup":{"board":{"dimensions_m":[2,3],"print_dimensions_m":[2.2,3.2]}}}'
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(payload)
@@ -59,7 +59,7 @@ class EdgesTest(unittest.TestCase):
         thread.start()
         gps = GPSLive(EventHub(), server=None, metadata_url=f'http://127.0.0.1:{http.server_port}/status')
         try:
-            self.assertEqual(gps.refresh_field(), Field(2, 3))
+            self.assertEqual(gps.refresh_field(), Field(2.2, 3.2))
         finally:
             gps.close()
             http.shutdown()

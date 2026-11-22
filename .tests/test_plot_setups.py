@@ -29,6 +29,7 @@ class PlotSetupsTest(unittest.TestCase):
         self.assertIs(setups[default], DEFAULT_SETUP)
         plotter = make_plotter(width=200)
         self.assertEqual((plotter.board_width, plotter.board_height), DEFAULT_SETUP.board.get_board_dimensions())
+        self.assertEqual((plotter.print_width, plotter.print_height), DEFAULT_SETUP.board.get_print_dimensions())
 
     def test_every_setup_matches_geometry_marker_size_and_local_artwork(self):
         setups, _ = lab_setups()
@@ -37,6 +38,7 @@ class PlotSetupsTest(unittest.TestCase):
                 with self.subTest(name=name):
                     plotter = make_plotter(name, width=320)
                     self.assertEqual((plotter.board_width, plotter.board_height), setup.board.get_board_dimensions())
+                    self.assertEqual((plotter.print_width, plotter.print_height), setup.board.get_print_dimensions())
                     self.assertEqual(plotter.board_config.get_print_dimensions(), setup.board.get_print_dimensions())
                     self.assertEqual(plotter.marker_size_m, setup.marker_size_m)
                     self.assertEqual(plotter.marker_overrides[0]['text'], '6')
@@ -44,7 +46,7 @@ class PlotSetupsTest(unittest.TestCase):
                     self.assertIsInstance(plotter.marker_overrides[8]['image'], np.ndarray)
                     self.assertIsInstance(plotter.marker_overrides[9]['image'], np.ndarray)
                     # All three styles actually render, including image alpha channels.
-                    state = WorldState(field=Field(*setup.board.get_board_dimensions()), cars=[
+                    state = WorldState(field=Field(*setup.board.get_print_dimensions()), cars=[
                         CarState(0, Pose(-.04, 0)), CarState(8), CarState(9, Pose(.04, 0))])
                     frame = render_state(plotter, state)
                     self.assertEqual(frame.shape[1], 320)
@@ -69,7 +71,7 @@ class PlotSetupsTest(unittest.TestCase):
             with contextlib.redirect_stdout(output): main(['--list-setups'])
             self.assertIn('setup_letter', output.getvalue())
             self.assertIn('setup_90cm', output.getvalue())
-            self.assertIn('setup_160cm: 1.5 x 2.9 m (default)', output.getvalue())
+            self.assertIn('setup_160cm: 1.6 x 3 m (default)', output.getvalue())
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main(['--setup', 'does_not_exist'])
 
