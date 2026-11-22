@@ -49,7 +49,10 @@ the server starts the corresponding ordinary VSSS provider if needed. Scenario
 changes reset an existing simulator without restarting it. Start/reset reloads
 the selected scenario. Stop a running student program before switching modes.
 The embedded plot shares `vsss-plot` rendering and supports car/ball dragging in
-simulation. Providers started in another terminal are reused and left running;
+simulation. Both views show active waypoint targets with a car label, desired
+heading arrow and dashed guide. Targets follow observed CarCmd traffic, including
+commands sent before opening the plot, and clear on stop, manual control, arrival
+or scenario reset. Providers started in another terminal are reused and left running;
 stop them there before changing between Live and Simulation. See
 [python_blockly/README.md](python_blockly/README.md) for examples and tests.
 

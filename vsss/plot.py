@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 import time
 
-from .models import WorldState
+from .models import CommandEvent, WorldState
 from .provider import VSSSProvider
 from .rpc import default_endpoint
 
@@ -82,10 +82,33 @@ def make_plotter(setup=None, width=720, marker_config=None):
     return plotter
 
 
-def render_state(plotter, state):
-    return plotter.render_packet(dict(board_detected=state.valid,
+def render_state(plotter, state, waypoints=None):
+    frame = plotter.render_packet(dict(board_detected=state.valid,
         markers=[dict(id=car.id, **asdict(car.pose)) for car in state.cars],
         balls=[dict(id=ball.id, **asdict(ball.pose)) for ball in state.balls]))
+    if not waypoints: return frame
+    import cv2
+    def pixel(x, y):
+        return (round(plotter.width/2+x*plotter.scale), round(plotter.height/2-y*plotter.scale))
+    cars = {car.id: car.pose for car in state.cars} if state.valid else {}
+    for number, target in sorted(waypoints.items()):
+        color = [(40, 170, 240), (210, 150, 40), (160, 75, 190), (80, 165, 70)][(number-1) % 4]
+        center = pixel(target.x, target.y)
+        if number in cars:
+            start = pixel(cars[number].x, cars[number].y)
+            # A dashed guide leaves the field and car artwork visible.
+            length = math.dist(start, center)
+            for distance in range(0, round(length), 12):
+                a, b = distance/max(1,length), min(distance+6,length)/max(1,length)
+                cv2.line(frame, tuple(round(p+(q-p)*a) for p,q in zip(start,center)),
+                         tuple(round(p+(q-p)*b) for p,q in zip(start,center)), color, 1, cv2.LINE_AA)
+        cv2.circle(frame, center, max(5, round(.045*plotter.scale)), color, 2, cv2.LINE_AA)
+        heading = math.radians(target.angle)
+        tip = pixel(target.x+.13*math.cos(heading), target.y+.13*math.sin(heading))
+        cv2.arrowedLine(frame, center, tip, color, 2, cv2.LINE_AA, tipLength=.3)
+        cv2.putText(frame, f'car{number} target', (center[0]+8,center[1]-8),
+                    cv2.FONT_HERSHEY_SIMPLEX, .4, color, 1, cv2.LINE_AA)
+    return frame
 
 
 def is_close_key(key):
@@ -103,6 +126,9 @@ class ProviderFeed:
         self.status = 'Waiting for provider'
         self.source_id = None
         self.description = {}
+        self._waypoints = {}
+        self._seen_commands = set()
+        self._waypoint_epoch = 0
         self._edits = deque()
         self._metadata_dirty = False
         self._last_event = time.monotonic()
@@ -115,6 +141,24 @@ class ProviderFeed:
 
     def info(self):
         with self.lock: return self.description
+
+    def waypoints(self):
+        with self.lock: return dict(self._waypoints)
+
+    def _command(self, command):
+        """Caller holds the feed lock. Never sends a command to a car."""
+        if not isinstance(command, CommandEvent): return
+        self._seen_commands.add(command.car_id)
+        if command.operation == 'waypoint': self._waypoints[command.car_id] = command.value
+        else: self._waypoints.pop(command.car_id, None)
+
+    def _prune_reached(self):
+        if not self.state.valid: return
+        for car in self.state.cars:
+            target = self._waypoints.get(car.id)
+            if target and math.hypot(car.pose.x-target.x,car.pose.y-target.y) <= .025 and abs(
+                    (car.pose.angle-target.angle+180)%360-180) <= 5:
+                self._waypoints.pop(car.id, None)
 
     def gesture(self, operation, kind, number, pose=None, *, source_id):
         with self.lock:
@@ -152,9 +196,25 @@ class ProviderFeed:
             with self.lock:
                 self.state = event.value
                 self._last_event = time.monotonic()
+                self._prune_reached()
+        elif event.topic == 'commands':
+            with self.lock:
+                self._command(event.value)
+                self._prune_reached()
         elif event.topic == 'lifecycle' and isinstance(event.value, dict):
             if event.value.get('kind') == 'scenario_loaded':
-                with self.lock: self._metadata_dirty = True
+                with self.lock:
+                    self._metadata_dirty = True
+                    self._waypoints.clear()
+                    self._waypoint_epoch += 1
+            if event.value.get('kind') in ('state_edited', 'simulation_edit'):
+                patch = event.value.get('patch')
+                ids = [car.id for car in patch.cars] if patch is not None else []
+                if event.value.get('object_kind') == 'car': ids.append(event.value['id'])
+                with self.lock:
+                    for number in ids:
+                        self._waypoints.pop(number, None)
+                        self._seen_commands.add(number)
             if event.value.get('kind') == 'playback_end':
                 with self.lock:
                     self.status = 'Playback finished' if event.value.get('complete') else str(event.value)
@@ -169,11 +229,23 @@ class ProviderFeed:
                     with self.lock:
                         self.state, self.source_id = state, description['source_id']
                         self.description = description
+                        self._waypoints.clear()
+                        self._seen_commands.clear()
+                        self._waypoint_epoch += 1
                         self._edits.clear()
                         self.status = description['mode']
                     grab = None
                     last_poll = time.monotonic()
-                    with client.subscribe(['gps', 'lifecycle'], self._receive) as subscription:
+                    with client.subscribe(['gps', 'commands', 'lifecycle'], self._receive) as subscription:
+                        # Subscribe first, then seed commands sent before the plot
+                        # opened. Events received meanwhile win over the snapshot.
+                        with self.lock: epoch = self._waypoint_epoch
+                        commands = client.cars.observed()
+                        with self.lock:
+                            if epoch == self._waypoint_epoch:
+                                for command in commands:
+                                    if command.car_id not in self._seen_commands: self._command(command)
+                                self._prune_reached()
                         while not self.stop.wait(.02):
                             if subscription.error:
                                 raise ConnectionError(str(subscription.error))
@@ -189,13 +261,16 @@ class ProviderFeed:
                                 with self.lock: silent = last_poll-self._last_event > .2
                                 if silent:
                                     state = client.gps.state()
-                                    with self.lock: self.state = state
+                                    with self.lock:
+                                        self.state = state
+                                        self._prune_reached()
                             grab = self._edit_pending(client, grab)
             except Exception as error:
                 with self.lock:
                     self.status = f'Waiting for provider: {error}'
                     self.source_id = None
                     self.description = {}
+                    self._waypoints.clear()
                     self._edits.clear()
             self.stop.wait(.2)
 
@@ -299,7 +374,7 @@ class EmbeddedPlot:
                 self._release()
             state, status, source = self.feed.snapshot()
             info = self.feed.info()
-            frame = self.drag.render(render_state(self.plotter, state), state)
+            frame = self.drag.render(render_state(self.plotter, state, self.feed.waypoints()), state)
             metadata = dict(source_id=source, generation=info.get('simulation', {}).get('generation'),
                             editable=info.get('capabilities', {}).get('simulation_edit', False), status=status)
             return frame, metadata
@@ -372,7 +447,7 @@ def main(argv=None):
             cv2.setMouseCallback(window, drag.mouse)
         while deadline is None or time.monotonic() < deadline:
             state, status, source = feed.snapshot()
-            frame = render_state(plotter, state)
+            frame = render_state(plotter, state, feed.waypoints())
             if not args.output: frame = drag.render(frame, state)
             if source is not None and state.valid:
                 latest = frame.copy()
