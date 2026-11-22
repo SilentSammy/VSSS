@@ -265,18 +265,8 @@ class SimDrag:
 
     def render(self, frame, state):
         import cv2
-        import numpy as np
         info = self.feed.info().get('simulation')
         if info is None: return frame
-        for car in state.cars:
-            c, s = math.cos(math.radians(car.pose.angle)), math.sin(math.radians(car.pose.angle))
-            points = [(car.pose.x+c*x-s*y, car.pose.y+s*x+c*y) for x, y in info['body']]
-            pixels = np.array([(round(self.plotter.width/2+x*self.plotter.scale),
-                                round(self.plotter.height/2-y*self.plotter.scale)) for x, y in points], np.int32)
-            cv2.polylines(frame, [pixels], True, (100, 100, 100), 1, cv2.LINE_AA)
-            center = (round(self.plotter.width/2+car.pose.x*self.plotter.scale),
-                      round(self.plotter.height/2-car.pose.y*self.plotter.scale))
-            cv2.circle(frame, center, max(3, round(.03*self.plotter.scale)), (100, 100, 100), 1, cv2.LINE_AA)
         cv2.putText(frame, 'Centre: move | Edge: rotate | Ball: move', (8, frame.shape[0]-10),
                     cv2.FONT_HERSHEY_SIMPLEX, .4, (70, 70, 70), 1, cv2.LINE_AA)
         return frame

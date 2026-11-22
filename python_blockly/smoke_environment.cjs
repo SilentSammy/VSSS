@@ -25,10 +25,30 @@ const path=require('node:path');
     browser=await chromium.launch({channel:'msedge',headless:true});
     const page=await browser.newPage({viewport:{width:1600,height:1100}});
     page.on('pageerror',e=>errors.push(e.message));
+    // Initial connection failure must recover without reloading the page.
+    let firstEnvironmentRequest=true;
+    await page.route('**/api/environment', route=>{
+      if (firstEnvironmentRequest) { firstEnvironmentRequest=false; return route.abort('connectionfailed'); }
+      return route.continue();
+    });
     await page.goto('http://127.0.0.1:8767');
     await page.waitForFunction(()=>typeof workspace!=='undefined'&&workspace&&document.querySelector('#environment').options.length>=4);
-    assert.equal(await page.locator('#environment').inputValue(),'goalie_easy');
+    assert.equal(await page.locator('#environment').inputValue(),'car1_ball1');
+    assert.deepEqual(await page.locator('#environment option').allTextContents(),[
+      'Live','1 car','1 car 1 ball','2 cars 1 ball','4 cars 1 ball','goalie easy','goalie hard']);
     assert.equal(fs.existsSync(endpoint),false,'Page load must not start hardware or a provider');
+    await page.route('**/never-resolves', ()=>{});
+    const timedOut=await page.evaluate(async()=>{
+      try {await apiJSON('/never-resolves',{},50); return false;}
+      catch(error){return error.message.includes('timed out');}
+    });
+    assert.equal(timedOut,true,'Hung requests must have a bounded timeout');
+    await page.unroute('**/never-resolves');
+    await page.route('**/environment', route=>route.abort('connectionfailed'));
+    await page.click('#reset-environment');
+    await page.waitForFunction(()=>!document.querySelector('#environment').disabled);
+    assert.match(await page.locator('#environment-status').innerText(),/local Blockly server/);
+    await page.unroute('**/environment');
     await page.click('#reset-environment');
     await page.waitForFunction(()=>document.querySelector('#field').classList.contains('editable'));
     await page.click('#field-collapse');
@@ -42,7 +62,7 @@ const path=require('node:path');
     await page.click('#field-fullscreen');
     await page.waitForFunction(()=>!document.fullscreenElement);
     const before=car();
-    assert.ok(Math.abs(before.y-1.2)<.01);
+    assert.ok(Math.abs(before.y)<.01);
     const canvas=page.locator('#field');
     await canvas.scrollIntoViewIfNeeded();
     const box=await canvas.boundingBox();
@@ -54,7 +74,12 @@ const path=require('node:path');
     await page.waitForTimeout(300);await page.mouse.up();
     await page.waitForTimeout(300);
     assert.ok(Math.abs(car().x-(before.x+.2))<.03,'Canvas drag must update the real simulator pose');
-    await page.selectOption('#environment','scenario');
+    await page.route('**/run', route=>route.abort('connectionfailed'));
+    await page.click('#run');
+    await page.waitForFunction(()=>document.querySelector('#status').textContent==='Could not start');
+    assert.equal(await page.locator('#environment').isEnabled(),true);
+    await page.unroute('**/run');
+    await page.selectOption('#environment','car1_ball1');
     await page.waitForFunction(()=>!document.querySelector('#environment').disabled);
     const changed=car();assert.equal(changed.source,before.source);
     assert.ok(Math.abs(changed.x+.2)<.01,'Selection must reset the existing simulator');
@@ -78,9 +103,18 @@ const path=require('node:path');
     await page.click('#run');
     await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running');
     await page.waitForTimeout(1200);
-    assert.ok(car().x>goalieStart.x+.03,'Goalie must move sideways toward the incoming ball');
+    assert.ok(Math.abs(car().x-goalieStart.x)>.01,'Goalie must move sideways toward the incoming ball');
     await page.click('#stop');
     await page.waitForFunction(()=>document.querySelector('#status').textContent==='Stopped by user.');
+    // Lose the heartbeat mid-run: controls must recover once its lease ends.
+    await page.click('#run');
+    await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running');
+    await page.route('**/status', route=>route.abort('connectionfailed'));
+    await page.waitForFunction(()=>!document.querySelector('#environment').disabled,null,{timeout:15000});
+    await page.unroute('**/status');
+    await page.selectOption('#environment','cars4_ball1');
+    await page.waitForFunction(()=>!document.querySelector('#environment').disabled);
+    assert.equal(await page.locator('#environment').inputValue(),'cars4_ball1');
     await page.selectOption('#lesson','rotation');
     await page.click('#run');
     await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running');

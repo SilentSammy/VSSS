@@ -15,7 +15,21 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        # Avoid mixing cached Blockly lesson definitions with an updated UI.
+        if self.path.split('?', 1)[0] in {'/', '/index.html', '/app.js', '/vsss_blocks.js', '/style.css'}:
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
     def do_GET(self):
+        try:
+            self.get_response()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as exc:
+            self.reply({'error': f'{type(exc).__name__}: {exc}'}, status=503)
+
+    def get_response(self):
         if self.path == '/api/environment':
             self.reply(self.server.environment.status() if self.server.environment else dict(options=[], mode='test', selected=None))
             return
@@ -99,7 +113,7 @@ class Handler(SimpleHTTPRequestHandler):
                 result = self.server.runner.stop(payload.get('run_id'))
             else:
                 result = self.server.runner.status(payload.get('run_id'))
-        except (ValueError, SyntaxError, TypeError, AttributeError, OSError, RuntimeError) as exc:
+        except Exception as exc:
             self.reply({'error': str(exc)}, status=400)
             return
         self.reply(result)

@@ -179,7 +179,7 @@ function loadLesson(kind) {
     updateCode();
     return;
   }
-  const ids = ['car1','car2','pose','total','count','forward','turn','balls','ball'];
+  const ids = ['car1','car2','pose','total','count','forward','turn','balls','ball','response'];
   const forever = steps => expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:inputBlock(expression('logic_boolean',{BOOL:'TRUE'})),DO:inputBlock(chain(steps))});
   const assign = (name,block) => expression('variables_set',{VAR:varField(name)},{VALUE:inputBlock(block)});
   const firstBall = () => expression('vsss_index',{}, {INDEX:num(0),OBJECT:inputBlock(variable('balls'))});
@@ -232,16 +232,20 @@ function loadLesson(kind) {
       expression('vsss_wait_arrival',{CAR:varField('car1')},{TIMEOUT:num(10)}),
       carBlock('set_velocity','car1',{x:num(1),y:num(0),w:num(0)}),wait(.8),carBlock('stop')];
   } else if(kind==='goalie') {
-    // Repeated waypoints track X while holding a lane near the top wall.
-    const follow = [assign('ball',firstBall()),carBlock('go_to','car1',{
-      x:inputBlock(expression('math_constrain',{}, {VALUE:inputBlock(ballCoordinate('x')),LOW:num(-.65),HIGH:num(.65)})),
-      y:num(1.2),angle:num(0)})];
+    // At heading 90, positive sideways velocity moves toward field -X.
+    const error = expression('math_arithmetic',{OP:'MINUS'},{
+      A:inputBlock(field(expression('api_car_pose',{CAR:varField('car1')}),'x')),
+      B:inputBlock(ballCoordinate('x'))});
+    const speed = expression('math_arithmetic',{OP:'MULTIPLY'},{A:inputBlock(error),B:inputBlock(variable('response'))});
+    const follow = [assign('ball',firstBall()),carBlock('set_velocity','car1',{
+      x:num(0),y:inputBlock(expression('math_constrain',{}, {VALUE:inputBlock(speed),LOW:num(-1),HIGH:num(1)})),w:num(0)})];
     const ifBall = expression('controls_if',{}, {
       IF0:inputBlock(compare(ballCount(),'GT',expression('math_number',{NUM:0}))),
       DO0:inputBlock(chain(follow)),ELSE:inputBlock(carBlock('stop'))});
     ifBall.extraState={hasElse:true};
-    steps=[connect('car1',1),forever([assign('balls',expression('api_gps_balls')),
-      ifBall,wait(.1)])];
+    steps=[connect('car1',1),assign('response',expression('math_number',{NUM:2})),
+      expression('api_car_wait_for_position',{CAR:varField('car1')},{timeout:num(10)}),
+      forever([assign('balls',expression('api_gps_balls')),ifBall,wait(.05)])];
   } else if(kind==='observe') {
     steps=[expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain([
       print(expression('api_gps_feedback_problem')),print(expression('api_gps_cars')),print(expression('api_gps_balls')),wait(.1)

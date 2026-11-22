@@ -65,12 +65,23 @@ function updateCode() {
 }
 document.getElementById('lesson').onchange = event => {if(event.target.value) loadLesson(event.target.value);};
 async function request(path, payload = {}, options = {}) {
-  const response = await fetch(path, {method: 'POST', headers: {
+  return apiJSON(path, {method: 'POST', headers: {
     'Content-Type': 'application/json', 'X-VSSS-Blockly': '1'
-  }, body: JSON.stringify(payload), ...options});
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
-  return result;
+  }, body: JSON.stringify(payload), ...options}, path === '/run' ? 20000 : 8000);
+}
+async function apiJSON(path, options = {}, timeout = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(path, {...options, signal: controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
+    return result;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Editor request timed out. Try selecting the scenario again.');
+    if (error instanceof TypeError) throw new Error('Cannot reach the local Blockly server. Check that server.py is running, then retry. Lab Wi-Fi is not needed for simulation.');
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 function setBusy(value) {
   busy = value;
@@ -95,7 +106,15 @@ async function pollRun(runId = activeRun) {
     if (activeRun !== runId) return;
     showRun(result);
   } catch (error) {
-    if (activeRun === runId) document.getElementById('status').textContent = 'Connection lost; the server stops runs after 5 seconds without a heartbeat.';
+    if (activeRun === runId) {
+      document.getElementById('status').textContent = error.message + ' The server stops disconnected runs after 5 seconds.';
+      // The run may still own cars until its server-side lease expires. Keep
+      // Stop available, but let the student retry scenario selection afterwards.
+      setTimeout(() => {
+        if (activeRun === runId) { activeRun = null; setBusy(false); }
+      }, 5500);
+      return;
+    }
   }
   if (activeRun === runId) setTimeout(() => pollRun(runId), 500);
 }
@@ -232,7 +251,7 @@ setInterval(() => { if (dragPoint) sendPointer('move'); }, 100);
 async function pollPlot() {
   if (fieldContent.hidden) { setTimeout(pollPlot, 250); return; }
   try {
-    const response = await fetch('/api/plot', {cache: 'no-store'});
+    const response = await fetch('/api/plot', {cache: 'no-store', signal: AbortSignal.timeout(4000)});
     if (response.status === 404) return; // Explicit fake-device test server.
     if (!response.ok) throw new Error('Plot unavailable');
     const metadata = JSON.parse(response.headers.get('X-VSSS-State'));
@@ -244,10 +263,12 @@ async function pollPlot() {
     plotCanvas.classList.toggle('editable', metadata.editable);
     document.getElementById('plot-status').textContent = metadata.status +
       (metadata.editable ? ' · Drag centres/balls to move; edges to rotate.' : ' · Observation only');
-  } catch (error) { document.getElementById('plot-status').textContent = error.message; }
+  } catch (error) {
+    document.getElementById('plot-status').textContent = 'Plot disconnected; retrying the local server. ' + error.message;
+  }
   setTimeout(pollPlot, 80);
 }
-let currentEnvironment = 'goalie_easy';
+let currentEnvironment = 'car1_ball1';
 function environmentLabel(result) {
   currentEnvironment = result.selected;
   const live = result.selected === 'live';
@@ -274,8 +295,15 @@ async function chooseEnvironment() {
 }
 document.getElementById('environment').onchange = chooseEnvironment;
 document.getElementById('reset-environment').onclick = chooseEnvironment;
-fetch('/api/environment').then(response => response.json()).then(result => {
-  const select = document.getElementById('environment');
-  for (const item of result.options) select.add(new Option(item.label, item.id));
-  if (result.options.length) { select.value = result.selected; environmentLabel(result); pollPlot(); }
-}).catch(error => { document.getElementById('environment-status').textContent = error.message; });
+async function loadEnvironments() {
+  try {
+    const result = await apiJSON('/api/environment');
+    const select = document.getElementById('environment');
+    select.replaceChildren(...result.options.map(item => new Option(item.label, item.id)));
+    if (result.options.length) { select.value = result.selected; environmentLabel(result); pollPlot(); }
+  } catch (error) {
+    document.getElementById('environment-status').textContent = error.message;
+    setTimeout(loadEnvironments, 2000);
+  }
+}
+loadEnvironments();

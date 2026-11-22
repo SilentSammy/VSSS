@@ -6,7 +6,7 @@ from threading import RLock
 
 from vsss import VSSSProvider
 from vsss.rpc import default_endpoint
-from vsss.scenarios import goalie_scenario, load_scenario
+from vsss.scenarios import load_scenario
 from vsss.simulation import VSSSSim
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,21 +17,19 @@ class Environment:
         self.endpoint = Path(endpoint or os.environ.get('VSSS_ENDPOINT') or default_endpoint())
         self.port = port
         self.lock = RLock()
-        self.selected = 'goalie_easy'
+        self.selected = 'car1_ball1'
         self.owned = None
         self.resources = ExitStack()
-        self.scenarios = {'goalie_easy': ROOT / 'examples/goalie_easy.jsonl',
-                          'goalie_hard': ROOT / 'examples/goalie_hard.jsonl',
-                          'scenario': ROOT / 'examples/scenario.jsonl', 'goalie': None}
-        for path in sorted((ROOT / 'scenarios').glob('*.jsonl')):
-            self.scenarios.setdefault(path.stem, path)
+        self.scenarios = {name: ROOT / 'examples' / f'{name}.jsonl' for name in (
+            'car1', 'car1_ball1', 'cars2_ball1', 'cars4_ball1', 'goalie_easy', 'goalie_hard')}
 
     def options(self):
+        labels = ['1 car', '1 car 1 ball', '2 cars 1 ball', '4 cars 1 ball', 'goalie easy', 'goalie hard']
         return [dict(id='live', label='Live'), *[
-            dict(id=name, label=name.replace('_', ' ')) for name in self.scenarios]]
+            dict(id=name, label=label) for name, label in zip(self.scenarios, labels)]]
 
     def _scenario(self, name):
-        return goalie_scenario() if name == 'goalie' else load_scenario(self.scenarios[name])
+        return load_scenario(self.scenarios[name])
 
     def _client(self):
         try:

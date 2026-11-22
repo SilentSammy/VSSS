@@ -1,7 +1,7 @@
 # VSSS student blocks
 
 A student toolbox for programming VSSS cars in simulation or live. The default
-environment is `goalie_easy`; opening the page does not start hardware. Choose
+environment is `car1_ball1` (1 car 1 ball); opening the page does not start hardware. Choose
 an environment or press Run to start. Generated Python uses the same Car/GPS API.
 
 ## Start
@@ -19,8 +19,11 @@ is required. Use `--port 8767` if needed.
 `--endpoint PATH --provider-port 0` gives the editor an isolated provider endpoint
 and a free RPC port; student code and the embedded plot use that endpoint too.
 
-The Environment dropdown offers Live, `goalie_easy`, `scenario`, and the generated
-`goalie` shot, plus JSONL files found in the repository's `scenarios/` folder.
+The Environment dropdown offers exactly Live, 1 car, 1 car 1 ball, 2 cars 1 ball,
+4 cars 1 ball, goalie easy and goalie hard. Simulation uses localhost RPC and
+does not need lab Wi-Fi or the live UDP feed. Failed editor requests time out,
+show an error and allow retry; the scenario controls recover after a lost run's
+five-second heartbeat lease expires. Initial environment loading retries too.
 Selecting a scenario starts the normal VSSSSim provider, or resets the running
 simulator over RPC. Start/reset reloads the current scenario. Live starts the
 normal GPSLive/CarCmdLive provider and may control physical cars. These are the
@@ -47,15 +50,19 @@ Choose **Blank workspace** to clear the editor and start from scratch:
 
 The dropdown also includes **Kick ball to top wall** and **Goalie: follow the
 ball**. Kick reads the first ball, moves 30 cm behind it facing 90°, waits for
-arrival, then drives forward for .8 seconds and stops. Use the `scenario`
+arrival, then drives forward for .8 seconds and stops. Use the **1 car 1 ball**
 environment with a stationary ball and a clear approach; leave room behind it.
-Goalie sends a waypoint every .1 seconds to the ball's current X (limited to
-±.65 m), with Y fixed at 1.2 m and heading 0°. It stops if no ball is visible.
+Goalie follows the ball's current X, reading positions every .05 seconds. With
+the car facing 90°, sideways speed is `(car X - ball X) * response`, limited to
+-1..1. It stops if no ball is visible. The default `response = 2` saves easy but
+misses hard; try `response = 8` for a quicker response using the same rule.
+There is no prediction or intercept algorithm.
 These examples deliberately use ordinary editable blocks and assume one ball.
 
-`goalie_easy` starts car 1 at X=.15 m and a ball at X=.3 m moving toward the top
-wall at .6 m/s. `goalie_hard` starts the car at X=-.5 m, opposite a ball at
-X=.4 m moving at 1 m/s. Both keep the ball paused until the first movement
+Both goalie scenarios place the car at Y=-1.2 m, facing 90°, with the ball above
+at Y=.8 m. Easy starts the car at X=.15 m and the ball at X=.3 m with velocity
+(-.1, -.6) m/s. Hard starts the car at X=-.3 m and the ball at X=.3 m with velocity
+(-.3, -1) m/s. Both keep the ball paused until the first movement
 command so students can prepare the program before the shot starts.
 
 The same two programs are available as
