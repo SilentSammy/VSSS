@@ -5,6 +5,11 @@ async function startEditor() {
   const schema = await response.json();
   if (!response.ok) throw new Error(schema.error || 'Could not discover the VSSS API.');
   installVsssBlocks(schema);
+  for (const option of document.getElementById('lesson').options) {
+    if (typeof vsssLessonIds === 'undefined' || !vsssLessonIds.has(option.value)) {
+      throw new Error('Example scripts are outdated. Refresh the editor to load the matching version.');
+    }
+  }
   workspace = Blockly.inject('blocklyDiv', {
   media: 'node_modules/blockly/media/',
   toolbox: {kind: 'categoryToolbox', contents: [

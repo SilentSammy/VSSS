@@ -1,5 +1,6 @@
 """Local Python Blockly editor with VSSS providers and an embedded field plot."""
 import argparse
+import hashlib
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,20 @@ class Handler(SimpleHTTPRequestHandler):
             self.reply({'error': f'{type(exc).__name__}: {exc}'}, status=503)
 
     def get_response(self):
+        if self.path.split('?',1)[0] in ('/', '/index.html'):
+            # A fresh HTML page must fetch matching lesson/UI code even when a
+            # browser cached older scripts before no-store was introduced.
+            html = (ROOT/'index.html').read_text(encoding='utf-8')
+            for name in ('app.js','vsss_blocks.js','style.css'):
+                version = hashlib.sha256((ROOT/name).read_bytes()).hexdigest()[:12]
+                html = html.replace(f'"{name}"', f'"{name}?v={version}"')
+            data = html.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type','text/html; charset=utf-8')
+            self.send_header('Content-Length',str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path == '/api/environment':
             self.reply(self.server.environment.status() if self.server.environment else dict(options=[], mode='test', selected=None))
             return

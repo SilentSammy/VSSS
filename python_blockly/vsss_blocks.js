@@ -169,7 +169,10 @@ const wait = n => expression('vsss_wait',{}, {SECONDS:num(n)});
 const print = b => expression('text_print',{}, {TEXT:inputBlock(b)});
 const field = (obj,name) => expression('vsss_field',{FIELD:name},{OBJECT:inputBlock(obj)});
 const compare = (a,op,b) => expression('logic_compare',{OP:op},{A:inputBlock(a),B:inputBlock(b)});
+const vsssLessonIds = new Set(['blank','printing','variables','rotation','kick','goalie','teleop',
+  'read_gamepad','position','waypoints','observe','gamepads','keyboard','multi','velocity']);
 function loadLesson(kind) {
+  if (!vsssLessonIds.has(kind)) throw new Error('Unknown example: ' + kind + '. Refresh the editor.');
   let steps;
   document.getElementById('lesson').value = kind;
   if(kind==='blank') {
@@ -223,13 +226,16 @@ function loadLesson(kind) {
     ])];
   } else if(kind==='kick') {
     // One stationary ball, a clear approach, and a fixed +Y kick direction.
-    steps=[connect('car1',1),assign('balls',expression('api_gps_balls')),
+    steps=[connect('car1',1),expression('api_car_wait_for_position',{CAR:varField('car1')},{timeout:num(10)}),
+      assign('balls',expression('api_gps_balls')),
       expression('controls_if',{}, {IF0:inputBlock(compare(ballCount(),'EQ',expression('math_number',{NUM:0}))),
         DO0:inputBlock(expression('vsss_raise',{}, {TEXT:text('One visible stationary ball is required.')}))}),
       assign('ball',firstBall()),
+      print(expression('text',{TEXT:'Aligning 30 cm behind the ball, facing the top wall...'})),
       carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),
         y:inputBlock(expression('math_arithmetic',{OP:'MINUS'},{A:inputBlock(ballCoordinate('y')),B:num(.3)})),angle:num(90)}),
       expression('vsss_wait_arrival',{CAR:varField('car1')},{TIMEOUT:num(10)}),
+      print(expression('text',{TEXT:'Aligned. Kicking at full speed!'})),
       carBlock('set_velocity','car1',{x:num(1),y:num(0),w:num(0)}),wait(.8),carBlock('stop')];
   } else if(kind==='goalie') {
     // At heading 90, positive sideways velocity moves toward field -X.
@@ -263,7 +269,7 @@ function loadLesson(kind) {
     loop.push(wait(kind==='multi'?.1:.05));
     if(kind==='multi') steps.push(expression('controls_repeat_ext',{}, {TIMES:num(10),DO:inputBlock(chain(loop))}));
     else steps.push(expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain(loop))}));
-  } else {
+  } else if(kind==='velocity') {
     steps=[connect('car1',1),carBlock('set_velocity','car1',{x:num(.2),y:num(0),w:num(0)}),wait(1),carBlock('stop')];
   }
   Blockly.serialization.workspaces.load({variables:ids.map(name=>({id:'v-'+name,name,type:''})),blocks:{languageVersion:0,blocks:[{...chain(steps),x:25,y:25}]}},workspace);

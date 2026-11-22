@@ -47,7 +47,10 @@ class CliTest(unittest.TestCase):
                 self.assertIn('http://127.0.0.1:', line)
                 url = line.strip().split()[-1]
                 with urlopen(url, timeout=4) as response:
-                    self.assertIn('Program your car with blocks.', response.read().decode())
+                    html=response.read().decode()
+                    self.assertIn('Program your car with blocks.', html)
+                    self.assertRegex(html,r'vsss_blocks\.js\?v=[0-9a-f]{12}')
+                    self.assertRegex(html,r'app\.js\?v=[0-9a-f]{12}')
                 for resource in ('/app.js', '/node_modules/blockly/blockly_compressed.js', '/api/schema'):
                     with urlopen(url+resource, timeout=4) as response:
                         self.assertEqual(response.status, 200)

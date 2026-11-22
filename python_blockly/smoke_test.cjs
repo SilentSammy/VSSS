@@ -30,6 +30,25 @@ const path = require('node:path');
     assert.equal(await page.locator('#example').count(),0);
     assert.equal(await page.locator('#car-example').count(),0);
     assert.equal(await page.locator('#lesson option[value="blank"]').count(),1);
+    for (const lesson of ['kick','goalie']) {
+      await page.selectOption('#lesson',lesson);
+      const code=await page.locator('#code').innerText();
+      assert.doesNotMatch(code,/set_velocity\(x=0\.2/);
+      if(lesson==='kick') {
+        assert.match(code,/go_to\(x=.*ball.*\.x, y=.*ball.*\.y.*0\.3, angle=90\)/);
+        assert.match(code,/set_velocity\(x=1, y=0, w=0\)/);
+        assert.ok(code.indexOf('.go_to(')<code.indexOf('.set_velocity('));
+      } else {
+        assert.match(code,/while True:/);
+        assert.match(code,/response = 2/);
+        assert.match(code,/gps.balls/);
+      }
+    }
+    assert.equal(await page.evaluate(()=>{
+      const before=generatedCode();
+      try { loadLesson('missing-example'); return false; }
+      catch(error) { return error.message.includes('Unknown example') && before===generatedCode(); }
+    }),true);
     const exposedToolbox=await page.evaluate(()=>vsssToolbox);
     const exposed=JSON.stringify(exposedToolbox);
     for(const removed of ['Car settings','set_trim','set_controller','read_trim','read_controller','restart','reconnect_telemetry','gps_config','vsss_invert_y','vsss_data','connection_generation','latest']) assert.ok(!exposed.includes(removed),removed+' is still exposed');

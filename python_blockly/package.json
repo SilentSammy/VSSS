@@ -2,7 +2,7 @@
   "name": "vsss-python-blockly",
   "private": true,
   "version": "1.0.0",
-  "scripts": {"start": "python server.py", "test": "python -m unittest test_live_runtime test_environment test_cli -v && node smoke_test.cjs && node smoke_environment.cjs"},
+  "scripts": {"start": "python server.py", "test": "python -m unittest test_live_runtime test_environment test_cli test_kick -v && node smoke_test.cjs && node smoke_environment.cjs"},
   "dependencies": {"blockly": "13.4.0"},
   "devDependencies": {"playwright": "1.56.1"}
 }

@@ -92,6 +92,7 @@ const path=require('node:path');
     await page.click('#run');
     await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Finished'),null,{timeout:20000});
     assert.ok(!((await page.locator('#output').innerText()).includes('Error')));
+    assert.match(await page.locator('#output').innerText(),/Aligning 30 cm behind the ball[\s\S]*Aligned\. Kicking at full speed!/);
     const kicked=spawnSync(python,['-c',
       'import sys; from vsss import VSSSProvider; c=VSSSProvider.connect(sys.argv[1]); print(c.gps.state().balls[0].pose.y); c.close()',endpoint],{cwd:path.dirname(__dirname),encoding:'utf8'});
     assert.equal(kicked.status,0,kicked.stderr);
