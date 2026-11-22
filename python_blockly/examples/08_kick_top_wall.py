@@ -1,30 +1,16 @@
 """One stationary ball and a clear approach; aim straight toward +Y."""
-from time import monotonic, sleep
+from time import sleep
 from vsss import Car, gps, run
 
 
 @run
 def main():
     car1 = Car(1)
-    car1.wait_for_position()
-    balls = gps.balls
-    if len(balls) == 0:
-        raise RuntimeError('One visible stationary ball is required.')
-    ball = balls[0]
-    print('Aligning 30 cm behind the ball, facing the top wall...')
+    ball = gps.balls[0]
     car1.go_to(x=ball.x, y=ball.y - .3, angle=90)
-    arrival_deadline = monotonic() + 10
     sleep(.1)
-    while True:
-        arrival_status = car1.read_status()
-        if arrival_status.fault_name != 'none' or not arrival_status.pose_fresh:
-            raise RuntimeError('Onboard position/control unavailable')
-        if arrival_status.mode_name == 'reached':
-            break
-        if monotonic() >= arrival_deadline:
-            raise TimeoutError('Waypoint timed out')
+    while car1.read_status().mode_name != 'reached':
         sleep(.05)
-    print('Aligned. Kicking at full speed!')
     car1.set_velocity(x=1, y=0, w=0)
     sleep(.8)
     car1.stop()

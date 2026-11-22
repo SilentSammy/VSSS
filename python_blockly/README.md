@@ -54,12 +54,12 @@ The dropdown also includes **Kick ball to top wall** and **Goalie: follow the
 ball**. Kick reads the first ball, moves 30 cm behind it facing 90°, waits for
 arrival, then drives forward for .8 seconds and stops. Use the **1 car 1 ball**
 environment with a stationary ball and a clear approach; leave room behind it.
-Goalie follows the ball's current X, reading positions every .05 seconds. With
-the car facing 90°, sideways speed is `(car X - ball X) * response`, limited to
--1..1. It stops if no ball is visible. The default `response = 2` saves easy but
-misses hard; try `response = 8` for a quicker response using the same rule.
-There is no prediction or intercept algorithm.
-These examples deliberately use ordinary editable blocks and assume one ball.
+Goalie sends `go_to(ball.x, -1.2, 90)` every .05 seconds. The onboard controller
+handles the fixed heading and Y lane, even if the car starts rotated. There is
+no prediction or intercept algorithm. Both examples assume one visible ball
+and a clear field. Kick waits only for arrival; its extra validity, fault and
+timeout checks are omitted to keep the happy-path blocks small. Stop and the
+normal run cleanup still stop the cars.
 
 Both goalie scenarios place the car at Y=-1.2 m, facing 90°, with the ball above
 at Y=.8 m. Easy starts the car at X=.15 m and the ball at X=.3 m with velocity

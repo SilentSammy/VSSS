@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from environment import Environment
-from vsss import VSSSProvider, EventHub, GPSState, CarCmd, CarState, Pose, StatePatch, Velocity
+from vsss import VSSSProvider, EventHub, GPSState, CarCmd, CarState, BallState, Pose, StatePatch, Velocity, WorldState
 from vsss.plot import EmbeddedPlot
 from vsss.simulation import VSSSSim
 from vsss.scenarios import load_scenario
@@ -81,50 +81,52 @@ class EnvironmentTest(unittest.TestCase):
                             self.assertEqual((len(state.cars),len(state.balls)), (car_count,ball_count))
                 finally: lab.close()
 
-    def test_simple_goalie_difficulty_can_be_tuned_without_prediction(self):
+    def test_waypoint_goalie_corrects_heading_and_holds_lane(self):
         root = Path(__file__).resolve().parent
         program = (root / 'examples/09_goalie.py').read_text()
 
         class ShotEnded(BaseException):
             pass
 
-        def saves(level, response):
-            scenario = load_scenario(root.parent / f'examples/goalie_{level}.jsonl')
-            with VSSSSim(scenario) as sim:
+        def follows(heading):
+            state = WorldState(cars=[CarState(1,Pose(.15,-1.2,heading))],balls=[BallState(0,Pose(.3,.8))])
+            with VSSSSim(state) as sim:
                 ticks = 0
-                saved = False
+                waypoints = []
                 class Car:
                     def __init__(self, number): self.number = number
                     @property
                     def pose(self): return sim._world.cars[0].pose
                     def wait_for_position(self): return self.pose
-                    def set_velocity(self, **kwargs): sim.cars.set_velocity(self.number, Velocity(**kwargs))
+                    def go_to(self, x, y, angle):
+                        waypoints.append((x,y,angle))
+                        sim.cars.go_to(self.number,Pose(x,y,angle))
                     def stop(self): sim.cars.stop(self.number)
                 class GPS:
                     @property
                     def balls(self): return [b.pose for b in sim._world.balls]
                 def sleep(dt):
-                    nonlocal ticks, saved
+                    nonlocal ticks
                     for _ in range(round(dt/.01)):
                         sim.step(.01)
                         ticks += 1
-                        ball = sim._world.balls[0].pose
-                        if ball.y < -1.35 or ticks > 800: raise ShotEnded()
-                        if ball.y < -1 and sim._physics.balls[0].velocity.y >= 0:
-                            saved = True
-                            raise ShotEnded()
+                        if ticks >= 600: raise ShotEnded()
                 def imports(name, *args, **kwargs):
                     if name == 'vsss': return SimpleNamespace(Car=Car, gps=GPS(), run=lambda fn: fn)
                     if name == 'time': return SimpleNamespace(sleep=sleep)
                     return builtins.__import__(name, *args, **kwargs)
                 scope = {'__name__': 'example', '__builtins__': dict(vars(builtins), __import__=imports)}
-                exec(program.replace('response = 2', f'response = {response}'), scope)
+                exec(program, scope)
                 try: scope['main']()
                 except ShotEnded: pass
-                return saved
-        self.assertTrue(saves('easy', 2))
-        self.assertFalse(saves('hard', 2))
-        self.assertTrue(saves('hard', 8))
+                self.assertGreater(len(waypoints),50)
+                self.assertTrue(all(target == (.3,-1.2,90) for target in waypoints))
+                pose = sim._world.cars[0].pose
+                self.assertAlmostEqual(pose.x,.3,delta=.04)
+                self.assertAlmostEqual(pose.y,-1.2,delta=.04)
+                self.assertLess(abs((pose.angle-90+180)%360-180),5)
+        for heading in (0,90,-90):
+            with self.subTest(heading=heading): follows(heading)
 
     def test_goalie_starts_have_motion_and_increasing_difficulty(self):
         root = Path(__file__).resolve().parent.parent / 'examples'

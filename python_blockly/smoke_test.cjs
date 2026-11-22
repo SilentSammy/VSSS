@@ -40,9 +40,11 @@ const path = require('node:path');
         assert.ok(code.indexOf('.go_to(')<code.indexOf('.set_velocity('));
       } else {
         assert.match(code,/while True:/);
-        assert.match(code,/response = 2/);
+        assert.match(code,/go_to\(x=.*ball.*\.x, y=-1\.2, angle=90\)/);
+        assert.doesNotMatch(code,/set_velocity|response =/);
         assert.match(code,/gps.balls/);
       }
+      assert.doesNotMatch(code,/raise |arrival_deadline|fault_name|pose_fresh/);
     }
     assert.equal(await page.evaluate(()=>{
       const before=generatedCode();
