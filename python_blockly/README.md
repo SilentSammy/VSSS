@@ -38,7 +38,8 @@ Install the parent plot extra (`python -m pip install -e ".[plot]"`) for the vie
 
 ## Examples
 
-Every requested example is available in the example selector and as a Python file:
+Every requested example is available in the example selector and as a Python file.
+Choose **Blank workspace** to clear the editor and start from scratch:
 
 | Example | Python file | Behavior |
 | --- | --- | --- |

@@ -172,6 +172,13 @@ const compare = (a,op,b) => expression('logic_compare',{OP:op},{A:inputBlock(a),
 function loadLesson(kind) {
   let steps;
   document.getElementById('lesson').value = kind;
+  if(kind==='blank') {
+    workspace.clear();
+    const variableMap = workspace.getVariableMap();
+    for(const variable of variableMap.getAllVariables()) variableMap.deleteVariable(variable);
+    updateCode();
+    return;
+  }
   const ids = ['car1','car2','pose','total','count','forward','turn'];
   const forever = steps => expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:inputBlock(expression('logic_boolean',{BOOL:'TRUE'})),DO:inputBlock(chain(steps))});
   const assign = (name,block) => expression('variables_set',{VAR:varField(name)},{VALUE:inputBlock(block)});
@@ -234,4 +241,3 @@ function loadLesson(kind) {
   Blockly.serialization.workspaces.load({variables:ids.map(name=>({id:'v-'+name,name,type:''})),blocks:{languageVersion:0,blocks:[{...chain(steps),x:25,y:25}]}},workspace);
   updateCode();
 }
-function loadCarExample(){loadLesson('rotation');}

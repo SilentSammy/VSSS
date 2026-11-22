@@ -62,10 +62,6 @@ function updateCode() {
     if (!busy) document.getElementById('status').textContent = 'Ready';
   } catch (error) { document.getElementById('status').textContent = error.message; }
 }
-function loadExample() {loadLesson('printing');}
-
-document.getElementById('example').onclick = loadExample;
-document.getElementById('car-example').onclick = loadCarExample;
 document.getElementById('lesson').onchange = event => {if(event.target.value) loadLesson(event.target.value);};
 async function request(path, payload = {}, options = {}) {
   const response = await fetch(path, {method: 'POST', headers: {
@@ -77,7 +73,7 @@ async function request(path, payload = {}, options = {}) {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['run', 'car-example', 'example', 'load', 'lesson', 'environment', 'reset-environment']) document.getElementById(id).disabled = value;
+  for (const id of ['run', 'load', 'lesson', 'environment', 'reset-environment']) document.getElementById(id).disabled = value;
 }
 function showRun(result) {
   document.getElementById('output').textContent = result.output + (result.error ? '\n' + result.error : '') || '(No output yet.)';
