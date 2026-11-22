@@ -1,8 +1,13 @@
 # VSSS
 
-## Install (Windows / PowerShell)
+## Installation
 
-Requires Git, Python 3.10+ and Node.js with npm. Run once:
+Install Git, Python 3.10 or newer, and Node.js with npm first. Clone the repository
+with its ArUco GPS submodule, then install the Python and Blockly dependencies.
+
+### Windows (PowerShell)
+
+Run once:
 
 ```powershell
 git clone --recurse-submodules https://github.com/SilentSammy/VSSS.git
@@ -12,16 +17,37 @@ py -m venv .venv
 npm.cmd ci --prefix python_blockly --omit=dev
 ```
 
-In **every new terminal**, open the `VSSS` folder and activate the environment:
+In every new PowerShell terminal, open the `VSSS` folder and activate the
+environment:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\.venv\Scripts\Activate.ps1
 ```
 
-Start the student editor; it opens your browser automatically:
+### macOS (Terminal)
 
-```powershell
+Run once:
+
+```bash
+git clone --recurse-submodules https://github.com/SilentSammy/VSSS.git
+cd VSSS
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[plot]'
+npm ci --prefix python_blockly --omit=dev
+```
+
+In every new Terminal window, open the `VSSS` folder and activate the environment:
+
+```bash
+source .venv/bin/activate
+```
+
+### Start the student editor
+
+With the virtual environment active, run:
+
+```console
 vsss-blockly
 ```
 
@@ -58,8 +84,9 @@ stop them there before changing between Live and Simulation. See
 
 ## Manual test: separate terminals
 
-Open PowerShell terminals in this checkout and activate `.venv` in each one as
-shown above. Re-run `python -m pip install -e ".[plot]"` after entry-point changes.
+Open terminals in this checkout and activate `.venv` in each one using the command
+for your operating system above. Re-run `python -m pip install -e ".[plot]"` after
+entry-point changes.
 
 1. Terminal A: `vsss-sim`. Leave it running throughout the simulation tests.
 2. Terminal B: `vsss-plot`. A field window shows car1 and ball0. Escape or the
