@@ -8,12 +8,13 @@ import random
 from .models import BallState, BodyMotion, CarState, Field, Pose, SimScenario, WorldState, decode, encode, finite
 
 DEFAULT_CONFIG = dict(
-    body=[[-.06, -.06], [.06, -.06], [.06, .06], [-.06, .06]], ball_radius=.02,
-    car_mass=.4, ball_mass=.045, wall_restitution=.6, physics_hz=240,
-    motion=dict(max_speed=.6, max_yaw_rate=180., response_time=.06, max_acceleration=3.),
-    ball_model=dict(impact_gain=.75, rolling_deceleration=.25, drift_acceleration_x=0.,
-                    drift_acceleration_y=0., stop_speed=.005),
-    ball_wobble=dict(enabled=False, onset_speed=.14, acceleration=.06, correlation_time=.25,
+    body=[[-.07, -.07], [.07, -.07], [.07, .07], [-.07, .07]], ball_radius=.02,
+    car_mass=.4, ball_mass=.045, wall_restitution=.5, physics_hz=200,
+    motion=dict(max_speed=.6, max_yaw_rate=180., response_time=.12, max_acceleration=10.),
+    ball_model=dict(impact_gain=.8803656717213731, rolling_deceleration=.07489989178563962,
+                    drift_acceleration_x=.021460520730482636,
+                    drift_acceleration_y=-.003811512207333249, stop_speed=.05),
+    ball_wobble=dict(enabled=True, onset_speed=.14, acceleration=.06, correlation_time=.25,
                      drag_variation=.35, slow_drag_scale=.4, stop_speed=.01),
     latency=dict(udp_ms=0., ble_ms=0.))
 

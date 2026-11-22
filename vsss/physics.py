@@ -16,7 +16,8 @@ PHYSICS_DT = 1 / 240
 class Physics:
     def __init__(self, state, config=None, seed=None):
         self.config = physical_config(config)
-        self.random = random.Random(seed)
+        self._random_seed = seed if seed is not None else random.SystemRandom().randrange(2 ** 63)
+        self._ball_random = {}
         self.held, self._wobble = set(), {}
         self._impacts = {}
         self.dt = 1 / self.config['physics_hz']
@@ -54,6 +55,11 @@ class Physics:
         shape.collision_type = 1 if car else 2
         self.space.add(body, shape)
         target[obj.id] = body
+        if not car and obj.id not in self._ball_random:
+            # Independent streams keep one ball's contacts/edits from changing
+            # another ball's low-speed roughness.
+            self._ball_random[obj.id] = random.Random(
+                self._random_seed + obj.id * 0x9e3779b97f4a7c15)
 
     def _wall_contact(self, arbiter, space, data):
         arbiter.restitution = self.config['wall_restitution']
@@ -81,6 +87,7 @@ class Physics:
         # Recreate the edited body to discard cached contact/bias impulses too.
         self.space.remove(*body.shapes, body)
         self._add(obj, target)
+        if kind == 'ball': self._wobble.pop(obj.id, None)
         if (kind, obj.id) in self.held: self.hold(kind, obj.id, True)
 
     def hold(self, kind, number, held):
@@ -88,6 +95,7 @@ class Physics:
         key = (kind, number)
         body.velocity, body.angular_velocity = (0, 0), 0
         body.force, body.torque = (0, 0), 0
+        if kind == 'ball': self._wobble.pop(number, None)
         if held:
             self.held.add(key)
             body.body_type = pymunk.Body.KINEMATIC
@@ -115,36 +123,66 @@ class Physics:
                 target = pymunk.Vec2d(command.x, command.y).rotated(body.angle) * motion['max_speed']
                 delta = target - body.velocity
                 # Finite motor force lets contacts block the car and push balls.
-                acceleration = delta / motion['response_time']
+                alpha = -math.expm1(-self.dt / motion['response_time'])
+                acceleration = delta * (alpha / self.dt)
                 if acceleration.length > motion['max_acceleration']:
                     acceleration = acceleration.normalized() * motion['max_acceleration']
                 body.force = acceleration * body.mass
-                angular_acceleration = max(-4 * math.pi, min(4 * math.pi,
-                    (command.w * math.radians(motion['max_yaw_rate']) - body.angular_velocity) / motion['response_time']))
+                angular_acceleration = (command.w * math.radians(motion['max_yaw_rate']) -
+                                        body.angular_velocity) * alpha / self.dt
                 body.torque = angular_acceleration * body.moment
             for ball_id, body in self.balls.items():
                 if ('ball', ball_id) in self.held: continue
-                speed = body.velocity.length
-                stop = wobble['stop_speed'] if wobble['enabled'] else model['stop_speed']
-                if speed < stop:
-                    body.velocity = (0, 0)
-                elif speed:
-                    drift = pymunk.Vec2d(model['drift_acceleration_x'], model['drift_acceleration_y'])
-                    variation = 1.
-                    if wobble['enabled']:
-                        previous = self._wobble.get(ball_id, pymunk.Vec2d(0, 0))
-                        alpha = 1 - math.exp(-self.dt / wobble['correlation_time'])
-                        noise = pymunk.Vec2d(self.random.uniform(-1, 1), self.random.uniform(-1, 1))
-                        previous = previous * (1-alpha) + noise * alpha
-                        self._wobble[ball_id] = previous
-                        if speed >= wobble['onset_speed']: drift += previous * wobble['acceleration']
-                        variation += previous.x * wobble['drag_variation']
-                        if speed < wobble['onset_speed']: variation *= wobble['slow_drag_scale']
-                    body.velocity *= max(0., speed - model['rolling_deceleration'] * variation * self.dt) / speed
-                    body.velocity += drift * self.dt
+                self._roll_ball(ball_id, body, model, wobble)
                 body.angular_velocity *= math.exp(-3 * self.dt)
             self.space.step(self.dt)
             self._remaining -= self.dt
+
+    def _base_roll(self, velocity, model, stop_speed):
+        speed = velocity.length
+        if speed <= stop_speed: return pymunk.Vec2d(0, 0)
+        acceleration = (-model['rolling_deceleration'] * velocity / speed +
+                        pymunk.Vec2d(model['drift_acceleration_x'], model['drift_acceleration_y']))
+        result = velocity + acceleration * self.dt
+        return result if velocity.dot(result) > 0 else pymunk.Vec2d(0, 0)
+
+    def _roll_ball(self, ball_id, body, model, wobble):
+        """The pre-cleanup measured rolling model, applied to a Pymunk body."""
+        velocity = pymunk.Vec2d(*body.velocity)
+        speed = velocity.length
+        if not wobble['enabled'] or speed >= wobble['onset_speed']:
+            self._wobble.pop(ball_id, None)
+            body.velocity = self._base_roll(
+                velocity, model, wobble['stop_speed'] if wobble['enabled'] else model['stop_speed'])
+            return
+        if speed <= wobble['stop_speed']:
+            body.velocity = (0, 0)
+            self._wobble.pop(ball_id, None)
+            return
+        base = self._base_roll(velocity, model, wobble['stop_speed'])
+        base_speed = min(speed, base.length)
+        if base_speed == 0:
+            body.velocity = (0, 0)
+            self._wobble.pop(ball_id, None)
+            return
+        retention = math.exp(-self.dt / wobble['correlation_time'])
+        innovation = math.sqrt(-math.expm1(-2 * self.dt / wobble['correlation_time']))
+        lateral, drag = self._wobble.get(ball_id, (0., 0.))
+        rng = self._ball_random[ball_id]
+        lateral = max(-2., min(2., retention * lateral + innovation * rng.gauss(0, 1)))
+        drag = max(-1., min(1., retention * drag + innovation * rng.gauss(0, 1)))
+        self._wobble[ball_id] = lateral, drag
+        weight = min(1., (wobble['onset_speed'] - speed) /
+                     (wobble['onset_speed'] - wobble['stop_speed']))
+        braking_scale = (1 - weight * (1 - wobble['slow_drag_scale'])) * (
+            1 + weight * wobble['drag_variation'] * drag)
+        next_speed = max(0., speed - (speed - base_speed) * braking_scale)
+        fade = min(1., (speed - wobble['stop_speed']) / wobble['stop_speed'])
+        turn = wobble['acceleration'] * weight * fade * lateral * self.dt / speed
+        angle = base.angle + turn
+        if next_speed <= wobble['stop_speed']: next_speed = 0.
+        body.velocity = pymunk.Vec2d(next_speed, 0).rotated(angle)
+        if next_speed == 0: self._wobble.pop(ball_id, None)
 
     def snapshot(self, state):
         def pose(body):

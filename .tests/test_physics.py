@@ -1,11 +1,38 @@
 import math
 import unittest
 
-from vsss import BallState, CarState, Pose, StatePatch, Velocity, WorldState
+from vsss import BallState, CarState, Field, Pose, StatePatch, Velocity, WorldState
+from vsss.physics import Physics
+from vsss.scenarios import DEFAULT_CONFIG
 from vsss.simulation import VSSSSim
 
 
 class PhysicsTest(unittest.TestCase):
+    def test_calibrated_legacy_defaults_are_preserved(self):
+        self.assertEqual(DEFAULT_CONFIG['body'], [[-.07, -.07], [.07, -.07], [.07, .07], [-.07, .07]])
+        self.assertAlmostEqual(DEFAULT_CONFIG['ball_model']['impact_gain'], .8803656717213731)
+        self.assertAlmostEqual(DEFAULT_CONFIG['ball_model']['rolling_deceleration'], .07489989178563962)
+        self.assertTrue(DEFAULT_CONFIG['ball_wobble']['enabled'])
+        self.assertEqual(DEFAULT_CONFIG['physics_hz'], 200)
+
+    def test_legacy_free_roll_distance_and_low_speed_wobble_region(self):
+        state = WorldState(field=Field(8, 8), balls=[BallState(0)])
+        config = dict(ball_model=dict(impact_gain=1., rolling_deceleration=.1,
+                                     drift_acceleration_x=0., drift_acceleration_y=0., stop_speed=0.),
+                      ball_wobble=dict(enabled=False))
+        physics = Physics(state, config, seed=1)
+        physics.balls[0].velocity = .4, 0
+        for _ in range(500): physics.advance(.01, {})
+        self.assertAlmostEqual(physics.balls[0].position.x, .4 ** 2 / (2 * .1), delta=.003)
+
+        def slow(seed):
+            value = Physics(state, dict(ball_model=dict(drift_acceleration_x=0., drift_acceleration_y=0.)), seed=seed)
+            value.balls[0].velocity = .1, 0
+            for _ in range(100): value.advance(.01, {})
+            return tuple(value.balls[0].position)
+        self.assertEqual(slow(1), slow(1))
+        self.assertNotEqual(slow(1), slow(2))
+
     def test_push_ball_then_coast_and_roll_to_stop(self):
         with VSSSSim(WorldState(cars=[CarState(1, Pose(-.25, 0))], balls=[BallState(0)])) as sim:
             sim.cars.set_velocity(1, Velocity(.5))
@@ -14,8 +41,8 @@ class PhysicsTest(unittest.TestCase):
             self.assertGreater(sim._physics.balls[0].velocity.x, .1)
             # Reset only the car; a freely rolling ball retains momentum.
             sim.update_state(StatePatch(cars=[CarState(1, Pose(-.4, .4))]))
-            for _ in range(300): sim.step(.01)
-            self.assertLess(sim._physics.balls[0].velocity.length, .005)
+            for _ in range(1000): sim.step(.01)
+            self.assertLess(sim._physics.balls[0].velocity.length, .011)
 
     def test_wall_bounce_and_car_contacts(self):
         with VSSSSim(WorldState(balls=[BallState(0, Pose(.65, 0))])) as sim:

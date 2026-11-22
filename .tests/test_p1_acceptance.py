@@ -35,7 +35,9 @@ class AcceptanceTest(unittest.TestCase):
         self.assertAlmostEqual(ball.body.velocity.y,.2)
         state=WorldState(field=Field(6,6),balls=[BallState(0)])
         with VSSSSim(SimScenario(state,[BodyMotion('ball',0,.4,0)],
-                    dict(ball_model=dict(rolling_deceleration=.1,stop_speed=0)))) as sim:
+                    dict(ball_model=dict(rolling_deceleration=.1,stop_speed=0,
+                                         drift_acceleration_x=0,drift_acceleration_y=0),
+                         ball_wobble=dict(enabled=False)))) as sim:
             for _ in range(500): sim.step(.01)
             self.assertAlmostEqual(sim._world.balls[0].pose.x,.4**2/(2*.1),delta=.003)
 

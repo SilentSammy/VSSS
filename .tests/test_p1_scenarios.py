@@ -82,7 +82,9 @@ class ScenarioTest(unittest.TestCase):
             self.assertEqual(a._world.balls, b._world.balls)
         for deceleration, expected in [(.1, .35), (.4, .05)]:
             with VSSSSim(SimScenario(state, [BodyMotion('ball',0,.4,0)],
-                                     dict(ball_model=dict(rolling_deceleration=deceleration,stop_speed=0)))) as sim:
+                                     dict(ball_model=dict(rolling_deceleration=deceleration,stop_speed=0,
+                                                          drift_acceleration_x=0,drift_acceleration_y=0),
+                                          ball_wobble=dict(enabled=False)))) as sim:
                 for _ in range(100): sim.step(.01)
                 self.assertAlmostEqual(sim._physics.balls[0].velocity.x, max(0,.4-deceleration), delta=.001)
 
