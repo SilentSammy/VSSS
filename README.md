@@ -1,12 +1,12 @@
 # VSSS IPC experiment
 
-This is the `ipc_cleanup` branch: a deliberately incompatible, minimal rewrite.
+This is the streamlined provider architecture promoted from `ipc_cleanup`.
 One provider composes a `GPS` and a `CarCmd`. The same client reads positions,
 sends commands, and assigns callbacks against live or simulated providers.
 Playback supplies the same observations and rejects commands.
 
 See [PARITY.md](PARITY.md) for the source-based comparison with `overhaul`,
-remaining functional gaps, and proposed acceptance checks before advancing it.
+implemented parity, design evidence, and the remaining lab acceptance checklist.
 
 Python 3.10+ is required. From this checkout:
 
@@ -110,8 +110,13 @@ I/K, J/L, U/O and M are the second keyboard layout. Gamepad left stick
 translates, right stick rotates, and RT boosts. `--speed 0.3` multiplies both
 normal and boosted speeds. Interactive startup (`vsss-teleop` with no selection
 flags) always forces a new scan. `--auto` and `--list` may use the 30-second
-discovery cache unless `--refresh` is supplied; explicit car assignments bypass
-discovery. Only changed, quantized inputs send commands. A background writer
+discovery cache unless `--refresh` is supplied. Explicit `--car` selections keep
+scanning until each car connects, and retry after disconnection without stopping
+the other cars. Release controls to neutral after reconnection before moving;
+queued motion is discarded. Bare `--car 1` combines WASD and gamepad 0, including
+a pad plugged in after startup; `--car 1=wasd` selects keyboard only. Additional
+bare car selections use the next unused keyboard and gamepad, when available.
+Only changed, quantized inputs send commands. A background writer
 keeps at most one pending command per car while the input loop continues at
 50 Hz, even when the BLE acknowledged write is slow. Newer input replaces
 unsent intermediate input. Shutdown discards pending motion, finishes the
@@ -339,10 +344,10 @@ fabricated fresh onboard feedback. Admin arguments/results are not recorded.
 ## Verification and rollback
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s .tests -v
 python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
-python tests/hardware_smoke.py --car 1
-python tests/latency_probe.py --samples 300
+python .tests/hardware_smoke.py --car 1
+python .tests/latency_probe.py --samples 300
 ```
 
 The normal tests use synthetic UDP, fake BLE and real subprocess RPC; they do
@@ -357,13 +362,13 @@ measure call completion, not the instant of motor response. Live heartbeats
 are sent only after 200 ms without a successful velocity write; active commands
 renew the lease themselves, so they do not require duplicate heartbeat writes.
 
-The original package and docs remain in Git (`overhaul`, commit `8a58b90`).
+The pre-cleanup package and docs remain in Git at commit `8a58b90`.
 Obsolete tools/tests/scripts, old scenarios and generated artifacts were moved
 outside the checkout to `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`.
 This includes ignored recordings and hardware backup files. Firmware under
-`mp/` and the vision submodule remain in place. No merge into `overhaul` has
-been made; this branch is still being verified against the previous behavior.
-Selected boilerplates/goalie were restored on top of the new provider; the old
+`mp/` and the vision submodule remain in place. The cleanup is now the `overhaul`
+implementation after parity verification. Selected boilerplates/goalie were
+restored on top of the new provider; the old
 provider/worker IPC stack remains removed. Restart provider/client processes
 after updating so both sides load the new method and record definitions.
 See `DEV.md` for module responsibilities and current limitations.

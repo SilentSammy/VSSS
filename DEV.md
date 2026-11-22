@@ -1,8 +1,8 @@
-# IPC cleanup development
+# VSSS provider development
 
-`ipc_cleanup` implements P0/P1 functionality from [PARITY.md](PARITY.md).
-`overhaul` is unchanged. The component/RPC architecture is retained; student
-facades do not reintroduce the former provider/worker transport stack.
+`overhaul` contains the completed provider/RPC cleanup and P0/P1 functionality
+documented in [PARITY.md](PARITY.md). Student facades do not reintroduce the
+former provider/worker transport stack.
 
 | Module | Responsibility |
 | --- | --- |
@@ -67,13 +67,13 @@ facades do not reintroduce the former provider/worker transport stack.
 ## Verification
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s .tests -v
 python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
 python blockly_python_demo/verify_export.py boilerplate_velocity.py
-python tests/latency_probe.py --samples 300
+python .tests/latency_probe.py --samples 300
 ```
 
-The feature suite has 65 passing tests and Blockly has 24. Tests use temporary
+The feature suite has 69 passing tests and Blockly has 24. Tests use temporary
 endpoints, synthetic UDP, fake GATT firmware and separate simulator/student
 processes. Student subprocess tests explicitly set VSSS_ENDPOINT so they cannot
 accidentally target the lab provider. They do not move hardware. Package tests
@@ -93,10 +93,10 @@ are call-completion measurements, not motor latency. A controlled 80 ms fake
 GATT comparison removed 7 redundant heartbeat writes in 15 commands. The fleet
 test now additionally holds one radio blocked while another commands/stops.
 
-Hardware smoke tests are explicit (`python tests/hardware_smoke.py --car 1`)
+Hardware smoke tests are explicit (`python .tests/hardware_smoke.py --car 1`)
 and use discovery/status/STOP only. Real configuration persistence, navigation,
-feedback recovery and multi-car timing require the manual lab acceptance in
-PARITY.md before advancing overhaul. Fitted physics coefficients are available
+feedback recovery and multi-car timing use the manual lab acceptance checklist
+in PARITY.md. Fitted physics coefficients are available
 in examples/physics_lab.json; a different contact solver still needs validation.
 
 The source definitions/marker files in the vision submodule are read locally;

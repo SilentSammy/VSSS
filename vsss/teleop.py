@@ -18,12 +18,14 @@ class LatestCommands:
     At most one pending value per car; intermediate joystick positions are
     replaced rather than played back later. Ordinary RPC remains synchronous.
     """
-    def __init__(self, cars, channel_factory=None):
+    def __init__(self, cars, channel_factory=None, retry_connections=False):
         self.cars = cars
         self.channel_factory = channel_factory
+        self.retry_connections = retry_connections
         self.error = None
         self._condition = Condition()
         self._pending = {}
+        self._desired = {}
         self._closed = False
         self._threads = {}
 
@@ -34,6 +36,7 @@ class LatestCommands:
             if self._closed:
                 raise RuntimeError('Command writer is closed')
             self._pending[car_id] = command
+            self._desired[car_id] = command
             if car_id not in self._threads:
                 self._thread = Thread(target=self._run, args=(car_id,), daemon=True)
                 self._threads[car_id] = self._thread
@@ -46,6 +49,9 @@ class LatestCommands:
             if self.channel_factory:
                 channel = self.channel_factory()
                 cars = channel.cars
+            if self.retry_connections:
+                self._run_reconnecting(car_id, cars)
+                return
             while True:
                 with self._condition:
                     self._condition.wait_for(lambda: self._closed or car_id in self._pending)
@@ -58,9 +64,52 @@ class LatestCommands:
                 self._pending.pop(car_id, None)
         finally:
             # Each fast car stops without waiting for another stalled radio.
-            try: cars.stop(car_id)
+            try: cars.release(car_id)
             except Exception: pass
             if channel is not None: channel.close()
+
+    def _run_reconnecting(self, car_id, cars):
+        """Discovery stays off the input thread; reconnect always requires neutral."""
+        generation = None
+        armed = False
+        next_check = 0.
+        while True:
+            with self._condition:
+                if self._closed: return
+            try:
+                if generation is None:
+                    print(f'Looking for car{car_id}...', flush=True)
+                    state = cars.connect(car_id)
+                    generation = state['generation']
+                    with self._condition:
+                        if self._closed: return
+                        self._pending.pop(car_id, None)
+                        armed = self._desired.get(car_id) == Velocity()
+                    print(f'car{car_id}: connected. Release controls to neutral before moving.', flush=True)
+                    next_check = time.monotonic() + .25
+                with self._condition:
+                    self._condition.wait_for(lambda: self._closed or car_id in self._pending,
+                                             timeout=max(0., next_check-time.monotonic()))
+                    if self._closed: return
+                    command = self._pending.pop(car_id, None)
+                if time.monotonic() >= next_check:
+                    state = cars.connection(car_id)
+                    if not state['connected'] or state['generation'] != generation:
+                        raise ConnectionError(f'car{car_id} disconnected')
+                    next_check = time.monotonic() + .25
+                if command is not None:
+                    if command == Velocity(): armed = True
+                    if armed:
+                        cars.set_velocity(car_id, command, generation=generation)
+            except Exception as error:
+                # RPC preserves built-in errors; remote BLE errors include their type.
+                if not (isinstance(error, (ConnectionError, OSError)) or
+                        type(error).__name__.startswith('Bleak') or str(error).startswith('Bleak')):
+                    raise
+                generation, armed = None, False
+                print(f'car{car_id}: {error}; retrying...', flush=True)
+                with self._condition:
+                    self._condition.wait_for(lambda: self._closed, timeout=.5)
 
     def close(self):
         with self._condition:
@@ -140,8 +189,13 @@ def explicit_assignments(specs, methods):
         number = int(number)
         if number in used_cars:
             raise ValueError(f'car{number} was assigned twice')
-        selected = controls.split('+') if separator else [next(
-            (method for method in methods if method not in used_methods), '')]
+        if separator:
+            selected = controls.split('+')
+        else:
+            available = [method for method in methods if method not in used_methods]
+            selected = [next((m for m in available if m in KEYBOARDS), ''),
+                        next((m for m in available if m.startswith('gamepad:')), '')]
+            selected = [m for m in selected if m] or ['']
         for method in selected:
             if method not in methods:
                 raise ValueError(f'Input {method!r} is unavailable; available inputs: {", ".join(methods)}')
@@ -164,7 +218,7 @@ def main(argv=None, *, provider_factory=None):
     parser.add_argument('--refresh', action='store_true', help='ignore the 30-second car discovery cache')
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument('--car', action='append', metavar='ID[=INPUT+INPUT]',
-                           help='repeat to assign cars without scanning or prompts; inputs: wasd, ijkl, gamepad:0, ...')
+                           help='keep looking for these cars; default: keyboard + gamepad; explicit inputs: wasd, ijkl, gamepad:0, ...')
     selection.add_argument('--auto', action='store_true', help='scan and assign cars in numeric order without prompts')
     selection.add_argument('--list', action='store_true', help='print available car numbers and exit')
     args = parser.parse_args(argv)
@@ -194,7 +248,8 @@ def main(argv=None, *, provider_factory=None):
         from vsss import input as inp
         import inputs
         methods = list(KEYBOARDS) if inp.KEYBOARD_AVAILABLE else []
-        methods += [f'gamepad:{index}' for index, _ in enumerate(inputs.devices.gamepads)]
+        # Reserve the first pad even when absent; input.py handles hot-plugging.
+        methods += [f'gamepad:{index}' for index in range(max(1, len(inputs.devices.gamepads)))]
         try:
             if args.car:
                 assignments = explicit_assignments(args.car, methods)
@@ -208,7 +263,8 @@ def main(argv=None, *, provider_factory=None):
             print('No cars assigned.')
             return
         for number, controls in assignments:
-            provider.cars.connect(number)
+            if not args.car:
+                provider.cars.connect(number)
             print(f'car{number}: {", ".join(controls)}')
         print('W/S or I/K: forward/back; A/D or J/L: strafe; Q/E or U/O: rotate.')
         print('Gamepad: left stick translates, right stick rotates. C/M or RT: full speed.')
@@ -216,7 +272,8 @@ def main(argv=None, *, provider_factory=None):
         # Clear keys used by the assignment prompts before enabling motion.
         inp.pressed_keys.clear()
         sent = {}
-        writer = LatestCommands(provider.cars, channel_factory=getattr(provider, 'fork', None))
+        writer = LatestCommands(provider.cars, channel_factory=getattr(provider, 'fork', None),
+                                retry_connections=bool(args.car))
         while True:
             started = time.monotonic()
             if writer.error:
@@ -243,7 +300,7 @@ def main(argv=None, *, provider_factory=None):
                 finally:
                     for number, _ in assignments:
                         try:
-                            provider.cars.stop(number)
+                            provider.cars.release(number)
                         except Exception:
                             pass
             finally:

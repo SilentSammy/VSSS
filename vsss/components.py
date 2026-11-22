@@ -95,9 +95,18 @@ class CarCmd(ABC):
     def _waypoint(self, car_id, target): raise NotImplementedError('waypoints unavailable')
     def _operation(self, car_id, operation, value): raise NotImplementedError(operation)
 
-    def _command(self, car_id, operation, value):
+    def _apply_guarded(self, car_id, velocity, generation):
+        state = self._operation(car_id, 'connection', None)
+        if not state['connected'] or state['generation'] != generation:
+            raise ConnectionError(f'car{car_id} connection changed')
+        self._apply(car_id, velocity)
+
+    def _command(self, car_id, operation, value, generation=None):
         with self._car_lock(car_id):
-            (self._apply if operation == 'velocity' else self._waypoint)(car_id, value)
+            if operation == 'velocity' and generation is not None:
+                self._apply_guarded(car_id, value, generation)
+            else:
+                (self._apply if operation == 'velocity' else self._waypoint)(car_id, value)
             owner = session_context.get()
             event = CommandEvent(car_id, operation, value, owner)
             with self._lock:
@@ -108,9 +117,9 @@ class CarCmd(ABC):
             return event
 
     @rpc_method
-    def set_velocity(self, car_id, velocity):
+    def set_velocity(self, car_id, velocity, *, generation=None):
         if not isinstance(velocity, Velocity): raise ValueError('expected Velocity')
-        return self._command(car_id, 'velocity', velocity)
+        return self._command(car_id, 'velocity', velocity, generation)
     @rpc_method
     def go_to(self, car_id, target):
         if not isinstance(target, Pose): raise ValueError('expected Pose waypoint')

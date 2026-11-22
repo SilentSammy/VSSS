@@ -28,6 +28,9 @@ def wait_for(predicate, timeout=5):
 
 class ToolsTest(unittest.TestCase):
     def test_teleop_assignments_and_keyboard_gamepad_mix(self):
+        self.assertEqual(explicit_assignments(['1'], ['wasd', 'ijkl', 'gamepad:0']),
+                         [(1, ('wasd', 'gamepad:0'))])
+        self.assertEqual(explicit_assignments(['1=wasd'], ['wasd', 'gamepad:0']), [(1, ('wasd',))])
         self.assertEqual(explicit_assignments(['3=wasd+gamepad:0', '8'], ['wasd', 'ijkl', 'gamepad:0']),
                          [(3, ('wasd', 'gamepad:0')), (8, ('ijkl',))])
         self.assertEqual(assign_inputs([1], ['wasd', 'ijkl', 'gamepad:0']), [(1, ('wasd', 'gamepad:0'))])
@@ -50,15 +53,17 @@ class ToolsTest(unittest.TestCase):
         with patch('vsss.teleop.VSSSProvider.connect', return_value=provider), \
              patch('vsss.teleop.LatestCommands') as writer_type, \
              patch.dict(sys.modules, {'vsss.input': inp, 'inputs': SimpleNamespace(devices=SimpleNamespace(gamepads=[]))}), \
-             patch('vsss.teleop.velocity', side_effect=commands), patch('vsss.teleop.time.sleep', side_effect=sleep), \
+             patch('vsss.teleop.velocity', side_effect=commands) as read_velocity, patch('vsss.teleop.time.sleep', side_effect=sleep), \
              contextlib.redirect_stdout(io.StringIO()):
             writer_type.return_value.error = None
-            teleop(['--car', '1=wasd'])
+            teleop(['--car', '1'])
+        self.assertEqual(read_velocity.call_args.args[0], ('wasd', 'gamepad:0'))
         self.assertEqual(writer_type.return_value.submit.call_count, 2)
         self.assertEqual(writer_type.return_value.submit.call_args_list[0].args, (1, Velocity()))
         writer_type.return_value.close.assert_called_once()
-        self.assertEqual(provider.cars.stop.call_count, 1)
-        provider.cars.connect.assert_called_once_with(1)
+        self.assertEqual(provider.cars.release.call_count, 1)
+        provider.cars.connect.assert_not_called()
+        self.assertTrue(writer_type.call_args.kwargs['retry_connections'])
         self.assertTrue(all(0 < delay <= .02 for delay in waits))
         provider.close.assert_called_once()
 
@@ -90,14 +95,14 @@ class ToolsTest(unittest.TestCase):
                  patch.dict(sys.modules, {'vsss.input': inp, 'inputs': SimpleNamespace(devices=SimpleNamespace(gamepads=[]))}), \
                  patch('vsss.teleop.velocity', return_value=dict(x=0, y=0, w=0)), \
                  patch('vsss.teleop.time.sleep', side_effect=KeyboardInterrupt), \
-                 patch.object(local.cars, 'stop', wraps=local.cars.stop) as stop, \
+                 patch.object(local.cars, 'release', wraps=local.cars.release) as stop, \
                  contextlib.redirect_stdout(io.StringIO()):
                 factory = Mock(return_value=local)
                 teleop(['--car', '1'], provider_factory=factory)
                 factory.assert_called_once_with(None)
                 connect.assert_not_called()
                 self.assertGreaterEqual(stop.call_count, 1)
-            self.assertEqual(local._velocities[1], Velocity())
+            self.assertEqual(local._velocities.get(1, Velocity()), Velocity())
 
     def test_direct_demo_constructs_local_components(self):
         from examples.teleop_direct import local_provider

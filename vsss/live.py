@@ -190,8 +190,12 @@ class CarCmdLive(CarCmd):
     async def _connect(self, car_id):
         from bleak import BleakClient, BleakScanner
         client = self._clients.get(car_id)
-        if client and client.is_connected:
+        if client and client.is_connected and car_id in self._active:
             return client
+        if client and client.is_connected:
+            try: await asyncio.wait_for(client.disconnect(), 2)
+            except Exception: pass
+        self._clients.pop(car_id, None)
         self._active.pop(car_id, None)  # Never restore motion after reconnect.
         self._position_mode.discard(car_id)
         device = await BleakScanner.find_device_by_filter(
@@ -216,9 +220,15 @@ class CarCmdLive(CarCmd):
     def _payload(velocity):
         return struct.pack("<bbb", *(max(-128, min(127, round(v * 128))) for v in (velocity.x, velocity.y, velocity.w)))
 
-    async def _write(self, car_id, velocity):
+    async def _write(self, car_id, velocity, generation=None):
         async with self._io_lock(car_id):
-            client = await self._connect(car_id)
+            if generation is None:
+                client = await self._connect(car_id)
+            else:
+                client = self._clients.get(car_id)
+                if (not client or not client.is_connected or car_id not in self._active or
+                        self._generations.get(car_id) != generation):
+                    raise ConnectionError(f'car{car_id} connection changed')
             payload = self._payload(velocity)
             try:
                 await asyncio.wait_for(client.write_gatt_char(VELOCITY_UUID, payload, response=True), 2)
@@ -232,6 +242,9 @@ class CarCmdLive(CarCmd):
 
     def _apply(self, car_id, velocity):
         self._call(self._write(car_id, velocity))
+
+    def _apply_guarded(self, car_id, velocity, generation):
+        self._call(self._write(car_id, velocity, generation))
 
     async def _send_waypoint(self, car_id, target):
         async with self._io_lock(car_id):
@@ -266,7 +279,8 @@ class CarCmdLive(CarCmd):
         if operation == 'connect': self._call(self._ensure_connected(car_id))
         if operation in ('connection', 'connect'):
             client = self._clients.get(car_id)
-            return dict(connected=bool(client and client.is_connected), generation=self._generations.get(car_id, 0))
+            return dict(connected=bool(client and client.is_connected and car_id in self._active),
+                        generation=self._generations.get(car_id, 0))
         if operation == 'status': return self._call(self._status(car_id))
         return self._call(self._configure(car_id, operation, value))
 
