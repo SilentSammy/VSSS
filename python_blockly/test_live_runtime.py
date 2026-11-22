@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from api_registry import schema, SOURCES
 from fake_devices import Devices
-from live_runtime import LiveRunner
+from live_runtime import LiveRunner, LiveRun
 from server import validate
 
 ROOT=Path(__file__).resolve().parent.parent
@@ -100,6 +100,36 @@ class LiveTests(unittest.TestCase):
         self.devices.gps.balls=()
         run=self.start('print(gps.ball is None)')
         self.assertEqual(self.finish(run)['output'],'True\n')
+
+    def test_ball_dropout_grace_is_bounded_and_cleared_for_each_run(self):
+        live=LiveRun('',self.devices.car,self.devices.field,self.devices.inputs,lambda:None,2,None)
+        first=self.devices.gps.ball
+        with patch('live_runtime.time.monotonic',return_value=10.):
+            self.assertEqual(live.ball_position(),first)
+        self.devices.gps.balls=()
+        with patch('live_runtime.time.monotonic',return_value=10.1):
+            self.assertEqual(live.ball_position(),first)
+        with patch('live_runtime.time.monotonic',return_value=10.31):
+            self.assertIsNone(live.ball_position())
+        live.cancel.set()
+        with self.assertRaisesRegex(RuntimeError,'stopped'): live.ball_position()
+
+    def test_ball_read_waits_for_initial_detection_and_recovers(self):
+        from vsss.gps import Position
+        class FlickeringGPS:
+            reads=0
+            @property
+            def ball(self):
+                self.reads+=1
+                return None if self.reads<3 else Position(.2,.4)
+            def close(self): pass
+        self.devices.gps=FlickeringGPS()
+        run=self.start('car = Car(1)\nball = gps.ball\nprint(ball.x, ball.y)')
+        result=self.finish(run)
+        self.assertEqual(result['state'],'finished',result)
+        self.assertIn('0.2 0.4',result['output'])
+        self.assertGreaterEqual(self.devices.gps.reads,3)
+        self.assert_closed()
 
     def test_current_boilerplates_execute_unchanged(self):
         for name in ('velocity',):

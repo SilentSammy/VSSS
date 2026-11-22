@@ -67,6 +67,7 @@ class LiveRun:
         self.process = None
         self.cars = {}
         self.gps = self.input = None
+        self._last_ball, self._ball_seen_at = None, None
         self.thread = Thread(target=self.execute, daemon=True, name='Blockly-live-run')
 
     def snapshot(self, renew=False):
@@ -139,6 +140,22 @@ class LiveRun:
             self.gps = self.gps_factory()
         return self.gps
 
+    def ball_position(self):
+        """Bridge short detector gaps for the happy-path student examples."""
+        grace = .3
+        deadline = (self._ball_seen_at if self._ball_seen_at is not None else time.monotonic()) + grace
+        while not self.cancel.is_set():
+            ball = self.field().ball  # Transport errors must still propagate.
+            now = time.monotonic()
+            if ball is not None:
+                self._last_ball, self._ball_seen_at = ball, now
+                return ball
+            if now >= deadline: return None
+            if self._last_ball is not None: return self._last_ball
+            # At startup there is no last position; wait briefly for a frame.
+            if self.cancel.wait(min(.02, deadline-now)): break
+        raise RuntimeError('Run has been stopped.')
+
     def dispatch(self, message):
         if self.cancel.is_set():
             raise RuntimeError('Run has been stopped.')
@@ -165,6 +182,7 @@ class LiveRun:
         if operation in {'gps_get', 'gps_call'}:
             gps = self.field()
             if operation == 'gps_get' and member in GPS_PROPERTIES:
+                if member == 'ball': return self.ball_position()
                 return getattr(gps, member)
             if operation == 'gps_call' and member in GPS_METHODS:
                 return getattr(gps, member)(*args, **kwargs)

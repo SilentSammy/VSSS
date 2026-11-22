@@ -64,6 +64,11 @@ normal run cleanup still stop the cars.
 The Field pane offers **GPS ball position** (`gps.ball`): the first visible
 ball's position, or `None` when none is visible. Kick and goalie use this directly;
 the **GPS balls** list remains available for multi-ball programs.
+Inside Blockly runs, the backend retries initial ball detection for up to .3
+seconds and holds the last observed position across dropouts within that same
+.3-second age limit. The cache belongs to one run. Longer losses still return
+`None` and connection errors propagate normally; exported scripts retain the raw
+GPS API behavior. The student examples need no extra dropout-handling blocks.
 
 **Keyboard control** uses six simple held-key `if` blocks. Each loop starts with
 forward/left/turn at zero, then W/S, A/D and Q/E set the corresponding speed.
