@@ -6,6 +6,15 @@ let vsssSchema;
 const numberInput = n => ({shadow: {type: 'math_number', fields: {NUM: n}}});
 const varField = name => ({id: 'v-' + name});
 const variable = name => ({type: 'variables_get', fields: {VAR: varField(name)}});
+const keyboardLetters = ['w', 'a', 's', 'd', 'q', 'e',
+  ...'abcdefghijklmnopqrstuvwxyz'.split('').filter(key => !'wasdqe'.includes(key))];
+const keyboardKeyOptions = [
+  ...keyboardLetters.map(key => [key.toUpperCase(), key]),
+  ...'0123456789'.split('').map(key => [key, key]),
+  ['Space', 'Key.space'], ['Enter', 'Key.enter'], ['Shift', 'Key.shift'],
+  ['Arrow up', 'Key.up'], ['Arrow down', 'Key.down'],
+  ['Arrow left', 'Key.left'], ['Arrow right', 'Key.right']
+];
 const carName = (block, generator) => generator.getVariableName(block.getFieldValue('CAR'));
 const value = (block, generator, name, fallback = '0') => generator.valueToCode(block, name, python.Order.NONE) || fallback;
 function literal(data) {
@@ -50,9 +59,9 @@ function installVsssBlocks(schema) {
       {type: 'field_dropdown', name: 'BUTTON', options: ['A','B','X','Y','LB','RB','LT','RT','L3','R3','START','SLCT','GUIDE','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT'].map(x => [x, x])},
       {type: 'field_dropdown', name: 'MODE', options: [['held','is_pressed'],['just pressed','rising_edge'],['just released','falling_edge'],['toggled','is_toggled']]}], output: 'Boolean', colour: 290},
     {type: 'vsss_key', message0: 'keyboard key %1 %2', args0: [
-      {type: 'field_input', name: 'KEY', text: 'w'},
+      {type: 'field_dropdown', name: 'KEY', options: keyboardKeyOptions},
       {type: 'field_dropdown', name: 'MODE', options: [['held','is_pressed'],['just pressed','rising_edge'],['just released','falling_edge'],['toggled','is_toggled']]}], output: 'Boolean', colour: 290,
-      tooltip: 'Native vsss.input reads on the server computer. Special keys use names such as Key.space.'},
+      tooltip: 'Read a safe, commonly used keyboard key on the server computer.'},
     {type: 'vsss_key_held', message0: 'keyboard key %1 held?', args0: [{type:'field_input', name:'KEY', text:'w'}], output:'Boolean', colour:290},
     {type: 'vsss_pad_held', message0: 'gamepad %1 button %2 held?', args0: [
       {type:'field_number',name:'PAD',value:0,min:0,max:9,precision:1},
@@ -108,10 +117,10 @@ function installVsssBlocks(schema) {
     return `arrival_deadline = monotonic() + (${timeout})\nsleep(0.1)\nwhile True:\n    arrival_status = ${car}.read_status()\n    if arrival_status.fault_name != 'none' or not arrival_status.pose_fresh:\n        raise RuntimeError('Onboard position/control unavailable')\n    if arrival_status.mode_name == 'reached':\n        break\n    if monotonic() >= arrival_deadline:\n        raise TimeoutError('Waypoint timed out')\n    sleep(0.05)\n`;
   };
   categories.get('Cars').contents.unshift({kind:'block',type:'vsss_connect',inputs:{NUMBER:numberInput(1)}});
-  categories.get('Input').contents.push(...['vsss_key_held','vsss_pad_axis','vsss_pad_held'].map(type=>({kind:'block',type})));
+  categories.get('Input').contents.push(...['vsss_key','vsss_pad_button','vsss_pad_axis'].map(type=>({kind:'block',type})));
   categories.get('Car feedback').contents.push({kind:'block',type:'vsss_field'});
   categories.get('Advanced lessons').contents.push(
-    ...['vsss_key','vsss_pad_button','vsss_target_reached','vsss_onboard_ready','vsss_robot_fault','vsss_monotonic'].map(type=>({kind:'block',type})),
+    ...['vsss_target_reached','vsss_onboard_ready','vsss_robot_fault','vsss_monotonic'].map(type=>({kind:'block',type})),
     {kind:'block',type:'vsss_wait_arrival',inputs:{TIMEOUT:numberInput(10)}},
     {kind:'block',type:'vsss_raise',inputs:{TEXT:{shadow:{type:'text',fields:{TEXT:'Program stopped'}}}}}
   );

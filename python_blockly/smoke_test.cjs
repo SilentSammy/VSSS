@@ -27,9 +27,27 @@ const path = require('node:path');
     assert.match(initial,/print\('Hello, Python!'\)/);
     assert.match(initial,/print\(7 \+ 5\)/);
     assert.doesNotMatch(initial,/from vsss|@run|Car\(/);
-    const exposed=await page.evaluate(()=>JSON.stringify(vsssToolbox));
+    const exposedToolbox=await page.evaluate(()=>vsssToolbox);
+    const exposed=JSON.stringify(exposedToolbox);
     for(const removed of ['Car settings','set_trim','set_controller','read_trim','read_controller','restart','reconnect_telemetry','gps_config','vsss_invert_y','vsss_data','connection_generation','latest']) assert.ok(!exposed.includes(removed),removed+' is still exposed');
     assert.ok(exposed.includes('Advanced lessons'));
+    const inputCategory=exposedToolbox.find(category=>category.name==='Input');
+    const advancedCategory=exposedToolbox.find(category=>category.name==='Advanced lessons');
+    assert.deepEqual(inputCategory.contents.map(block=>block.type),['vsss_key','vsss_pad_button','vsss_pad_axis']);
+    assert.ok(!advancedCategory.contents.some(block=>['vsss_key','vsss_pad_button'].includes(block.type)));
+    const keyboardOptions=await page.evaluate(()=>keyboardKeyOptions);
+    assert.deepEqual(keyboardOptions[0],['W','w']);
+    for(const [label,value] of [['W','w'],['Space','Key.space'],['Enter','Key.enter'],['Arrow up','Key.up']]){
+      assert.ok(keyboardOptions.some(option=>option[0]===label&&option[1]===value),label+' keyboard choice missing');
+    }
+    assert.ok(!keyboardOptions.some(option=>/^F\d+$/.test(option[0])),'function keys should not be offered');
+    const inputCode=await page.evaluate(()=>{
+      workspace.clear();
+      Blockly.serialization.workspaces.load({blocks:{languageVersion:0,blocks:[{type:'vsss_key',fields:{KEY:'Key.left',MODE:'rising_edge'},x:20,y:20}]}},workspace);
+      updateCode();
+      return generatedCode();
+    });
+    assert.match(inputCode,/input\.rising_edge\("Key\.left"\)/);
     const runUI=async()=>{
       await page.click('#run');
       await page.waitForFunction(()=>!document.querySelector('#run').disabled&&document.querySelector('#status').textContent.startsWith('Finished'));

@@ -81,16 +81,17 @@ keyboard control and field observation.
 ## Student toolbox
 
 Core blocks cover selecting/naming cars, velocity, waypoints, stop, position and
-heading, other cars and balls, held keyboard/gamepad buttons, normalized axes,
-print, variables, arithmetic, conditions, loops, waits and lists.
+heading, other cars and balls, keyboard/gamepad held, pressed, released and
+toggled states, normalized axes, print, variables, arithmetic, conditions,
+loops, waits and lists.
 
 Multiple named cars can be commanded in one loop or placed in a list for a
 for-each loop. Commands are sequential, while each car independently continues
 its most recent command. Velocity uses BLE only. Field reads start GPS lazily;
 waypoint control needs the robot's separate onboard position reception.
 
-**Advanced lessons** groups input edges/toggles, combined keyboard/gamepad
-controls, clock/timeouts, waiting for camera position and readable robot checks:
+**Advanced lessons** groups clock/timeouts, waiting for camera position and
+readable robot checks:
 
 - target reached?
 - onboard position available?
@@ -115,11 +116,14 @@ remains an internal supervisor responsibility, not a student configuration block
 
 ## Input and cleanup
 
-Input reads use `vsss.input` on the server computer. Keyboard names include `w`
-and `Key.space`. Gamepads are numbered from 0; helper blocks generate names such
-as `LX0`, `LY1`, `A1` and `L31`. The input parser currently supports device suffixes
-0-9. The module's native watchers are loaded only on the first input read and are
-reused for the server lifetime. No browser input emulation is added.
+Input reads use `vsss.input` on the server computer. The keyboard block offers
+letters, digits, Space, Enter, Shift and the four arrow keys; browser/system
+function keys are deliberately omitted. It can read held, just-pressed,
+just-released or toggled state. Gamepads are numbered from 0; helper blocks
+generate names such as `LX0`, `LY1`, `A1` and `L31`. The input parser currently
+supports device suffixes 0-9. The module's native watchers are loaded only on
+the first input read and are reused for the server lifetime. No browser input
+emulation is added.
 
 Robot/input/field programs export with a synchronous `@run` entry point. Basic
 print/arithmetic/variable examples export as plain Python. In live mode a disposable
