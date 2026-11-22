@@ -165,6 +165,33 @@ startEditor().catch(error => {
 
 // The Python server renders the same plot as vsss-plot; canvas only displays it.
 const plotCanvas = document.getElementById('field');
+const fieldPanel = document.getElementById('field-panel');
+const fieldContent = document.getElementById('field-content');
+const fullscreenButton = document.getElementById('field-fullscreen');
+const collapseButton = document.getElementById('field-collapse');
+function collapseField(collapsed) {
+  releasePointer();
+  fieldContent.hidden = collapsed;
+  collapseButton.textContent = collapsed ? 'Expand' : 'Collapse';
+  collapseButton.setAttribute('aria-expanded', String(!collapsed));
+}
+collapseButton.onclick = async () => {
+  if (document.fullscreenElement === fieldPanel) await document.exitFullscreen();
+  collapseField(!fieldContent.hidden);
+};
+fullscreenButton.onclick = async () => {
+  releasePointer();
+  try {
+    if (document.fullscreenElement === fieldPanel) await document.exitFullscreen();
+    else { collapseField(false); await fieldPanel.requestFullscreen(); }
+  } catch (error) { document.getElementById('plot-status').textContent = error.message; }
+};
+document.addEventListener('fullscreenchange', () => {
+  releasePointer();
+  const active = document.fullscreenElement === fieldPanel;
+  fullscreenButton.textContent = active ? 'Exit full screen' : 'Full screen';
+  fullscreenButton.setAttribute('aria-pressed', String(active));
+});
 let plotState = null;
 let dragPoint = null;
 let dragState = null;
@@ -203,6 +230,7 @@ window.addEventListener('blur', () => releasePointer());
 setInterval(() => { if (dragPoint) sendPointer('move'); }, 100);
 
 async function pollPlot() {
+  if (fieldContent.hidden) { setTimeout(pollPlot, 250); return; }
   try {
     const response = await fetch('/api/plot', {cache: 'no-store'});
     if (response.status === 404) return; // Explicit fake-device test server.

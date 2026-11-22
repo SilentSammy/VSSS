@@ -17,6 +17,21 @@ from vsss.simulation import VSSSSim
 
 
 class PlotSetupsTest(unittest.TestCase):
+    def test_car_sprites_stretch_to_fifteen_centimetre_squares(self):
+        plotter = make_plotter(width=720)
+        for number in range(1, 5):
+            style = plotter.marker_overrides[number]
+            self.assertEqual(style['size_m'], .15)
+            self.assertTrue(style['stretch'])
+            self.assertIsInstance(style['image'], np.ndarray)
+        # On a blank background the rendered sprite must occupy a .15m square
+        # even though its source is rectangular and marker calibration is .09m.
+        plotter.background[:] = 255
+        image = render_state(plotter, WorldState(cars=[CarState(1, Pose(0, 0, 90))]))
+        ys, xs = np.where(np.any(image != 255, axis=2))
+        for extent in (xs.max()-xs.min(), ys.max()-ys.min()):
+            self.assertAlmostEqual(extent / plotter.scale, .15, delta=.01)
+
     def test_escape_closes_plot_but_teleop_q_does_not(self):
         self.assertTrue(is_close_key(27))
         self.assertFalse(is_close_key(ord('q')))

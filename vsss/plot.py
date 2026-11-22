@@ -36,7 +36,7 @@ def marker_styles(path):
         marker_id = int(key)
         if marker_id < 0 or not isinstance(entry, dict):
             raise ValueError(f'invalid marker config entry: {key}')
-        style = {name: entry[name] for name in ('color', 'text', 'scale', 'image') if name in entry}
+        style = {name: entry[name] for name in ('color', 'text', 'scale', 'image', 'size_m', 'stretch') if name in entry}
         color = style.get('color')
         if 'color' in style and (not isinstance(color, list) or len(color) != 3 or
                                   any(type(c) is not int or not 0 <= c <= 255 for c in color)):
@@ -55,6 +55,11 @@ def marker_styles(path):
             if image is None or not (image.ndim == 2 or image.ndim == 3 and image.shape[2] in (3, 4)):
                 raise ValueError(f'marker {key}: unsupported image {image_path}')
             style['image'] = image
+        if 'size_m' in style and (type(style['size_m']) not in (int, float) or
+                                 not math.isfinite(style['size_m']) or style['size_m'] <= 0):
+            raise ValueError(f'marker {key}: size_m must be positive and finite')
+        if 'stretch' in style and type(style['stretch']) is not bool:
+            raise ValueError(f'marker {key}: stretch must be boolean')
         styles[marker_id] = style
     return styles
 

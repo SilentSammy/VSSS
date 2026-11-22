@@ -30,7 +30,11 @@ the student program first. A provider started externally is reused but never
 terminated; stop it in its own terminal before switching Live/Simulation mode.
 
 The built-in plot reuses `vsss.plot.EmbeddedPlot`, the BoardPlotter2D renderer,
-ProviderFeed, and SimDrag. In simulation, drag car centres/balls to move and car
+ProviderFeed, and SimDrag. It has **Full screen** (the same button exits) and
+**Collapse / Expand** controls.
+Collapsing the field pauses plot requests. Cars 1–4 use the shared car sprites,
+stretched to 15 × 15 cm squares in both this view and `vsss-plot`.
+In simulation, drag car centres/balls to move and car
 edges to rotate. Live is observation-only. Stale gestures are rejected after a
 scenario/provider change; abandoned grabs expire. The server stops only providers
 it owns on Ctrl+C. Set `VSSS_ENDPOINT` before starting to isolate a session.
