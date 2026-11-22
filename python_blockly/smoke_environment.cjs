@@ -10,7 +10,7 @@ const path=require('node:path');
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'vsss-blockly-browser-'));
   const endpoint=path.join(directory,'rpc.json');
   const python=process.env.PYTHON||'python';
-  const server=spawn(python,['server.py','--port','8767','--provider-port','0','--endpoint',endpoint],{cwd:__dirname});
+  const server=spawn(python,['server.py','--no-browser','--port','8767','--provider-port','0','--endpoint',endpoint],{cwd:__dirname});
   let browser;
   const errors=[];
   server.stderr.on('data',()=>{});

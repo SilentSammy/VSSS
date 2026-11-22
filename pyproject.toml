@@ -20,12 +20,14 @@ vsss-live = "vsss.live:main"
 vsss-sim = "vsss.simulation:main"
 vsss-plot = "vsss.plot:main"
 vsss-teleop = "vsss.teleop:main"
+vsss-blockly = "python_blockly.server:main"
 
 [tool.setuptools]
-packages = ["vsss", "aruco_gps", "mp"]
+packages = ["vsss", "aruco_gps", "mp", "python_blockly"]
 
 [tool.setuptools.package-dir]
 vsss = "vsss"
 
 [tool.setuptools.package-data]
 aruco_gps = ["marker_config.json", "ball_thresholds.txt", "resources/board_*.png", "resources/sprites/*.png"]
+python_blockly = ["*.html", "*.js", "*.css", "package*.json", "examples/*.py"]

@@ -9,12 +9,14 @@ an environment or press Run to start. Generated Python uses the same Car/GPS API
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe python_blockly\server.py
+vsss-blockly
 ```
 
-Open **http://127.0.0.1:8765**. Restart an older server and refresh the browser after
+The command opens **http://127.0.0.1:8765** automatically. Use `--no-browser` to
+print the URL without opening it. The direct `python python_blockly/server.py`
+invocation also works. Restart an older server and refresh the browser after
 updating. The server uses the existing VSSS environment. A fresh copy needs the
-parent Python requirements and `npm.cmd ci` in this folder. No sign-in or API key
+parent Python requirements and `npm.cmd ci --omit=dev` in this folder. No sign-in or API key
 is required. Use `--port 8767` if needed.
 `--endpoint PATH --provider-port 0` gives the editor an isolated provider endpoint
 and a free RPC port; student code and the embedded plot use that endpoint too.

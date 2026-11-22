@@ -7,8 +7,12 @@ from threading import Event, Lock, RLock, Thread
 import time
 import uuid
 
-from api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES
-from wire import encode
+if __package__:
+    from .api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES
+    from .wire import encode
+else:
+    from api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES
+    from wire import encode
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent))

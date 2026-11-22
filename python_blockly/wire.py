@@ -2,7 +2,10 @@
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 
-from api_registry import DERIVED_FIELDS
+if __package__:
+    from .api_registry import DERIVED_FIELDS
+else:
+    from api_registry import DERIVED_FIELDS
 
 
 def encode(value):

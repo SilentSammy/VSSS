@@ -1,6 +1,9 @@
 """Validate the small generated Python language and its approved API surface."""
 import ast
-from api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES, RECORD_FIELDS
+if __package__:
+    from .api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES, RECORD_FIELDS
+else:
+    from api_registry import CAR_METHODS, CAR_PROPERTIES, GPS_METHODS, GPS_PROPERTIES, INPUT_METHODS, INPUT_PROPERTIES, RECORD_FIELDS
 
 BUILTINS = {'print', 'range', 'str', 'int', 'float', 'bool', 'len', 'abs', 'round', 'min', 'max',
             'sum', 'dict', 'list', 'tuple', 'enumerate', 'sorted', 'any', 'all',

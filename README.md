@@ -1,4 +1,34 @@
-# VSSS IPC experiment
+# VSSS
+
+## Install (Windows / PowerShell)
+
+Requires Git, Python 3.10+ and Node.js with npm. Run once:
+
+```powershell
+git clone --recurse-submodules https://github.com/SilentSammy/VSSS.git
+cd VSSS
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[plot]"
+npm.cmd ci --prefix python_blockly --omit=dev
+```
+
+In **every new terminal**, open the `VSSS` folder and activate the environment:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+```
+
+Start the student editor; it opens your browser automatically:
+
+```powershell
+vsss-blockly
+```
+
+Use `vsss-blockly --no-browser` to open the printed URL yourself. No lab network
+or separate simulator is needed for the simulated environments.
+
+## About the project
 
 This is the streamlined provider architecture promoted from `ipc_cleanup`.
 One provider composes a `GPS` and a `CarCmd`. The same client reads positions,
@@ -8,26 +38,13 @@ Playback supplies the same observations and rejects commands.
 See [PARITY.md](PARITY.md) for the source-based comparison with `overhaul`,
 implemented parity, design evidence, and the remaining lab acceptance checklist.
 
-Python 3.10+ is required. From this checkout:
-
-```powershell
-python -m pip install -e ".[plot]"
-python -m vsss.simulation examples/scenario.jsonl
-```
-
-Installing editable changes the environment's `vsss-*` entry points to this
-checkout. To keep the old installation selected, use an isolated virtualenv;
-the module commands below also run directly from this directory if Pyro5 and
-Bleak are already installed. No camera/OpenCV, gamepad or firmware dependencies
-are imported by simulation or playback.
-
 ## Student Blockly editor
 
 ```powershell
-.\.venv\Scripts\python.exe python_blockly/server.py
+vsss-blockly
 ```
 
-Open http://127.0.0.1:8765. Choose Live or a simulator scenario from Environment;
+The browser opens at http://127.0.0.1:8765. Choose Live or a simulator scenario from Environment;
 the server starts the corresponding ordinary VSSS provider if needed. Scenario
 changes reset an existing simulator without restarting it. Start/reset reloads
 the selected scenario. Stop a running student program before switching modes.
@@ -38,13 +55,8 @@ stop them there before changing between Live and Simulation. See
 
 ## Manual test: separate terminals
 
-Open PowerShell terminals in this checkout, using the same Python environment.
-Install the current command entry points once (repeat after switching branches):
-
-```powershell
-cd C:\Users\SAMMY_LOQ\Desktop\Python\VSSS
-.\.venv\Scripts\python.exe -m pip install -e ".[plot]"
-```
+Open PowerShell terminals in this checkout and activate `.venv` in each one as
+shown above. Re-run `python -m pip install -e ".[plot]"` after entry-point changes.
 
 1. Terminal A: `vsss-sim`. Leave it running throughout the simulation tests.
 2. Terminal B: `vsss-plot`. A field window shows car1 and ball0. Escape or the

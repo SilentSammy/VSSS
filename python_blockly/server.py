@@ -3,11 +3,18 @@ import argparse
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from live_runtime import LiveRunner
+if __package__:
+    from .live_runtime import LiveRunner
+    from .validation import validate
+    from .api_registry import schema
+    from .environment import Environment
+else:
+    from live_runtime import LiveRunner
+    from validation import validate
+    from api_registry import schema
+    from environment import Environment
 
 ROOT = Path(__file__).resolve().parent
-from validation import validate
-from api_registry import schema
 from threading import Lock
 
 
@@ -128,7 +135,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
 
-def serve(port=8765, runner=None, *, endpoint=None, provider_port=38475):
+def serve(port=8765, runner=None, *, endpoint=None, provider_port=38475, open_browser=False):
     testing = runner is not None
     if endpoint:
         import os
@@ -136,16 +143,29 @@ def serve(port=8765, runner=None, *, endpoint=None, provider_port=38475):
     runner = runner or LiveRunner()
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     server.runner = runner
-    from environment import Environment
     server.environment = None if testing else Environment(endpoint, port=provider_port)
     server.plot, server.plot_lock, server.action_lock = None, Lock(), Lock()
     print(f'VSSS Python Blockly: http://127.0.0.1:{server.server_port}', flush=True)
     print('Choose Live or a simulator scenario. Press Ctrl+C to stop.', flush=True)
+    browser_timer = None
+    if open_browser:
+        from threading import Timer
+        import webbrowser
+        def launch_browser():
+            try:
+                if not webbrowser.open(f'http://127.0.0.1:{server.server_port}'):
+                    print('Open the URL above in your browser.', flush=True)
+            except Exception as error:
+                print(f'Could not open a browser: {error}. Open the URL above.', flush=True)
+        browser_timer = Timer(.25, launch_browser)
+        browser_timer.daemon = True
+        browser_timer.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if browser_timer: browser_timer.cancel()
         try:
             runner.shutdown()
         finally:
@@ -154,10 +174,20 @@ def serve(port=8765, runner=None, *, endpoint=None, provider_port=38475):
             server.server_close()
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--endpoint', help='Provider discovery file; shared by editor, plot and student programs')
     parser.add_argument('--provider-port', type=int, default=38475, help='RPC port for providers started here; 0 selects a free port')
-    args = parser.parse_args()
-    serve(args.port, endpoint=args.endpoint, provider_port=args.provider_port)
+    parser.add_argument('--no-browser', action='store_true', help='Print the editor URL without opening a browser')
+    args = parser.parse_args(argv)
+    if not (ROOT / 'node_modules/blockly/blockly_compressed.js').is_file():
+        parser.error(f'Blockly browser assets are missing. Run: npm.cmd ci --prefix "{ROOT}" --omit=dev')
+    try:
+        serve(args.port, endpoint=args.endpoint, provider_port=args.provider_port, open_browser=not args.no_browser)
+    except OSError as error:
+        parser.exit(1, f'Cannot start Blockly server: {error}. Try --port 8767 if the port is in use.\n')
+
+
+if __name__ == '__main__':
+    main()
