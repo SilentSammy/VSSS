@@ -87,7 +87,7 @@ def schema():
                                returns=True, args=[a for a in parameters(node) if not (owner == 'input' and name == 'get_axis' and a['name'] == 'normalize')],
                                tooltip=ast.get_docstring(node) or name))
     return dict(version=3, blocks=blocks, record_fields=['x', 'y', 'angle'],
-                constructor=parameters(all_nodes['car']['__init__']))
+                constructor=[p for p in parameters(all_nodes['car']['__init__']) if p['name'] in {'number', 'timeout'}])
 
 
 if __name__ == '__main__':

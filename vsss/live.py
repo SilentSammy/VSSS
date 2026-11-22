@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import replace
 import json
 import logging
+import math
 import re
 import socket
 import struct
@@ -14,14 +15,16 @@ from .components import CarCmd, GPSState, rpc_method
 from .events import EventHub
 from .models import BallState, CarState, Field, Pose, WorldState
 from .provider import VSSSProvider
+from . import _ble_protocol as protocol
 
 log = logging.getLogger(__name__)
 
 
 class GPSLive(GPSState):
     def __init__(self, events, *, server="192.168.12.1", port=5000,
-                 listen_port=0, bind="0.0.0.0", metadata_url=None):
-        super().__init__(events)
+                 listen_port=0, bind="0.0.0.0", metadata_url=None, stale_after=.5):
+        super().__init__(events, stale_after=stale_after)
+        self._last_stamp = self._best_offset = self._stream = None
         self.server, self.port = server, port
         self.metadata_url = metadata_url or (f"http://{server}:8080/api/v1/status" if server else None)
         self._stop = Event()
@@ -59,11 +62,37 @@ class GPSLive(GPSState):
         packet = json.loads(payload)
         if type(packet.get("board_detected")) is not bool:
             raise ValueError("invalid board detection flag")
-        return WorldState(field=self.state().field,
-            cars=[CarState(int(c["id"]), Pose(c["x"], c["y"], c["angle"])) for c in packet["markers"]],
+        age = packet.get('frame_age_ms', 0.)
+        return WorldState(field=self.snapshot().field,
+            cars=[CarState(c["id"], Pose(c["x"], c["y"], c["angle"])) for c in packet["markers"]],
             balls=[BallState(i, Pose(b["x"], b["y"])) for i, b in enumerate(packet.get("balls", []))],
             captured_at=packet.get("timestamp", time.time()), sequence=packet.get("frame_sequence", 0),
-            valid=packet["board_detected"])
+            valid=packet["board_detected"], frame_age_ms=age,
+            received_at=time.time())
+
+    def ingest(self, payload):
+        """Validate source timing before presenting a packet as current."""
+        packet = json.loads(payload)
+        state = self._decode(payload)
+        stream = packet.get('stream_id')
+        if stream != self._stream:
+            self._stream, self._last_stamp, self._best_offset = stream, None, None
+        stamp = packet.get('timestamp')
+        excess = 0.
+        if stamp is not None:
+            if self._last_stamp is not None and stamp < self._last_stamp:
+                with self._lock: self._problem = 'Camera packets are out of order'
+                return False
+            offset = time.monotonic() - stamp
+            self._best_offset = offset if self._best_offset is None else min(self._best_offset, offset)
+            excess = max(0., offset - self._best_offset)
+        age = state.frame_age_ms / 1000 + excess
+        if age > self.stale_after:
+            with self._lock: self._problem = 'Camera packets are delayed'
+            return False
+        if stamp is not None: self._last_stamp = stamp
+        self._update(replace(state, source_age=age))
+        return True
 
     def _receive(self):
         renewal = 0.
@@ -73,7 +102,7 @@ class GPSLive(GPSState):
                     self._socket.sendto(b"POSE_SUBSCRIBE", (self.server, self.port + 1))
                     renewal = time.monotonic() + 1
                 payload, _ = self._socket.recvfrom(65535)
-                self._update(self._decode(payload))
+                self.ingest(payload)
             except socket.timeout:
                 continue
             except (ValueError, KeyError, TypeError, OverflowError) as error:
@@ -108,6 +137,8 @@ class CarCmdLive(CarCmd):
         self._clients = {}
         self._active = {}
         self._last_write = {}
+        self._position_mode = set()
+        self._generations = {}
         self._ready = Event()
         self._closing = False
         self._discovered = None
@@ -162,6 +193,7 @@ class CarCmdLive(CarCmd):
         if client and client.is_connected:
             return client
         self._active.pop(car_id, None)  # Never restore motion after reconnect.
+        self._position_mode.discard(car_id)
         device = await BleakScanner.find_device_by_filter(
             lambda device, adv: (adv.local_name or device.name) == f"car{car_id}", timeout=5)
         if device is None:
@@ -175,6 +207,7 @@ class CarCmdLive(CarCmd):
                 await client.disconnect()
             raise
         self._clients[car_id] = client
+        self._generations[car_id] = self._generations.get(car_id, 0) + 1
         self._active[car_id] = bytes(3)
         self._last_write[car_id] = time.monotonic()
         return client
@@ -194,24 +227,107 @@ class CarCmdLive(CarCmd):
                 await client.disconnect()
                 raise
             self._active[car_id] = payload
+            self._position_mode.discard(car_id)
             self._last_write[car_id] = time.monotonic()
 
     def _apply(self, car_id, velocity):
         self._call(self._write(car_id, velocity))
 
+    async def _send_waypoint(self, car_id, target):
+        async with self._io_lock(car_id):
+            client = await self._connect(car_id)
+            payload = protocol.WAYPOINT_STRUCT.pack(target.x, target.y, math.radians(target.angle))
+            try:
+                await asyncio.wait_for(client.write_gatt_char(protocol.WAYPOINT_UUID, payload, response=True), 2)
+            except Exception:
+                self._active.pop(car_id, None)
+                self._position_mode.discard(car_id)
+                await client.disconnect()
+                raise
+            self._position_mode.add(car_id)
+            self._last_write[car_id] = time.monotonic()
+
+    def _waypoint(self, car_id, target):
+        self._call(self._send_waypoint(car_id, target))
+
     async def _status(self, car_id):
         async with self._io_lock(car_id):
             client = await self._connect(car_id)
             data = await asyncio.wait_for(client.read_gatt_char(STATUS_UUID), 2)
-            mode, flags, fault, _, x, y, angle, count = struct.unpack("<BBBBfffI", data)
-            return {"mode": mode, "wifi_connected": bool(flags & 1), "pose_fresh": bool(flags & 2),
-                    "fault": fault, "pose": Pose(x, y, angle), "packet_count": count}
+            return protocol.RobotStatus(*protocol.STATUS_STRUCT.unpack(data))
 
     @rpc_method
     def status(self, car_id):
         if type(car_id) is not int or car_id < 0:
             raise ValueError("invalid car ID")
-        return self._call(self._status(car_id))
+        return self._settings(car_id, 'status')
+
+    def _operation(self, car_id, operation, value):
+        if operation == 'connect': self._call(self._ensure_connected(car_id))
+        if operation in ('connection', 'connect'):
+            client = self._clients.get(car_id)
+            return dict(connected=bool(client and client.is_connected), generation=self._generations.get(car_id, 0))
+        if operation == 'status': return self._call(self._status(car_id))
+        return self._call(self._configure(car_id, operation, value))
+
+    async def _ensure_connected(self, car_id):
+        async with self._io_lock(car_id): await self._connect(car_id)
+
+    async def _configure(self, car_id, operation, value):
+        async with self._io_lock(car_id):
+            client = await self._connect(car_id)
+            async def read(uuid):
+                return bytes(await asyncio.wait_for(client.read_gatt_char(uuid), 2))
+            async def write(uuid, payload):
+                await asyncio.wait_for(client.write_gatt_char(uuid, payload, response=True), 2)
+            if operation in ('read_trim', 'set_trim'):
+                if operation == 'set_trim':
+                    payload = protocol.TRIM_STRUCT.pack(*(v for row in value for v in row))
+                    await write(protocol.TRIM_MATRIX_UUID, payload)
+                actual = await read(protocol.TRIM_MATRIX_UUID)
+                if operation == 'set_trim' and actual != payload: raise ValueError('Firmware rejected trim')
+                values = protocol.TRIM_STRUCT.unpack(actual)
+                return [list(values[i:i+3]) for i in (0, 3, 6)]
+            if operation in ('read_controller', 'set_controller'):
+                actual = await read(protocol.CONTROLLER_UUID)
+                values = dict(zip(protocol.CONTROLLER_KEYS, protocol.CONTROLLER_STRUCT.unpack(actual)))
+                if operation == 'set_controller':
+                    values = protocol.normalize_controller(value, values)
+                    payload = protocol.CONTROLLER_STRUCT.pack(*(values[k] for k in protocol.CONTROLLER_KEYS))
+                    await write(protocol.CONTROLLER_UUID, payload)
+                    actual = await read(protocol.CONTROLLER_UUID)
+                    if actual != payload: raise ValueError('Firmware rejected controller')
+                return dict(zip(protocol.CONTROLLER_KEYS, protocol.CONTROLLER_STRUCT.unpack(actual)))
+            if operation in ('read_robot_config', 'set_robot_config'):
+                if operation == 'set_robot_config':
+                    payload = json.dumps(value, separators=(',', ':'), allow_nan=False).encode()
+                    for offset in range(0, len(payload), protocol.CONFIG_CHUNK_BYTES):
+                        await write(protocol.CONFIG_UUID, b'\x01' + struct.pack('<HH', offset, len(payload)) +
+                                    payload[offset:offset+protocol.CONFIG_CHUNK_BYTES])
+                actual = protocol.normalize_robot_config(json.loads((await read(protocol.CONFIG_UUID)).decode()))
+                if operation == 'set_robot_config':
+                    if actual != value: raise ValueError('Firmware rejected robot configuration')
+                    await self._reset_link(car_id, client, write, protocol.CONTROL_RESTART)
+                return actual
+            if operation in ('restart', 'reconnect_telemetry'):
+                code = protocol.CONTROL_RESTART if operation == 'restart' else protocol.CONTROL_RECONNECT_TELEMETRY
+                await write(protocol.CONTROL_UUID, bytes([code]))
+                if await read(protocol.CONTROL_UUID) != bytes([0xa5, code]):
+                    raise RuntimeError('Firmware rejected recovery command')
+                self._active.pop(car_id, None)
+                self._position_mode.discard(car_id)
+                if operation == 'restart':
+                    await asyncio.wait_for(client.disconnect(), 2)
+                    self._clients.pop(car_id, None)
+                return True
+            raise ValueError('Unknown robot operation')
+
+    async def _reset_link(self, car_id, client, write, code):
+        await write(protocol.CONTROL_UUID, bytes([code]))
+        self._active.pop(car_id, None)
+        self._position_mode.discard(car_id)
+        await asyncio.wait_for(client.disconnect(), 2)
+        self._clients.pop(car_id, None)
 
     async def _keepalive(self):
         try:
@@ -231,8 +347,10 @@ class CarCmdLive(CarCmd):
                 return
             try:
                 client = self._clients[car_id]
-                payload = self._active[car_id]
-                await asyncio.wait_for(client.write_gatt_char(VELOCITY_UUID, payload, response=True), 1)
+                position = car_id in self._position_mode
+                payload = b'\x01' if position else self._active[car_id]
+                uuid = protocol.LEASE_UUID if position else VELOCITY_UUID
+                await asyncio.wait_for(client.write_gatt_char(uuid, payload, response=True), 1)
                 self._last_write[car_id] = time.monotonic()
             except Exception as error:
                 self._active.pop(car_id, None)

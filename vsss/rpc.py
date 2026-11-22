@@ -24,6 +24,7 @@ class RemoteError(RuntimeError):
 
 
 def default_endpoint():
+    if os.environ.get('VSSS_ENDPOINT'): return Path(os.environ['VSSS_ENDPOINT'])
     return Path(tempfile.gettempdir()) / f"vsss-{os.environ.get('USERNAME', os.environ.get('USER', 'user'))}-rpc.json"
 
 
@@ -106,7 +107,10 @@ class _Endpoint:
         with self.lock:
             self.sessions.discard(session)
         self.provider.events.disconnect(session)
-        self.provider.cars.disconnect(session)
+        try:
+            self.provider.cars.disconnect(session)
+        finally:
+            self.provider.disconnected(session)
 
 
 class RPCHost:
@@ -217,8 +221,8 @@ class Subscription:
 
 class ProviderClient:
     """One generic client: component methods, records and callbacks are shared."""
-    def __init__(self, endpoint=None, *, timeout=30):
-        self._settings = json.loads(Path(endpoint or default_endpoint()).read_text(encoding="utf-8"))
+    def __init__(self, endpoint=None, *, timeout=30, _settings=None):
+        self._settings = dict(_settings) if _settings else json.loads(Path(endpoint or default_endpoint()).read_text(encoding="utf-8"))
         self._settings['timeout'] = timeout
         self._root = _proxy(self._settings)
         self._root_lock = RLock()
@@ -232,6 +236,10 @@ class ProviderClient:
         self.cars = _RemoteComponent(self, "cars")
         self._callbacks = {}
         self._subscriptions = []
+
+    def fork(self):
+        """Independent session/connection to this exact provider for parallel I/O."""
+        return ProviderClient(timeout=self._settings['timeout'], _settings=self._settings)
 
     def _invoke(self, component, method, args, kwargs):
         response = self._root_call("invoke", self._session, component, method, encode(args), encode(kwargs))

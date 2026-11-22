@@ -1,5 +1,6 @@
 """Persistent field viewer using the existing ArUco BoardPlotter2D renderer."""
 import argparse
+from collections import deque
 from copy import copy
 from dataclasses import asdict
 import json
@@ -91,6 +92,10 @@ class ProviderFeed:
         self.state = WorldState(valid=False)
         self.status = 'Waiting for provider'
         self.source_id = None
+        self.description = {}
+        self._edits = deque()
+        self._metadata_dirty = False
+        self._last_event = time.monotonic()
         self.thread = Thread(target=self._run, daemon=True)
         self.thread.start()
 
@@ -98,11 +103,48 @@ class ProviderFeed:
         with self.lock:
             return self.state, self.status, self.source_id
 
+    def info(self):
+        with self.lock: return self.description
+
+    def gesture(self, operation, kind, number, pose=None, *, source_id):
+        with self.lock:
+            if source_id != self.source_id or not self.description.get('capabilities', {}).get('simulation_edit'):
+                return
+            item = (operation, kind, number, pose, source_id)
+            # Only adjacent moves coalesce; grab/release ordering is retained.
+            if operation == 'move' and self._edits and self._edits[-1][0] == 'move':
+                self._edits[-1] = item
+            else:
+                self._edits.append(item)
+
+    def _edit_pending(self, client, grab):
+        while True:
+            with self.lock:
+                if not self._edits: return grab
+                operation, kind, number, pose, source = self._edits.popleft()
+            if source != self.source_id: continue
+            try:
+                if operation == 'grab':
+                    result = client.edit('grab', kind, number, source_id=source)
+                    grab = (kind, number, result['token'])
+                elif grab and grab[:2] == (kind, number):
+                    client.edit(operation, kind, number, pose, source_id=source, token=grab[2])
+                    if operation == 'release': grab = None
+            except (ValueError, RuntimeError) as error:
+                with self.lock: self.status = f'Edit rejected: {error}'
+                if grab:
+                    try: client.edit('release', grab[0], grab[1], source_id=source, token=grab[2])
+                    except (ValueError, RuntimeError): pass
+                grab = None
+
     def _receive(self, event):
         if event.topic == 'gps':
             with self.lock:
                 self.state = event.value
+                self._last_event = time.monotonic()
         elif event.topic == 'lifecycle' and isinstance(event.value, dict):
+            if event.value.get('kind') == 'scenario_loaded':
+                with self.lock: self._metadata_dirty = True
             if event.value.get('kind') == 'playback_end':
                 with self.lock:
                     self.status = 'Playback finished' if event.value.get('complete') else str(event.value)
@@ -116,22 +158,118 @@ class ProviderFeed:
                     state = client.gps.state()
                     with self.lock:
                         self.state, self.source_id = state, description['source_id']
+                        self.description = description
+                        self._edits.clear()
                         self.status = description['mode']
+                    grab = None
+                    last_poll = time.monotonic()
                     with client.subscribe(['gps', 'lifecycle'], self._receive) as subscription:
-                        while not self.stop.wait(.1):
+                        while not self.stop.wait(.02):
                             if subscription.error:
                                 raise ConnectionError(str(subscription.error))
                             if self.path.read_bytes() != discovery:
                                 break
+                            with self.lock: dirty = self._metadata_dirty
+                            if dirty:
+                                info = client.describe()
+                                with self.lock:
+                                    self.description, self._metadata_dirty = info, False
+                            if description['mode'] != 'playback' and time.monotonic()-last_poll > .2:
+                                last_poll = time.monotonic()
+                                with self.lock: silent = last_poll-self._last_event > .2
+                                if silent:
+                                    state = client.gps.state()
+                                    with self.lock: self.state = state
+                            grab = self._edit_pending(client, grab)
             except Exception as error:
                 with self.lock:
                     self.status = f'Waiting for provider: {error}'
                     self.source_id = None
+                    self.description = {}
+                    self._edits.clear()
             self.stop.wait(.2)
 
     def close(self):
         self.stop.set()
         self.thread.join(timeout=4)
+
+
+class SimDrag:
+    """Mouse geometry only; the feed worker owns all RPC and grab lifetimes."""
+    def __init__(self, plotter, feed):
+        self.plotter, self.feed, self.active = plotter, feed, None
+
+    def point(self, px, py):
+        return ((px-self.plotter.width/2)/self.plotter.scale,
+                -(py-self.plotter.height/2)/self.plotter.scale)
+
+    def mouse(self, event, px, py, flags, param=None):
+        import cv2
+        state, _, source = self.feed.snapshot()
+        info = self.feed.info()
+        if not info.get('capabilities', {}).get('simulation_edit') or self.active and (
+            self.active['source'] != source or self.active['generation'] != info['simulation']['generation']):
+            self.active = None
+            return
+        x, y = self.point(px, py)
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if self.active:
+                self.feed.gesture('release', self.active['kind'], self.active['number'], source_id=source)
+                self.active = None
+            radius = info['simulation']['ball_radius']
+            body = info['simulation']['body']
+            picked = None
+            for ball in state.balls:
+                if math.hypot(x-ball.pose.x, y-ball.pose.y) <= radius:
+                    picked = ('ball', ball.id, ball.pose, False)
+                    break
+            if picked is None:
+                for car in state.cars:
+                    theta = math.radians(car.pose.angle)
+                    dx, dy = x-car.pose.x, y-car.pose.y
+                    local = (math.cos(theta)*dx+math.sin(theta)*dy, -math.sin(theta)*dx+math.cos(theta)*dy)
+                    if all((b[0]-a[0])*(local[1]-a[1])-(b[1]-a[1])*(local[0]-a[0]) >= 0
+                           for a, b in zip(body, body[1:]+body[:1])):
+                        picked = ('car', car.id, car.pose, math.hypot(dx, dy) > .03)
+                        break
+            if picked:
+                kind, number, pose, rotate = picked
+                self.active = dict(kind=kind, number=number, pose=pose, rotate=rotate, source=source,
+                                   generation=info['simulation']['generation'],
+                                   offset=(x-pose.x, y-pose.y), pointer=math.degrees(math.atan2(y-pose.y, x-pose.x)))
+                self.feed.gesture('grab', kind, number, source_id=source)
+        elif self.active and event in (cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONUP):
+            from .models import Pose
+            active = self.active
+            pose = active['pose']
+            if active['rotate']:
+                angle = math.degrees(math.atan2(y-pose.y, x-pose.x))
+                delta = (angle-active['pointer']+180) % 360-180
+                target = Pose(pose.x, pose.y, pose.angle+delta)
+            else:
+                target = Pose(x-active['offset'][0], y-active['offset'][1], pose.angle)
+            self.feed.gesture('move', active['kind'], active['number'], target, source_id=source)
+            if event == cv2.EVENT_LBUTTONUP or not flags & cv2.EVENT_FLAG_LBUTTON:
+                self.feed.gesture('release', active['kind'], active['number'], source_id=source)
+                self.active = None
+
+    def render(self, frame, state):
+        import cv2
+        import numpy as np
+        info = self.feed.info().get('simulation')
+        if info is None: return frame
+        for car in state.cars:
+            c, s = math.cos(math.radians(car.pose.angle)), math.sin(math.radians(car.pose.angle))
+            points = [(car.pose.x+c*x-s*y, car.pose.y+s*x+c*y) for x, y in info['body']]
+            pixels = np.array([(round(self.plotter.width/2+x*self.plotter.scale),
+                                round(self.plotter.height/2-y*self.plotter.scale)) for x, y in points], np.int32)
+            cv2.polylines(frame, [pixels], True, (100, 100, 100), 1, cv2.LINE_AA)
+            center = (round(self.plotter.width/2+car.pose.x*self.plotter.scale),
+                      round(self.plotter.height/2-car.pose.y*self.plotter.scale))
+            cv2.circle(frame, center, max(3, round(.03*self.plotter.scale)), (100, 100, 100), 1, cv2.LINE_AA)
+        cv2.putText(frame, 'Centre: move | Edge: rotate | Ball: move', (8, frame.shape[0]-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, .4, (70, 70, 70), 1, cv2.LINE_AA)
+        return frame
 
 
 def main(argv=None):
@@ -164,6 +302,7 @@ def main(argv=None):
     except (OSError, ValueError, TypeError, cv2.error) as error:
         parser.error(str(error))
     feed = ProviderFeed(args.endpoint)
+    drag = SimDrag(plotter, feed)
     window = 'VSSS field'
     latest = None
     duration = args.duration or (1 if args.output else None)
@@ -171,9 +310,11 @@ def main(argv=None):
     try:
         if not args.output:
             cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+            cv2.setMouseCallback(window, drag.mouse)
         while deadline is None or time.monotonic() < deadline:
             state, status, source = feed.snapshot()
             frame = render_state(plotter, state)
+            if not args.output: frame = drag.render(frame, state)
             if source is not None and state.valid:
                 latest = frame.copy()
             label = f'{args.setup} | {status}'

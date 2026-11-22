@@ -21,7 +21,8 @@ class Recorder:
             with self._lock:
                 self._subscription = client.subscribe(["gps", "commands", "lifecycle"], self._event, capacity=4096)
                 self._write({"schema": SCHEMA, "state": encode(client.gps.state()),
-                             "commands": encode(client.cars.observed()), "created_at": time.time()})
+                             "commands": encode(client.cars.observed()),
+                             "statuses": encode(client.cars.statuses()), "created_at": time.time()})
         except Exception:
             if self._subscription:
                 self._subscription.close()
@@ -54,7 +55,7 @@ class Recorder:
         self.close()
 
 
-def read_header(path):
+def read_header(path, *, with_status=False):
     with Path(path).open(encoding="utf-8") as file:
         header = json.loads(file.readline())
     if header.get("schema") != SCHEMA:
@@ -63,6 +64,13 @@ def read_header(path):
     commands = decode(header.get("commands", []))
     if not isinstance(state, WorldState) or any(not isinstance(c, CommandEvent) for c in commands):
         raise ValueError("invalid recording header")
+    if with_status:
+        from ._ble_protocol import RobotStatus
+        statuses = decode(header.get('statuses', []))
+        if not isinstance(statuses, list) or any(not isinstance(item, dict) or type(item.get('car_id')) is not int
+                or item['car_id'] < 0 or not isinstance(item.get('status'), RobotStatus) for item in statuses):
+            raise ValueError('invalid recording statuses')
+        return state, commands, statuses
     return state, commands
 
 

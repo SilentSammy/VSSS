@@ -4,26 +4,26 @@ import sys
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
-from vsss import Car
+from vsss import Car, Velocity
 
 
 def verify(source):
     clients=[]
-    def factory(**kwargs):
+    def factory(*args,**kwargs):
         client=MagicMock()
-        client.is_connected=True
         clients.append((kwargs,client))
         return client
     def no_gps(*args,**kwargs):
         raise AssertionError('The velocity-only export must not start GPS')
-    with patch('vsss.car.MecanumBLEClient',side_effect=factory), patch('vsss.car.GPS',side_effect=no_gps), \
+    with patch('vsss.car.VSSSProvider.connect',side_effect=factory), patch('vsss.car.GPS',side_effect=no_gps), \
             patch('vsss.gps.GPS',side_effect=no_gps), patch('time.sleep') as sleep:
         exec(compile(source,'<exported>','exec'),{'__name__':'__main__'})
         assert len(clients)==1,clients
         options,client=clients[0]
-        assert options=={'device_name':'car1'},options
-        client.set_velocity.assert_called_once_with({'x':.2,'y':0,'w':0})
-        client.disconnect.assert_called_once()
+        assert options=={'timeout':15},options
+        client.cars.connect.assert_called_once_with(1)
+        client.cars.set_velocity.assert_called_once_with(1,Velocity(.2,0,0))
+        client.close.assert_called_once()
         sleep.assert_called_once_with(1)
         assert not Car._cars
         clients.clear()
@@ -33,7 +33,7 @@ def verify(source):
             pass
         else:
             raise AssertionError('Expected the injected program error')
-        clients[0][1].disconnect.assert_called_once()
+        clients[0][1].close.assert_called_once()
         assert not Car._cars
     print('PASS: real vsss.Car and @run clean up exported code on return and error; GPS stays lazy.')
 

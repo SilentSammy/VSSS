@@ -36,5 +36,9 @@ class VSSSProvider:
     def __enter__(self):
         return self
 
+    def disconnected(self, session):
+        """Provider-specific resources owned by a departed client."""
+        pass
+
     def __exit__(self, *args):
         self.close()

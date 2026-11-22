@@ -18,14 +18,14 @@ class LatestCommands:
     At most one pending value per car; intermediate joystick positions are
     replaced rather than played back later. Ordinary RPC remains synchronous.
     """
-    def __init__(self, cars):
+    def __init__(self, cars, channel_factory=None):
         self.cars = cars
+        self.channel_factory = channel_factory
         self.error = None
         self._condition = Condition()
         self._pending = {}
         self._closed = False
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._threads = {}
 
     def submit(self, car_id, command):
         with self._condition:
@@ -34,33 +34,44 @@ class LatestCommands:
             if self._closed:
                 raise RuntimeError('Command writer is closed')
             self._pending[car_id] = command
-            self._condition.notify()
+            if car_id not in self._threads:
+                self._thread = Thread(target=self._run, args=(car_id,), daemon=True)
+                self._threads[car_id] = self._thread
+                self._thread.start()
+            self._condition.notify_all()
 
-    def _run(self):
-        while True:
-            with self._condition:
-                self._condition.wait_for(lambda: self._closed or self._pending)
-                if self._closed:
-                    return
-                car_id = next(iter(self._pending))
-                command = self._pending.pop(car_id)
-            try:
-                self.cars.set_velocity(car_id, command)
-            except Exception as error:
+    def _run(self, car_id):
+        channel, cars = None, self.cars
+        try:
+            if self.channel_factory:
+                channel = self.channel_factory()
+                cars = channel.cars
+            while True:
                 with self._condition:
-                    self.error = error
-                    self._pending.clear()
-                    self._closed = True
-                return
+                    self._condition.wait_for(lambda: self._closed or car_id in self._pending)
+                    if self._closed: return
+                    command = self._pending.pop(car_id)
+                cars.set_velocity(car_id, command)
+        except Exception as error:
+            with self._condition:
+                self.error = error
+                self._pending.pop(car_id, None)
+        finally:
+            # Each fast car stops without waiting for another stalled radio.
+            try: cars.stop(car_id)
+            except Exception: pass
+            if channel is not None: channel.close()
 
     def close(self):
         with self._condition:
             self._closed = True
             self._pending.clear()
-            self._condition.notify()
+            self._condition.notify_all()
         # Finish the one in-flight write before the final acknowledged STOP.
-        self._thread.join(timeout=31)
-        if self._thread.is_alive():
+        deadline = time.monotonic() + 31
+        for thread in self._threads.values():
+            thread.join(timeout=max(0., deadline-time.monotonic()))
+        if any(thread.is_alive() for thread in self._threads.values()):
             raise TimeoutError('Command writer did not finish')
 
 
@@ -197,7 +208,7 @@ def main(argv=None, *, provider_factory=None):
             print('No cars assigned.')
             return
         for number, controls in assignments:
-            provider.cars.stop(number)
+            provider.cars.connect(number)
             print(f'car{number}: {", ".join(controls)}')
         print('W/S or I/K: forward/back; A/D or J/L: strafe; Q/E or U/O: rotate.')
         print('Gamepad: left stick translates, right stick rotates. C/M or RT: full speed.')
@@ -205,7 +216,7 @@ def main(argv=None, *, provider_factory=None):
         # Clear keys used by the assignment prompts before enabling motion.
         inp.pressed_keys.clear()
         sent = {}
-        writer = LatestCommands(provider.cars)
+        writer = LatestCommands(provider.cars, channel_factory=getattr(provider, 'fork', None))
         while True:
             started = time.monotonic()
             if writer.error:

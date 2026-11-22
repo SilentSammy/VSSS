@@ -22,7 +22,7 @@ vsss-plot = "vsss.plot:main"
 vsss-teleop = "vsss.teleop:main"
 
 [tool.setuptools]
-packages = ["vsss", "aruco_gps"]
+packages = ["vsss", "aruco_gps", "mp"]
 
 [tool.setuptools.package-dir]
 vsss = "vsss"

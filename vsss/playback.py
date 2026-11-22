@@ -1,5 +1,6 @@
 """Play domain recordings through the same GPS and command observation API."""
 import math
+from dataclasses import replace
 from threading import Event, Thread
 import time
 
@@ -8,11 +9,12 @@ from .events import EventHub
 from .models import CommandEvent, WorldState
 from .provider import VSSSProvider
 from .recording import read_header, read_events
+from ._ble_protocol import RobotStatus
 
 
 class GPSPlayback(GPSState):
     def _receive(self, state):
-        self._update(state)
+        self._update(replace(state, received_at=time.time(), source_age=0.))
 
 
 class CarCmdPlayback(CarCmd):
@@ -27,6 +29,14 @@ class CarCmdPlayback(CarCmd):
     def _apply(self, car_id, velocity):
         raise RuntimeError("playback is read-only")
 
+    def _waypoint(self, car_id, target):
+        raise RuntimeError('playback is read-only')
+
+    @rpc_method
+    def status(self, car_id):
+        with self._lock:
+            return self._statuses.get(car_id, RobotStatus(-1, 0, 0, 0, 0., 0., 0., 0))
+
     def _receive(self, command):
         self._observe(command)
 
@@ -35,10 +45,11 @@ class VSSSPlayback(VSSSProvider):
     def __init__(self, path, *, speed=1., wait_for_subscriber=True, loop=False):
         if not isinstance(speed, (int, float)) or not math.isfinite(speed) or speed <= 0:
             raise ValueError("playback speed must be positive and finite")
-        self.initial, self.initial_commands = read_header(path)
+        self.initial, self.initial_commands, self.initial_statuses = read_header(path, with_status=True)
         events = EventHub()
         gps = GPSPlayback(events, self.initial)
         cars = CarCmdPlayback(events, gps)
+        cars._statuses = {item['car_id']: item['status'] for item in self.initial_statuses}
         for command in self.initial_commands:
             cars._last[command.car_id] = command
         super().__init__(gps, cars, mode="playback")
@@ -70,6 +81,7 @@ class VSSSPlayback(VSSSProvider):
                 self.gps._receive(self.initial)
                 with self.cars._lock:
                     self.cars._last.clear()
+                    self.cars._statuses = {item['car_id']: item['status'] for item in self.initial_statuses}
                 for command in self.initial_commands:
                     self.cars._receive(command)
                 start = time.monotonic()
@@ -81,6 +93,9 @@ class VSSSPlayback(VSSSProvider):
                     elif event.topic == "commands" and isinstance(event.value, CommandEvent):
                         self.cars._receive(event.value)
                     elif event.topic == "lifecycle":
+                        if isinstance(event.value, dict) and event.value.get('kind') == 'car_status':
+                            with self.cars._lock:
+                                self.cars._statuses[event.value['car_id']] = event.value['status']
                         self.events.publish("lifecycle", event.value)
                     else:
                         raise ValueError("event topic/value mismatch")

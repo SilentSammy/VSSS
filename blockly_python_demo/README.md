@@ -17,6 +17,14 @@ updating. The server uses the existing VSSS environment. A fresh copy needs the
 parent Python requirements and `npm.cmd ci` in this folder. No sign-in or API key
 is required. Use `--port 8767` if needed.
 
+On `ipc_cleanup`, start `vsss-live` or `vsss-sim` separately before running robot
+examples. The student `Car`, lazy `gps`, and `@run` helpers now delegate to the
+generic provider RPC API; there is no automatic provider startup. To isolate a
+session, set `VSSS_ENDPOINT` to the same discovery path passed to the provider's
+`--endpoint` option before starting this server. Input methods and examples keep
+their previous behavior; configuration and injected-provider constructor options
+remain outside the student-approved block surface.
+
 ## Examples
 
 Every requested example is available in the example selector and as a Python file:

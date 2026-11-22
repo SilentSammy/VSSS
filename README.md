@@ -174,6 +174,72 @@ stops cars owned by that session. Reads do not take ownership; the latest
 successful explicit command does. There is no automatic reconnect or replay
 of uncertain commands.
 
+STOP clears motion ownership. Device I/O and ownership changes serialize per
+car; a blocked radio does not hold a fleet-wide lock. Teleop has an independent
+latest-value worker and RPC connection per assigned car. `client.fork()` creates
+another generic session to the same provider when parallel requests are needed.
+
+## Waypoints, feedback and student helpers
+
+```python
+from vsss import VSSSProvider, Pose
+
+with VSSSProvider.connect() as provider:
+    provider.cars.connect(1)  # Stopped setup; does not release a waiting sim.
+    provider.cars.go_to(1, Pose(0.2, 0.2, 90))
+    status = provider.cars.status(1)  # Typed RobotStatus
+    print(status.mode_name, status.fault_name, status.pose_fresh)
+    provider.cars.stop(1)
+```
+
+Waypoints use field metres and CCW degrees. Velocity takes over from navigation.
+`go_to` acknowledges acceptance; poll status for arrival, as in the autonomous
+boilerplate.
+STOP, disconnect and edits cancel active and delayed navigation. Live waypoint
+heartbeats use the firmware lease characteristic instead of velocity. Simulation
+runs `mp.onboard_controller` with arrival holding, recovery and timeouts.
+
+`gps.state()` contains only usable objects; stale, board-lost and missing objects
+are omitted. Live ingress rejects excessive camera age and reordered/delayed
+packets. `gps.get_car(ID)` returns a Pose or None. `gps.age()` incorporates camera
+frame age, excess network delay and time since delivery. `gps.snapshot()` is an
+explicit historical view. Source `captured_at` and delivery `received_at` remain
+distinct; playback preserves source time and uses fresh delivery timing.
+
+The student helpers delegate to the same methods:
+
+```python
+from vsss import Car, gps, run
+
+@run
+def main():
+    car = Car(1)
+    car.wait_for_position()
+    car.go_to(0.2, 0.2, 90)
+    print(car.read_status().mode_name)
+    # @run stops/closes cars on return, exception or Ctrl+C.
+
+if __name__ == '__main__':
+    main()
+```
+
+`GPS` remains the abstract component; `ClientGPS` is the student view and `gps`
+is lazy. Velocity-only code does not start GPS. `Car(1, provider=local_provider)`
+works without RPC. The restored `boilerplate_velocity.py`,
+`boilerplate_observe.py`, `boilerplate_autonomous.py` and `goalie.py`, as well as
+Blockly's live examples, use these helpers. Start a provider separately. Set
+`VSSS_ENDPOINT` for scripts/Blockly when using a custom provider `--endpoint`.
+
+Admin methods are `read_trim`/`set_trim`, `read_controller`/`set_controller`,
+`read_robot_config`/`set_robot_config`, `reconnect_telemetry`, and `restart`, each
+taking a car ID. Mutations stop first; live writes validate/read back canonical
+values and chunk full configuration over BLE. Nothing resumes previous motion.
+Configuration results may contain credentials and are returned only to the
+explicit caller, never recorded in events. Simulation supplies the same methods;
+its identities come from the scenario. `Car.restart()` waits for a stopped
+reconnect; the component call acknowledges the restart and later commands
+reconnect explicitly/lazily.
+
 ## Providers
 
 ```powershell
@@ -204,8 +270,12 @@ The simulator publishes at 30 Hz by default and advances Pymunk physics at a
 fixed 240 Hz. Square car bodies have finite motor acceleration; cars contact
 one another, push balls, and collide with field walls. Balls bounce and lose
 speed through rolling resistance. Full speed is 0.6 m/s and 180 degrees/s.
-The masses, friction and motor constants are illustrative rather than measured;
-firmware waypoints, noise and camera latency are still outside this core.
+Defaults are illustrative. `--config` loads physical/motor/wobble/delay settings;
+`--ball-model` accepts model JSON or a fit report containing `ball_model`/`model`.
+`examples/physics_lab.json` ports the former fitted impact/rolling/drift values
+and delays. Ball contacts preserve the former normal impact-gain semantics while
+Pymunk resolves geometry/tangential contact; hardware fidelity still needs lab
+verification.
 Editing an object clears its physical momentum; loading a scenario resets the
 whole physics world. Unedited objects retain motion.
 
@@ -215,6 +285,36 @@ whole edit before applying it and stops edited cars. It also accepts a JSON
 string containing the tagged patch. Scenario files contain a tagged WorldState
 on their first line, or a new-format recording header. A scenario is an initial
 state, not a mid-run restoration of timers/random generators.
+
+`SimScenario` also holds `BodyMotion` initial velocities (world m/s, degrees/s),
+config, seed and a control-start gate. Two-frame `sim_scenario` JSONL files derive
+motion from increasing times and matching IDs, including wrapped headings.
+
+```powershell
+vsss-sim --scenario goalie --seed 123 --config examples/physics_lab.json --save-scenario shot.jsonl
+vsss-plot
+python goalie.py --duration 5
+vsss-sim --load shot.jsonl
+```
+
+Use separate terminals while sim stays open. The goalie scenario waits for an
+explicit velocity/waypoint before physics starts; connection, reads and admin
+setup do not release it. `--wait-for-control` enables this for other scenarios.
+Simulated BLE delay affects incoming motion; camera delay affects observations
+and onboard feedback. STOP cancels delayed motion immediately. `scenario()`
+exports current poses/motion/config as an initial state, not a controller/random
+stream checkpoint.
+
+The goalie example predicts a crossing, holds its original Y lane and corrects
+small heading disturbances caused by dynamic contacts. It stops on feedback loss
+or excessive lane/heading departure. Five seeded simulator shots are regression
+cases; they do not establish a physical lab success rate.
+
+Plot supports dragging car centres/balls to move and car edges to rotate. Grabs
+anchor bodies and reject other editors/commands until release. The worker
+coalesces moves off the GUI thread, preserving grab/release order. Closing or
+changing providers releases grabs. Source IDs and per-grab tokens reject stale
+gestures after a provider/scenario change. Scripted patches remain atomic.
 
 ## Record and replay
 
@@ -227,15 +327,20 @@ vsss-observer
 vsss-playback experiment.jsonl --speed 0.5
 ```
 
-Recordings use `vsss.recording/v1`: one initial state/command snapshot, timed
+Recordings use `vsss.recording/v1`: one initial state/command/status snapshot, timed
 domain events, and a clean/incomplete end marker. Topics are `gps`, `commands`
 and `lifecycle`; the format has no UDP/BLE UUIDs, packets or base64 fields.
 Legacy schema-3 bags are intentionally rejected. See `examples/recording.jsonl`.
+
+Velocity/waypoint commands and observed onboard statuses replay as typed domain
+values. A bag with no recorded status returns unknown status rather than
+fabricated fresh onboard feedback. Admin arguments/results are not recorded.
 
 ## Verification and rollback
 
 ```powershell
 python -m unittest discover -s tests -v
+python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
 python tests/hardware_smoke.py --car 1
 python tests/latency_probe.py --samples 300
 ```
@@ -258,4 +363,7 @@ outside the checkout to `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`.
 This includes ignored recordings and hardware backup files. Firmware under
 `mp/` and the vision submodule remain in place. No merge into `overhaul` has
 been made; this branch is still being verified against the previous behavior.
+Selected boilerplates/goalie were restored on top of the new provider; the old
+provider/worker IPC stack remains removed. Restart provider/client processes
+after updating so both sides load the new method and record definitions.
 See `DEV.md` for module responsibilities and current limitations.

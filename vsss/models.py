@@ -99,6 +99,9 @@ class WorldState:
     captured_at: float = 0.  # Unix seconds, for recorded source age
     sequence: int = 0
     valid: bool = True
+    frame_age_ms: float = 0.
+    source_age: float = 0.  # lower-bound age at delivery; independent of host clock skew
+    received_at: float = 0.  # delivery wall time; captured_at preserves source time
 
     def __post_init__(self):
         if not isinstance(self.field, Field):
@@ -109,6 +112,9 @@ class WorldState:
             if len({item.id for item in items}) != len(items):
                 raise ValueError("duplicate object IDs")
         finite(self.captured_at)
+        finite(self.frame_age_ms, self.source_age, self.received_at)
+        if self.frame_age_ms < 0 or self.source_age < 0:
+            raise ValueError('negative feedback age')
         if type(self.sequence) is not int or self.sequence < 0 or type(self.valid) is not bool:
             raise ValueError("invalid world timing/validity")
 
@@ -129,14 +135,15 @@ class Velocity:
 class CommandEvent:
     car_id: int
     operation: str
-    value: Velocity
+    value: object
     session: str
     reason: str = "command"
 
     def __post_init__(self):
-        if type(self.car_id) is not int or self.car_id < 0 or not isinstance(self.value, Velocity):
+        if type(self.car_id) is not int or self.car_id < 0:
             raise ValueError("invalid command event")
-        if self.operation != "velocity" or not isinstance(self.session, str) or not isinstance(self.reason, str):
+        expected = {'velocity': Velocity, 'waypoint': Pose}.get(self.operation)
+        if expected is None or not isinstance(self.value, expected) or not isinstance(self.session, str) or not isinstance(self.reason, str):
             raise ValueError("invalid command metadata")
 
 
@@ -158,3 +165,41 @@ class StatePatch:
     """Only listed poses change. Edits stop edited cars; others keep moving."""
     cars: list = dc_field(default_factory=list)
     balls: list = dc_field(default_factory=list)
+
+
+@record
+class BodyMotion:
+    """World-frame m/s and degrees/s, not normalized motor commands."""
+    kind: str
+    id: int
+    vx: float = 0.
+    vy: float = 0.
+    omega: float = 0.
+
+    def __post_init__(self):
+        finite(self.vx, self.vy, self.omega)
+        if self.kind not in ('car', 'ball') or type(self.id) is not int or self.id < 0:
+            raise ValueError('invalid body motion')
+        if math.hypot(self.vx, self.vy) > 5 or abs(self.omega) > 1080:
+            raise ValueError('initial motion exceeds simulation bounds')
+
+
+@record
+class SimScenario:
+    state: WorldState
+    motion: list = dc_field(default_factory=list)
+    config: dict = dc_field(default_factory=dict)
+    seed: object = None
+    wait_for_control: bool = False
+
+    def __post_init__(self):
+        if not isinstance(self.state, WorldState) or not isinstance(self.config, dict):
+            raise ValueError('invalid scenario state/config')
+        if not isinstance(self.motion, list) or any(not isinstance(m, BodyMotion) for m in self.motion):
+            raise ValueError('invalid initial motion')
+        keys = [(m.kind, m.id) for m in self.motion]
+        valid = {('car', c.id) for c in self.state.cars} | {('ball', b.id) for b in self.state.balls}
+        if len(set(keys)) != len(keys) or not set(keys) <= valid:
+            raise ValueError('duplicate or unknown motion identity')
+        if self.seed is not None and type(self.seed) is not int or type(self.wait_for_control) is not bool:
+            raise ValueError('invalid scenario seed/start gate')

@@ -1,144 +1,106 @@
-# IPC cleanup experiment
+# IPC cleanup development
 
-This branch implements the minimal provider architecture from scratch. The
-main checkout is on `ipc_cleanup`; `overhaul` has not been advanced.
-There is no commitment to compatibility with the former student
-API, CLI tools or schema-3 recording files.
+`ipc_cleanup` implements P0/P1 functionality from [PARITY.md](PARITY.md).
+`overhaul` is unchanged. The component/RPC architecture is retained; student
+facades do not reintroduce the former provider/worker transport stack.
 
 | Module | Responsibility |
 | --- | --- |
-| `models.py` | Domain dataclasses and one recursive, registered-record codec. |
-| `components.py` | Abstract GPS/CarCmd, state publication, ownership and command observation. |
-| `events.py` | Ordered bounded per-subscriber queues, explicit overflow. |
-| `rpc.py` | One authenticated loopback Pyro endpoint, generic method forwarding, sessions and callback polling. |
-| `provider.py` | Compose GPS/cars, describe provider capabilities, host/connect lifecycle. |
-| `live.py` | UDP/HTTP vision adapter, one asyncio thread owning lazy BLE connections. |
-| `simulation.py` | Physics lifecycle, scenario replacement, atomic position patches. |
-| `physics.py` | Pymunk rigid bodies, 240 Hz steps, motors, contacts and rolling drag. |
-| `input.py` / `teleop.py` | Previous keyboard/gamepad input API and 50 Hz RPC teleoperation. |
-| `plot.py` | Local lab setup/config/assets, BoardPlotter2D, headless output, provider-following viewer. |
-| `recording.py` | Protocol-agnostic JSONL snapshots/events and completion markers. |
-| `playback.py` | One playback clock dispatching observations into both components. |
-| `cli.py` | Foreground provider, recorder and observer entry points. |
+| `models.py` | Registered domain dataclasses; one recursive primitive/record codec. |
+| `components.py` | GPS freshness, ordinary car methods, per-car locks, ownership and domain events. |
+| `_ble_protocol.py` | Existing firmware UUID/layout/validation definitions and typed RobotStatus; no clients or transport runtime. |
+| `events.py` / `rpc.py` | Bounded subscriptions, whitelist dispatch, sessions and generic forked connections. |
+| `provider.py` | Compose GPS/cars, host/connect lifecycle and disconnect hook. |
+| `live.py` | UDP timing validation, HTTP dimensions, asyncio BLE owner, configuration readback and position leases. |
+| `scenarios.py` | Validated physical parameters, typed/two-frame scenario files, seeded goalie generation and export. |
+| `physics.py` | Pymunk geometry, finite motor force, identified normal impact, rolling/drift and seeded wobble. |
+| `simulation.py` | Delayed commands/observations, existing onboard controller, settings/status, atomic edits and grab ownership. |
+| `car.py` / `gps.py` / `runtime.py` | Small student views and cleanup over the provider API; lazy GPS. |
+| `input.py` / `teleop.py` | Existing input API, 50 Hz sampling and per-car latest-value workers. |
+| `plot.py` | Local setup/artwork, persistent feed and worker-side gestures; all GUI calls on main thread. |
+| `recording.py` / `playback.py` | Domain snapshots/events, typed command/status replay and delivery/source time separation. |
 
-Each component has normal Python methods. `@rpc_method` marks the whitelist;
-it does not replace local behavior. The client exposes generic component views,
-so a new decorated component method needs no corresponding client method.
-The RPC endpoint resolves only provider/gps/cars paths and never invokes an
-unmarked method. Third-party backend errors are converted to simple error
-envelopes; clients receive builtin errors or `RemoteError` with type/message.
+## Invariants
 
-Events use server queues and client-side polling on a separate connection. This
-keeps arbitrary callbacks in the subscribing process without requiring a
-reverse-listening socket. A queue exists before playback's start gate opens.
-Polling errors and callback exceptions end the subscription visibly through
-`Subscription.error`. No delivery/deduplication promise spans a disconnect.
+- Marked component methods execute normally in-process. RPC resolves only
+  provider/gps/cars and invokes the whitelist. A new marked method needs no
+  separately implemented client method. Codec decoding never imports arbitrary
+  classes; both sides register the shared records on package import.
+- Car locks are per ID. Metadata locks never cover BLE/device I/O. Simulation
+  edits acquire car locks in sorted order, then the world lock; stepping holds
+  the world lock and does not wait for car locks. STOP clears ownership. Owner
+  disconnect stops relevant cars concurrently; unrelated owners are rechecked.
+- Each teleop worker uses one forked connection to the exact original URI/token,
+  or the local object in direct mode. Unsent input is replaced per car. A fast
+  car stops without waiting for another worker's radio. Commands are never
+  retried automatically against a replacement provider.
+- Live connects with an initial zero. Manual writes renew leases; idle
+  heartbeats recheck last-write time after taking the per-car GATT lock. Position
+  mode sends lease messages, never stale velocity. Failed motion writes drop the
+  active command/link instead of resuming previous motion.
+- Admin setters stop before mutation. Validate complete configuration and
+  canonical readback; full configuration uses bounded contiguous chunks.
+  Argument/result payloads are not published, since they may contain secrets.
+  Only safe operation names, stopped commands and observed statuses are events.
+- Current GPS state is validated using the server's monotonic receipt age plus
+  source age; caller limits are checked in the same locked snapshot. Historical
+  snapshots remain available explicitly. Replay preserves source capture data
+  but refreshes delivery timing. No last-known pose is advertised as current
+  after the freshness window closes.
+- Simulation advances fixed physical substeps. BLE delay buffers latest pending
+  motion; STOP clears delayed work immediately. Camera delay feeds both public
+  observations and onboard control. Connection, reading and admin setup do not
+  release a waiting scenario. A valid explicit velocity/waypoint does.
+- Grabs have session, source and token identity. Held bodies are kinematic and
+  cannot receive motion commands; release zeros velocity rather than throwing.
+  Scenario replacement invalidates grabs and pending commands. The plot worker
+  coalesces adjacent moves while preserving grab/release boundaries. Only
+  observation connections reconnect automatically.
+- Subscriber queues are bounded. Overflow/failure is inspectable. Recording is
+  not yet a transactional snapshot or a server-sequence drain on close (P2).
+  Recorded status represents observed historical onboard state, not a new
+  hardware freshness assertion during playback.
+- Foreground loops use bounded waits so Windows can deliver pending SIGINT.
+  RPC disconnect cleanup precedes component teardown; GPS closes even if car
+  teardown raises. `@run` preserves the original program error during cleanup.
 
-A persistent root connection identifies a client session. Closing it releases
-that client's event queues and stops only cars it currently owns. The generic
-client serializes access to its Pyro proxy and explicitly transfers proxy thread
-ownership so callback threads can call component methods. Providers own all
-component lifetimes; there are no per-car or per-component RPC servers.
+## Verification
 
-## Scope boundaries
+```powershell
+python -m unittest discover -s tests -v
+python -m unittest discover -s blockly_python_demo -p test_live_runtime.py -v
+python blockly_python_demo/verify_export.py boilerplate_velocity.py
+python tests/latency_probe.py --samples 300
+```
 
-- Domain velocity means normalized body-frame x/y and angular w in [-1, 1].
-  Pose angles are degrees, counterclockwise from +x; positions are metres in a
-  centred field. The simulator maps full-scale commands to 0.6 m/s, 180 deg/s.
-- Physics includes contacts, finite motor force, ball pushing, wall rebounds and
-  rolling resistance. Constants are illustrative; firmware navigation is absent.
-  Manual edits recreate the affected body to discard cached contact impulses.
-- Live metadata currently retains dimensions, not the camera/ArUco configuration.
-  A fresh timestamp and explicit board-detected flag do not by themselves
-  guarantee safe autonomous navigation; consumers must check telemetry age.
-- BLE reconnect is explicit/lazy on a subsequent operation, never an automatic
-  resumption of motion. Firmware's lease expiry is still the last resort when
-  the provider crashes or cannot deliver STOP.
-- The first subscriber starts playback. A later subscriber sees current state
-  through `gps.state()` and future events, not a replay of missed events.
-- Recording starts with a snapshot plus a concurrently established event
-  subscription; there may be overlap at the snapshot boundary. It is not a
-  transactional snapshot of all components. Events preserve their provider
-  sequence; playback uses the recording's relative delivery timeline.
-- Shared memory, image arrays, calibration, auto-start, request deduplication,
-  plugin discovery and old API adapters are deferred.
+The feature suite has 65 passing tests and Blockly has 24. Tests use temporary
+endpoints, synthetic UDP, fake GATT firmware and separate simulator/student
+processes. Student subprocess tests explicitly set VSSS_ENDPOINT so they cannot
+accidentally target the lab provider. They do not move hardware. Package tests
+verify shared mp controller/config modules and local setup PNG/JSON assets are
+present outside the editable checkout.
 
-Plot uses a read-only background feed with one latest state. It rereads discovery
-and reconnects when the endpoint changes or a subscription fails. This retry is
-limited to observation: command clients never automatically resend an uncertain
-request. Plot RPC timeouts are one second; ordinary client timeouts remain 30s
-to accommodate bounded BLE operations. GUI operations stay on the main thread.
+Simulation capture timestamps advance from a source origin using simulation
+time, so fast deterministic tests and source-time controllers see the same
+physical intervals. Receipt timing remains wall/monotonic delivery time.
+Generated goalie shots use the former rolling coefficient to reach the lane.
+The ported example adds small lane/heading corrections for the new dynamic
+contact solver; that controller change is separate from physical parameters.
 
-Provider foreground loops use short timed waits so Windows can deliver pending
-SIGINT. Teardown closes RPC sessions while command components still exist, then
-closes components. GPS cleanup runs even if command cleanup fails.
+Earlier local measurements were roughly 0.5–0.6 ms median command RPC without
+hardware, versus 150 ms median/283 ms max STOP completion including BLE. These
+are call-completion measurements, not motor latency. A controlled 80 ms fake
+GATT comparison removed 7 redundant heartbeat writes in 15 commands. The fleet
+test now additionally holds one radio blocked while another commands/stops.
 
-## Development checks
+Hardware smoke tests are explicit (`python tests/hardware_smoke.py --car 1`)
+and use discovery/status/STOP only. Real configuration persistence, navigation,
+feedback recovery and multi-car timing require the manual lab acceptance in
+PARITY.md before advancing overhaul. Fitted physics coefficients are available
+in examples/physics_lab.json; a different contact solver still needs validation.
 
-Run `python -m unittest discover -s tests -v` from this worktree. The tests cover
-codec roundtrips, validation, atomic edits, queue overflow, authenticated RPC,
-callback-to-command calls, unexposed-method rejection, subprocess crash cleanup,
-record/playback gating, synthetic UDP decoding and fake-BLE heartbeat/stop.
-
-`tests/hardware_smoke.py --car 1` is a separate, deliberate discovery/status/STOP
-check. No nonzero velocity is sent by this check. Keep raw logs in ignored
-`.experiment-runs/` and state clearly whether actual hardware checks passed.
-
-## Experiment verification, 2026-11-21
-
-- The original core had 12 passing tests; the expanded suite now has 38,
-  including all three provider main loops under pending SIGINT, provider changes,
-  original renderer/headless CLI output, 50 Hz teleop and contact physics.
-- A wheel built successfully with the new package and console entry points.
-- Real car1 advertised over BLE. Outside the sandbox, the new RPC/live adapter
-  read status and received a STOP acknowledgement. Mode was idle, Wi-Fi was
-  connected, fault was zero and onboard `pose_fresh` was false. No nonzero
-  motion command was sent. Bluetooth connection inside the sandbox failed with
-  `BleakDeviceNotFoundError`; discovery alone worked there.
-- Vision reception and field HTTP polling were tested against synthetic UDP
-  and a local HTTP server, not the lab camera server. Real navigation and
-  live telemetry freshness have not been validated.
-
-The working CLI baseline is commit `dc7351f`. Cleanup removes obsolete source
-from this branch only. Local recordings and firmware backups are recoverable
-from `../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`; tracked source also
-remains available through Git. `mp/`, `aruco_gps/`, the environment, editor
-settings and `.hardware_backup/` are retained. No push or `overhaul` merge is
-part of this implementation.
-
-## Teleop latency investigation
-
-On 2026-11-21 the existing live provider measured 0.426 ms median for a
-read-only RPC (40 calls), versus 150.014 ms median and 282.814 ms maximum for
-STOP calls including BLE acknowledgement (15 calls; all commands zero).
-These do not measure motor actuation latency. The separate-process no-hardware
-command probe measured 0.593 ms median, 0.834 ms p95 and 1.857 ms maximum over
-300 calls. The earlier simulation-only RPC number did not include BLE waits.
-
-Two behavioral regressions relative to the former worker were found: teleop
-sampled input synchronously behind each BLE acknowledgement, and the periodic
-heartbeat repeated writes regardless of recent successful commands. The input
-loop now hands off to a bounded latest-value writer. Synchronous API semantics
-are retained; final STOP is still acknowledged after the writer finishes.
-Heartbeats recheck last-write time after acquiring a per-car GATT lock. Scanning
-uses its own lock, rather than holding the command lock for a four-second scan.
-
-A controlled comparison with the same 80 ms fake GATT write delay produced
-7 redundant heartbeat writes for 15 commands before the change and zero after.
-Worst observed completion fell from 186.06 ms to 94.43 ms in that test; those
-are simulated-device figures, not post-fix hardware measurements. Restart the
-running provider to load the fix before comparing actual driving behavior.
-Regression tests cover blocked-write input coalescing, failure propagation,
-idle lease renewal, heartbeat/command races, and nonblocking discovery.
-
-Plot imports VISION_SETUPS/DEFAULT_SETUP from the existing vision submodule.
-Importing those definitions opens no camera. It copies the selected board to
-resolve its artwork path relative to that submodule without mutating the shared
-setup object. Local marker styles resolve images relative to their JSON file;
-no remote metadata supplies geometry or pixels. Setup selection is fixed while
-the feed reconnects. Package data includes the board PNGs, marker JSON and sprite
-PNGs so the installed-wheel behavior matches an editable checkout.
-
-[PARITY.md](PARITY.md) records the functional comparison against `overhaul` at
-8a58b90, including missing waypoint/configuration/feedback behavior, simulation
-and editing gaps, incompatible student integrations, and acceptance priorities.
+The source definitions/marker files in the vision submodule are read locally;
+no camera opens just by importing them. Board paths resolve from that submodule
+and sprite paths from the marker JSON. Package data includes these assets.
+Previous code/ignored experiment data remain recoverable through Git and
+`../ipc_sandbox/vsss-legacy-before-cleanup-dc7351f/`.

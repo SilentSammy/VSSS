@@ -116,7 +116,10 @@ class CoreTest(unittest.TestCase):
                         client.gps.on_change = values.put
                         self.assertTrue(replay.finished.wait(3))
                         self.assertIsNone(replay.error)
-                        self.assertEqual(client.gps.state(), expected)
+                        delivered = client.gps.state()
+                        self.assertEqual(delivered.cars, expected.cars)
+                        self.assertEqual(delivered.captured_at, expected.captured_at)
+                        self.assertGreaterEqual(delivered.received_at, expected.received_at)
                         self.assertTrue(client.cars.observed())
                         with self.assertRaises(RuntimeError):
                             client.cars.set_velocity(1, Velocity(.1))

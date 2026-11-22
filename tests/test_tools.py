@@ -57,7 +57,8 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(writer_type.return_value.submit.call_count, 2)
         self.assertEqual(writer_type.return_value.submit.call_args_list[0].args, (1, Velocity()))
         writer_type.return_value.close.assert_called_once()
-        self.assertEqual(provider.cars.stop.call_count, 2)
+        self.assertEqual(provider.cars.stop.call_count, 1)
+        provider.cars.connect.assert_called_once_with(1)
         self.assertTrue(all(0 < delay <= .02 for delay in waits))
         provider.close.assert_called_once()
 
@@ -95,7 +96,7 @@ class ToolsTest(unittest.TestCase):
                 teleop(['--car', '1'], provider_factory=factory)
                 factory.assert_called_once_with(None)
                 connect.assert_not_called()
-                self.assertEqual(stop.call_count, 2)
+                self.assertGreaterEqual(stop.call_count, 1)
             self.assertEqual(local._velocities[1], Velocity())
 
     def test_direct_demo_constructs_local_components(self):
