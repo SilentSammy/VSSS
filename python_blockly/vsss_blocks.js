@@ -194,12 +194,12 @@ function loadLesson(kind) {
       assign('total',expression('math_arithmetic',{OP:'ADD'},{A:inputBlock(variable('total')),B:num(2)})),print(variable('total'))
     ]))})];
   } else if(kind==='rotation') {
-    steps=[connect('car1',1),forever([
+    steps=[connect('car1',1),wait(5),forever([
       carBlock('set_velocity','car1',{x:num(0),y:num(0),w:num(.2)}),wait(1),
       carBlock('set_velocity','car1',{x:num(0),y:num(0),w:num(-.2)}),wait(1)
     ])];
   } else if(kind==='teleop') {
-    steps=[connect('car1',1),forever([
+    steps=[connect('car1',1),wait(5),forever([
       assign('forward',expression('api_input_get_bipolar_ctrl',{}, {high_key:text('w'),low_key:text('s'),keyboard_scale:num(.5)})),
       assign('turn',expression('math_arithmetic',{OP:'MULTIPLY'},{A:inputBlock(expression('vsss_pad_axis',{PAD:0,AXIS:'RX'})),B:num(.5)})),
       carBlock('set_velocity','car1',{x:inputBlock(variable('forward')),y:num(0),w:inputBlock(variable('turn'))}),wait(.05)
@@ -219,13 +219,13 @@ function loadLesson(kind) {
     steps=[forever([assign('pose',expression('api_gps_get_car',{}, {number:num(1)})),print(variable('pose')),wait(.25)])];
   } else if(kind==='waypoints') {
     const arrival=()=>expression('vsss_wait_arrival',{CAR:varField('car1')},{TIMEOUT:num(10)});
-    steps=[connect('car1',1),forever([
+    steps=[connect('car1',1),wait(5),forever([
       carBlock('go_to','car1',{x:num(0),y:num(.5),angle:num(90)}),arrival(),
       carBlock('go_to','car1',{x:num(0),y:num(-.5),angle:num(90)}),arrival()
     ])];
   } else if(kind==='kick') {
     // One stationary ball, a clear approach, and a fixed +Y kick direction.
-    steps=[connect('car1',1),assign('ball',firstBall()),
+    steps=[connect('car1',1),wait(5),assign('ball',firstBall()),
       carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),
         y:inputBlock(expression('math_arithmetic',{OP:'MINUS'},{A:inputBlock(ballCoordinate('y')),B:num(.3)})),angle:num(90)}),
       wait(.1),expression('controls_whileUntil',{MODE:'UNTIL'},{
@@ -233,7 +233,7 @@ function loadLesson(kind) {
       carBlock('set_velocity','car1',{x:num(1),y:num(0),w:num(0)}),wait(.8),carBlock('stop')];
   } else if(kind==='goalie') {
     // The waypoint controller corrects position and heading for us.
-    steps=[connect('car1',1),forever([assign('ball',firstBall()),
+    steps=[connect('car1',1),wait(5),forever([assign('ball',firstBall()),
       carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),y:num(1.2),angle:num(-90)}),wait(.05)])];
   } else if(kind==='observe') {
     steps=[expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain([
@@ -243,7 +243,7 @@ function loadLesson(kind) {
     const keyIf = (key,name,amount) => expression('controls_if',{}, {
       IF0:inputBlock(expression('vsss_key',{KEY:key,MODE:'is_pressed'})),
       DO0:inputBlock(assign(name,expression('math_number',{NUM:amount})))});
-    steps=[connect('car1',1),forever([
+    steps=[connect('car1',1),wait(5),forever([
       ...['forward','left','turn'].map(name=>assign(name,expression('math_number',{NUM:0}))),
       keyIf('w','forward',.3),keyIf('s','forward',-.3),
       keyIf('a','left',.3),keyIf('d','left',-.3),
@@ -253,6 +253,7 @@ function loadLesson(kind) {
   } else if(kind==='gamepads' || kind==='multi') {
     const names=['car1','car2'];
     steps=names.map((name,i)=>connect(name,i+1));
+    steps.push(wait(5));
     const loop=[];
     names.forEach((name,pad)=>{
       const axis=(axisName)=>expression('math_arithmetic',{OP:'MULTIPLY'},{A:inputBlock(expression('vsss_pad_axis',{PAD:pad,AXIS:axisName})),B:num(.3)});
@@ -263,7 +264,7 @@ function loadLesson(kind) {
     if(kind==='multi') steps.push(expression('controls_repeat_ext',{}, {TIMES:num(10),DO:inputBlock(chain(loop))}));
     else steps.push(expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain(loop))}));
   } else if(kind==='velocity') {
-    steps=[connect('car1',1),carBlock('set_velocity','car1',{x:num(.2),y:num(0),w:num(0)}),wait(1),carBlock('stop')];
+    steps=[connect('car1',1),wait(5),carBlock('set_velocity','car1',{x:num(.2),y:num(0),w:num(0)}),wait(1),carBlock('stop')];
   }
   Blockly.serialization.workspaces.load({variables:ids.map(name=>({id:'v-'+name,name,type:''})),blocks:{languageVersion:0,blocks:[{...chain(steps),x:25,y:25}]}},workspace);
   updateCode();

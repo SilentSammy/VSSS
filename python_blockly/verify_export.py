@@ -1,7 +1,7 @@
 ﻿"""Execute exported code against the real vsss.Car and @run, with fake I/O."""
 from pathlib import Path
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import call, MagicMock, patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 from vsss import Car, Velocity
@@ -24,7 +24,7 @@ def verify(source):
         client.cars.connect.assert_called_once_with(1)
         client.cars.set_velocity.assert_called_once_with(1,Velocity(.2,0,0))
         client.close.assert_called_once()
-        sleep.assert_called_once_with(1)
+        assert sleep.call_args_list==[call(5),call(1)],sleep.call_args_list
         assert not Car._cars
         clients.clear()
         try:

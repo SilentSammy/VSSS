@@ -84,6 +84,8 @@ class EnvironmentTest(unittest.TestCase):
     def test_waypoint_goalie_corrects_heading_and_holds_lane(self):
         root = Path(__file__).resolve().parent
         program = (root / 'examples/09_goalie.py').read_text()
+        self.assertIn('sleep(5)',program)
+        program = program.replace('sleep(5)','sleep(0)',1)
 
         class ShotEnded(BaseException):
             pass

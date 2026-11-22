@@ -30,9 +30,14 @@ const path = require('node:path');
     assert.equal(await page.locator('#example').count(),0);
     assert.equal(await page.locator('#car-example').count(),0);
     assert.equal(await page.locator('#lesson option[value="blank"]').count(),1);
+    const assertPlacementDelay=(code,cars=1)=>{
+      const connections=Array.from({length:cars},(_,i)=>`car${i+1} = Car\\(${i+1}\\)`).join('\\s+');
+      assert.match(code,new RegExp(connections+'\\s+sleep\\(5\\)'));
+    };
     for (const lesson of ['kick','goalie']) {
       await page.selectOption('#lesson',lesson);
       const code=await page.locator('#code').innerText();
+      assertPlacementDelay(code);
       assert.doesNotMatch(code,/set_velocity\(x=0\.2/);
       if(lesson==='kick') {
         assert.match(code,/go_to\(x=.*ball.*\.x, y=.*ball.*\.y.*0\.3, angle=90\)/);
@@ -93,6 +98,7 @@ const path = require('node:path');
     const download=await downloadPromise;
     const file=await download.path();
     const exported=fs.readFileSync(file,'utf8');
+    assertPlacementDelay(exported);
     const contract=spawnSync(process.env.PYTHON||'python',['verify_export.py',file],{cwd:__dirname,encoding:'utf8'});
     assert.equal(contract.status,0,contract.stdout+contract.stderr);
     process.stdout.write(contract.stdout);
@@ -103,6 +109,7 @@ const path = require('node:path');
       await page.selectOption('#lesson',lesson);
       const code=await page.locator('#code').innerText();
       if(lesson==='multi')assert.match(code,/car2 = Car\(2/);
+      if(lesson==='multi')assertPlacementDelay(code,2);
       const result=await runCode(code);
       assert.equal(result.state,'finished',JSON.stringify(result));
     }
@@ -111,6 +118,7 @@ const path = require('node:path');
     for(const lesson of ['rotation','position','waypoints','teleop','read_gamepad','gamepads','keyboard','observe']){
       await page.selectOption('#lesson',lesson);
       const code=await page.locator('#code').innerText();
+      if(!['observe','position','read_gamepad'].includes(lesson))assertPlacementDelay(code,lesson==='gamepads'?2:1);
       if(lesson==='gamepads'){
         assert.match(code,/input.get_axis\("LY0"\)/);
         assert.match(code,/input.get_axis\("LY1"\)/);

@@ -13,6 +13,8 @@ class KickTest(unittest.TestCase):
     def test_waypoint_alignment_precedes_full_speed_strike(self):
         root = Path(__file__).resolve().parent
         code = (root/'examples/08_kick_top_wall.py').read_text()
+        self.assertIn('sleep(5)',code)
+        code = code.replace('sleep(5)','sleep(0)',1)
         with VSSSSim(load_scenario(root.parent/'examples/car1_ball1.jsonl')) as sim:
             target = Pose(.3,0,90)
             strikes = []

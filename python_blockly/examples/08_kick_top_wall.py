@@ -6,6 +6,7 @@ from vsss import Car, gps, run
 @run
 def main():
     car1 = Car(1)
+    sleep(5)
     ball = gps.ball
     car1.go_to(x=ball.x, y=ball.y - .3, angle=90)
     sleep(.1)

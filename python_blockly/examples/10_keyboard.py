@@ -6,6 +6,7 @@ from vsss import Car, input, run
 @run
 def main():
     car1 = Car(1)
+    sleep(5)
     while True:
         forward = 0
         left = 0

@@ -53,6 +53,19 @@ class LiveTests(unittest.TestCase):
             self.assertIn(('stop',),car.events)
             self.assertIn(('close',),car.events)
 
+    def example(self, name):
+        code=(ROOT/'python_blockly/examples'/name).read_text()
+        self.assertIn('sleep(5)',code)
+        return code.replace('sleep(5)','sleep(.01)',1)
+
+    def test_every_car_example_waits_after_connecting(self):
+        for path in sorted((ROOT/'python_blockly/examples').glob('*.py')):
+            lines=path.read_text().splitlines()
+            connections=[i for i,line in enumerate(lines) if '= Car(' in line]
+            if connections:
+                with self.subTest(example=path.name):
+                    self.assertEqual(lines[max(connections)+1].strip(),'sleep(5)')
+
     def test_multiple_cars_and_two_native_gamepads_in_one_loop_without_gps(self):
         run=self.start('a = Car(1)\nb = Car(2)\nfor i in range(3):\n    a.set_velocity(x=input.get_axis("LY0"))\n    b.set_velocity(x=input.get_axis("LY1"))\n    sleep(.01)\nprint(input.is_pressed("A0"), input.is_pressed("B1"))')
         result=self.finish(run)
@@ -287,7 +300,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.devices.field_reads,0)
 
     def test_partial_teleop_maps_keys_and_rx_independently(self):
-        code=(ROOT/'python_blockly/examples/06_partial_teleop.py').read_text()
+        code=self.example('06_partial_teleop.py')
         validate(code)
         self.devices.input.pressed_keys.clear()
         self.devices.input._axis_states[0]['RX']=0
@@ -325,7 +338,7 @@ class LiveTests(unittest.TestCase):
     def test_infinite_rotation_alternates_until_stopped(self):
         self.runner=self.devices.runner()
         self.assertIsNone(self.runner.max_seconds)
-        code=(ROOT/'python_blockly/examples/03_rotate_back_and_forth.py').read_text()
+        code=self.example('03_rotate_back_and_forth.py')
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='velocity'])>=3)
@@ -348,7 +361,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.devices.field_reads,1)
 
     def test_alternating_waypoints_wait_and_can_be_stopped(self):
-        code=(ROOT/'python_blockly/examples/05_alternate_waypoints.py').read_text()
+        code=self.example('05_alternate_waypoints.py')
         validate(code)
         run=self.runner.start(code)['run_id']
         self.wait_for(lambda:self.devices.cars and len([e for e in self.devices.cars[0].events if e[0]=='waypoint'])>=3)
@@ -360,7 +373,7 @@ class LiveTests(unittest.TestCase):
 
     def test_waypoint_fault_or_timeout_does_not_send_the_next_target(self):
         from vsss._ble_protocol import RobotStatus
-        code=(ROOT/'python_blockly/examples/05_alternate_waypoints.py').read_text()
+        code=self.example('05_alternate_waypoints.py')
         for fault,expected in ((1,'Onboard position/control unavailable'),(0,'Waypoint timed out')):
             with self.subTest(fault=fault):
                 self.devices.cars.clear()

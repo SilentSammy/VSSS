@@ -9,6 +9,7 @@ from vsss import Car, input, run
 @run
 def main():
     car = Car(1)
+    sleep(5)
     while True:
         forward = input.get_bipolar_ctrl(high_key='w', low_key='s', keyboard_scale=0.5)
         turn = input.get_axis('RX0') * 0.5

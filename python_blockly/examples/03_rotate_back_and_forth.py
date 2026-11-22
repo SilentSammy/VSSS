@@ -6,6 +6,7 @@ from vsss import Car, run
 @run
 def main():
     car = Car(1)
+    sleep(5)
     while True:
         car.set_velocity(x=0, y=0, w=0.2)
         sleep(1)

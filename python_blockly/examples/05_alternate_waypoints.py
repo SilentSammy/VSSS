@@ -10,6 +10,7 @@ from vsss import Car, run
 @run
 def main():
     car = Car(1)
+    sleep(5)
     while True:
         for target in ((0, 0.5, 90), (0, -0.5, 90)):
             car.go_to(*target)

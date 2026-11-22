@@ -103,7 +103,7 @@ const path=require('node:path');
     await page.selectOption('#lesson','goalie');
     await page.click('#run');
     await page.waitForFunction(()=>document.querySelector('#status').textContent==='Running');
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(6200);
     assert.ok(Math.abs(car().x-goalieStart.x)>.01,'Goalie must move sideways toward the incoming ball');
     await page.click('#stop');
     await page.waitForFunction(()=>document.querySelector('#status').textContent==='Stopped by user.');

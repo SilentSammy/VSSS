@@ -101,6 +101,8 @@ on the server computer. No GPS is needed.
 
 The rotation and waypoint examples use the selected environment. Live can move a
 physical car; simulator scenarios control the simulated car.
+Every example that connects to a car waits five seconds after all connections are
+ready, giving students time to place the car before the program starts moving it.
 Check the car number and available space first. Waypoints use field X/Y metres
 and heading degrees; yaw velocity is a normalized CCW command, not degrees/s.
 The waypoint example checks onboard feedback/fault state and fails after ten
