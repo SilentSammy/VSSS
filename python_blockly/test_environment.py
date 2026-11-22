@@ -6,9 +6,10 @@ import unittest
 from unittest.mock import patch
 
 from environment import Environment
-from vsss import VSSSProvider, EventHub, GPSState, CarCmd, CarState, Pose, StatePatch
+from vsss import VSSSProvider, EventHub, GPSState, CarCmd, CarState, Pose, StatePatch, Velocity
 from vsss.plot import EmbeddedPlot
 from vsss.simulation import VSSSSim
+from vsss.scenarios import load_scenario
 
 
 def wait_for(predicate):
@@ -20,6 +21,23 @@ def wait_for(predicate):
 
 
 class EnvironmentTest(unittest.TestCase):
+    def test_goalie_starts_have_motion_and_increasing_difficulty(self):
+        root = Path(__file__).resolve().parent.parent / 'examples'
+        easy, hard = [load_scenario(root / f'goalie_{level}.jsonl') for level in ('easy', 'hard')]
+        for scenario in (easy, hard):
+            self.assertTrue(scenario.wait_for_control)
+            self.assertGreater(scenario.motion[-1].vy, 0)
+            self.assertNotEqual(scenario.state.cars[0].pose.x, 0)
+            with VSSSSim(scenario) as sim:
+                initial = sim._world.balls[0].pose
+                sim.step(.1)
+                self.assertEqual(sim._world.balls[0].pose, initial)
+                sim.cars.set_velocity(1, Velocity())
+                sim.step(.1)
+                self.assertGreater(sim._world.balls[0].pose.y, initial.y)
+        self.assertGreater(hard.motion[-1].vy, easy.motion[-1].vy)
+        self.assertLess(hard.state.cars[0].pose.x * hard.state.balls[0].pose.x, 0)
+
     def test_owned_live_and_sim_modes_switch_with_cleanup_without_hardware(self):
         class Cars(CarCmd):
             def available(self, refresh=False): return []
@@ -64,7 +82,7 @@ class EnvironmentTest(unittest.TestCase):
                     lab.ensure()
                     self.assertAlmostEqual(client.gps.state().cars[0].pose.x, .3)
                     lab.select('goalie_easy')
-                    self.assertAlmostEqual(client.gps.state().cars[0].pose.y, -1.1)
+                    self.assertAlmostEqual(client.gps.state().cars[0].pose.y, 1.2)
                     lab.select('scenario')
                     self.assertEqual(client.describe()['source_id'], first['source_id'])
                     self.assertAlmostEqual(client.gps.state().cars[0].pose.x, -.2)
@@ -80,7 +98,7 @@ class EnvironmentTest(unittest.TestCase):
                 lab = Environment(endpoint, port=0)
                 try:
                     lab.select('goalie_easy')
-                    self.assertAlmostEqual(sim.gps.state().cars[0].pose.y, -1.1)
+                    self.assertAlmostEqual(sim.gps.state().cars[0].pose.y, 1.2)
                     self.assertIsNone(lab.owned)
                     with self.assertRaisesRegex(ValueError, 'another terminal'):
                         lab.select('live')

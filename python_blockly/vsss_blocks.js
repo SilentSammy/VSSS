@@ -179,9 +179,12 @@ function loadLesson(kind) {
     updateCode();
     return;
   }
-  const ids = ['car1','car2','pose','total','count','forward','turn'];
+  const ids = ['car1','car2','pose','total','count','forward','turn','balls','ball'];
   const forever = steps => expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:inputBlock(expression('logic_boolean',{BOOL:'TRUE'})),DO:inputBlock(chain(steps))});
   const assign = (name,block) => expression('variables_set',{VAR:varField(name)},{VALUE:inputBlock(block)});
+  const firstBall = () => expression('vsss_index',{}, {INDEX:num(0),OBJECT:inputBlock(variable('balls'))});
+  const ballCoordinate = name => field(variable('ball'),name);
+  const ballCount = () => expression('lists_length',{}, {VALUE:inputBlock(variable('balls'))});
   if(kind==='printing') {
     steps=[print(expression('text',{TEXT:'Hello, Python!'})),print(expression('math_arithmetic',{OP:'ADD'},{A:num(7),B:num(5)}))];
   } else if(kind==='variables') {
@@ -218,6 +221,27 @@ function loadLesson(kind) {
       carBlock('go_to','car1',{x:num(0),y:num(.5),angle:num(90)}),arrival(),
       carBlock('go_to','car1',{x:num(0),y:num(-.5),angle:num(90)}),arrival()
     ])];
+  } else if(kind==='kick') {
+    // One stationary ball, a clear approach, and a fixed +Y kick direction.
+    steps=[connect('car1',1),assign('balls',expression('api_gps_balls')),
+      expression('controls_if',{}, {IF0:inputBlock(compare(ballCount(),'EQ',expression('math_number',{NUM:0}))),
+        DO0:inputBlock(expression('vsss_raise',{}, {TEXT:text('One visible stationary ball is required.')}))}),
+      assign('ball',firstBall()),
+      carBlock('go_to','car1',{x:inputBlock(ballCoordinate('x')),
+        y:inputBlock(expression('math_arithmetic',{OP:'MINUS'},{A:inputBlock(ballCoordinate('y')),B:num(.3)})),angle:num(90)}),
+      expression('vsss_wait_arrival',{CAR:varField('car1')},{TIMEOUT:num(10)}),
+      carBlock('set_velocity','car1',{x:num(1),y:num(0),w:num(0)}),wait(.8),carBlock('stop')];
+  } else if(kind==='goalie') {
+    // Repeated waypoints track X while holding a lane near the top wall.
+    const follow = [assign('ball',firstBall()),carBlock('go_to','car1',{
+      x:inputBlock(expression('math_constrain',{}, {VALUE:inputBlock(ballCoordinate('x')),LOW:num(-.65),HIGH:num(.65)})),
+      y:num(1.2),angle:num(0)})];
+    const ifBall = expression('controls_if',{}, {
+      IF0:inputBlock(compare(ballCount(),'GT',expression('math_number',{NUM:0}))),
+      DO0:inputBlock(chain(follow)),ELSE:inputBlock(carBlock('stop'))});
+    ifBall.extraState={hasElse:true};
+    steps=[connect('car1',1),forever([assign('balls',expression('api_gps_balls')),
+      ifBall,wait(.1)])];
   } else if(kind==='observe') {
     steps=[expression('controls_whileUntil',{MODE:'WHILE'},{BOOL:{block:expression('logic_boolean',{BOOL:'TRUE'})},DO:inputBlock(chain([
       print(expression('api_gps_feedback_problem')),print(expression('api_gps_cars')),print(expression('api_gps_balls')),wait(.1)

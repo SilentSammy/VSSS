@@ -21,6 +21,7 @@ class Environment:
         self.owned = None
         self.resources = ExitStack()
         self.scenarios = {'goalie_easy': ROOT / 'examples/goalie_easy.jsonl',
+                          'goalie_hard': ROOT / 'examples/goalie_hard.jsonl',
                           'scenario': ROOT / 'examples/scenario.jsonl', 'goalie': None}
         for path in sorted((ROOT / 'scenarios').glob('*.jsonl')):
             self.scenarios.setdefault(path.stem, path)

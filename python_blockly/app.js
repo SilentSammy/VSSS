@@ -19,7 +19,8 @@ async function startEditor() {
       {kind: 'block', type: 'controls_flow_statements'}]},
     {kind: 'category', name: 'Math', colour: 230, contents: [
       {kind: 'block', type: 'math_number'},
-      {kind: 'block', type: 'math_arithmetic', fields: {OP: 'ADD'}}]},
+      {kind: 'block', type: 'math_arithmetic', fields: {OP: 'ADD'}},
+      {kind: 'block', type: 'math_constrain'}]},
     {kind: 'category', name: 'Logic', colour: 210, contents: [
       {kind: 'block', type: 'controls_if'}, {kind: 'block', type: 'logic_compare'},
       {kind: 'block', type: 'logic_boolean'}, {kind: 'block', type: 'logic_null'},

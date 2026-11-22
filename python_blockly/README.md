@@ -41,6 +41,23 @@ Install the parent plot extra (`python -m pip install -e ".[plot]"`) for the vie
 Every requested example is available in the example selector and as a Python file.
 Choose **Blank workspace** to clear the editor and start from scratch:
 
+The dropdown also includes **Kick ball to top wall** and **Goalie: follow the
+ball**. Kick reads the first ball, moves 30 cm behind it facing 90°, waits for
+arrival, then drives forward for .8 seconds and stops. Use the `scenario`
+environment with a stationary ball and a clear approach; leave room behind it.
+Goalie sends a waypoint every .1 seconds to the ball's current X (limited to
+±.65 m), with Y fixed at 1.2 m and heading 0°. It stops if no ball is visible.
+These examples deliberately use ordinary editable blocks and assume one ball.
+
+`goalie_easy` starts car 1 at X=.15 m and a ball at X=.3 m moving toward the top
+wall at .6 m/s. `goalie_hard` starts the car at X=-.5 m, opposite a ball at
+X=.4 m moving at 1 m/s. Both keep the ball paused until the first movement
+command so students can prepare the program before the shot starts.
+
+The same two programs are available as
+[08_kick_top_wall.py](examples/08_kick_top_wall.py) and
+[09_goalie.py](examples/09_goalie.py).
+
 | Example | Python file | Behavior |
 | --- | --- | --- |
 | Print and add | [01_print_and_add.py](examples/01_print_and_add.py) | Print a greeting and 7 + 5. No robot. |
