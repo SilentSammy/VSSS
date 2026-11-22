@@ -83,6 +83,11 @@ def render_state(plotter, state):
         balls=[dict(id=ball.id, **asdict(ball.pose)) for ball in state.balls]))
 
 
+def is_close_key(key):
+    """Escape closes the plot; teleop keys must pass through globally."""
+    return key & 0xff == 27
+
+
 class ProviderFeed:
     """Read-only subscriber that follows discovery changes and holds one latest frame."""
     def __init__(self, endpoint=None):
@@ -328,7 +333,7 @@ def main(argv=None):
                 feed.stop.wait(.02)
             else:
                 cv2.imshow(window, frame)
-                if cv2.waitKey(20) & 0xff in (ord('q'), 27):
+                if is_close_key(cv2.waitKey(20)):
                     break
                 if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                     break

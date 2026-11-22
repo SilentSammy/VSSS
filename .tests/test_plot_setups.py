@@ -12,11 +12,16 @@ import cv2
 import numpy as np
 
 from vsss import CarState, Field, Pose, WorldState
-from vsss.plot import lab_setups, main, make_plotter, marker_styles, render_state
+from vsss.plot import is_close_key, lab_setups, main, make_plotter, marker_styles, render_state
 from vsss.simulation import VSSSSim
 
 
 class PlotSetupsTest(unittest.TestCase):
+    def test_escape_closes_plot_but_teleop_q_does_not(self):
+        self.assertTrue(is_close_key(27))
+        self.assertFalse(is_close_key(ord('q')))
+        self.assertFalse(is_close_key(ord('Q')))
+
     def test_catalog_and_default_match_lab_source(self):
         from aruco_gps.vision_setup import DEFAULT_SETUP, VISION_SETUPS
         setups, default = lab_setups()

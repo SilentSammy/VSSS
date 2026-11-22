@@ -23,7 +23,7 @@ This is domain data, not the old raw BLE/UDP trace format.
 
 ## Verification performed
 
-- 69 core/feature tests pass: codec/RPC/ownership, synthetic UDP, fake BLE
+- 70 core/feature tests pass: codec/RPC/ownership, synthetic UDP, fake BLE
   configuration and leases, shutdown, physics/scenarios/editing, fleet blocking,
   status recording/replay, and student scripts using separate simulator processes.
   The goalie example includes small lane/heading corrections under dynamic

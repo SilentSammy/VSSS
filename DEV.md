@@ -73,7 +73,7 @@ python blockly_python_demo/verify_export.py boilerplate_velocity.py
 python .tests/latency_probe.py --samples 300
 ```
 
-The feature suite has 69 passing tests and Blockly has 24. Tests use temporary
+The feature suite has 70 passing tests and Blockly has 24. Tests use temporary
 endpoints, synthetic UDP, fake GATT firmware and separate simulator/student
 processes. Student subprocess tests explicitly set VSSS_ENDPOINT so they cannot
 accidentally target the lab provider. They do not move hardware. Package tests

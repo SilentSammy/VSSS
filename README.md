@@ -95,7 +95,9 @@ are included in built wheels as well as usable directly from the checkout.
 
 Install the plot extra and initialize the submodule (`git submodule update --init`)
 on a fresh checkout. `vsss-plot --duration 2 --output field.png` saves a headless
-frame to a new file. `--width 720` sets resolution; Q/Escape closes the window.
+frame to a new file. `--width 720` sets resolution; Escape closes the window.
+The window close button and Alt+F4 also work normally. Q remains available to
+teleop while the plot has focus.
 
 Teleop retains `--list`, `--refresh`, `--auto`, repeated `--car ID[=INPUT+INPUT]`
 and interactive assignments. Examples:
