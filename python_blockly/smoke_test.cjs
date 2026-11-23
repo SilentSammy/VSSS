@@ -27,6 +27,41 @@ const path = require('node:path');
     assert.match(initial,/print\('Hello, Python!'\)/);
     assert.match(initial,/print\(7 \+ 5\)/);
     assert.doesNotMatch(initial,/from vsss|@run|Car\(/);
+    // Mimic browser translation: longer nested labels must reflow an open flyout.
+    const originalCategory=await page.evaluate(()=>{
+      const toolbox=workspace.getToolbox();
+      const item=toolbox.getToolboxItems().find(item=>item.getName()==='Car feedback');
+      toolbox.setSelectedItem(item);
+      const label=[...toolbox.HtmlDiv.querySelectorAll('.blocklyToolboxCategoryLabel')].find(label=>label.textContent==='Car feedback');
+      const original=label.textContent;
+      const translated=document.createElement('font');
+      translated.textContent='Comentarios sobre el automóvil';
+      label.replaceChildren(translated);
+      return original;
+    });
+    await page.waitForFunction(()=>{
+      const toolbox=workspace.getToolbox();
+      const right=toolbox.HtmlDiv.getBoundingClientRect().right;
+      const flyout=toolbox.getFlyout().getWorkspace().getParentSvg().getBoundingClientRect();
+      return Math.abs(toolbox.getWidth()-toolbox.HtmlDiv.offsetWidth)<1 && flyout.left>=right-1;
+    });
+    await page.evaluate(original=>{
+      const labels=workspace.getToolbox().HtmlDiv.querySelectorAll('.blocklyToolboxCategoryLabel');
+      [...labels].find(label=>label.textContent==='Comentarios sobre el automóvil').textContent=original;
+      workspace.getToolbox().clearSelection();
+    },originalCategory);
+    // An unchanged source message must preserve Chrome's translated DOM.
+    assert.equal(await page.evaluate(()=>{
+      setMessage('plot-status','simulation · Drag centres/balls to move; edges to rotate.');
+      const status=document.getElementById('plot-status');
+      const translated=document.createElement('font');
+      translated.textContent='simulación · Arrastra para mover';
+      status.replaceChildren(translated);
+      for(let i=0;i<20;i++)setMessage('plot-status','simulation · Drag centres/balls to move; edges to rotate.');
+      const preserved=status.firstChild===translated;
+      setMessage('plot-status','live · Observation only');
+      return preserved && status.textContent==='live · Observation only';
+    }),true);
     assert.equal(await page.locator('#example').count(),0);
     assert.equal(await page.locator('#car-example').count(),0);
     assert.equal(await page.locator('#lesson option[value="blank"]').count(),1);

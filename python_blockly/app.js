@@ -1,5 +1,14 @@
 /* Blockly creates source text; /run executes it using real local CPython. */
 let workspace;
+// Remember our source message: Chrome may replace its DOM with translated text.
+// Comparing textContent would overwrite that translation on every poll.
+const sourceMessages = new WeakMap();
+function setMessage(id, message) {
+  const element = document.getElementById(id);
+  if (sourceMessages.get(element) === message) return;
+  sourceMessages.set(element, message);
+  element.textContent = message;
+}
 async function startEditor() {
   const response = await fetch('/api/schema');
   const schema = await response.json();
@@ -40,6 +49,16 @@ async function startEditor() {
   zoom: {controls: true, wheel: true, startScale: 0.95}
 });
   workspace.addChangeListener(updateCode);
+  let resizeFrame;
+  const layoutObserver = new ResizeObserver(() => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => {
+      Blockly.svgResize(workspace);
+      workspace.resize(); // Remeasure translated category labels and move the flyout.
+    });
+  });
+  layoutObserver.observe(document.getElementById('blocklyDiv'));
+  layoutObserver.observe(workspace.getToolbox().HtmlDiv);
   loadLesson('printing');
 }
 
@@ -208,7 +227,7 @@ fullscreenButton.onclick = async () => {
   try {
     if (document.fullscreenElement === fieldPanel) await document.exitFullscreen();
     else { collapseField(false); await fieldPanel.requestFullscreen(); }
-  } catch (error) { document.getElementById('plot-status').textContent = error.message; }
+  } catch (error) { setMessage('plot-status', error.message); }
 };
 document.addEventListener('fullscreenchange', () => {
   releasePointer();
@@ -226,7 +245,7 @@ function sendPointer(operation, point = dragPoint, state = dragState) {
   const payload = {operation, ...point, owner: plotOwner,
     source_id: state.source_id, generation: state.generation};
   pointerQueue = pointerQueue.then(() => request('/plot/pointer', payload)).catch(error => {
-    document.getElementById('plot-status').textContent = error.message;
+    setMessage('plot-status', error.message);
     dragPoint = dragState = null;
   });
 }
@@ -266,10 +285,10 @@ async function pollPlot() {
     plotCanvas.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close();
     plotState = metadata;
     plotCanvas.classList.toggle('editable', metadata.editable);
-    document.getElementById('plot-status').textContent = metadata.status +
-      (metadata.editable ? ' · Drag centres/balls to move; edges to rotate.' : ' · Observation only');
+    setMessage('plot-status', metadata.status +
+      (metadata.editable ? ' · Drag centres/balls to move; edges to rotate.' : ' · Observation only'));
   } catch (error) {
-    document.getElementById('plot-status').textContent = 'Plot disconnected; retrying the local server. ' + error.message;
+    setMessage('plot-status', 'Plot disconnected; retrying the local server. ' + error.message);
   }
   setTimeout(pollPlot, 80);
 }
